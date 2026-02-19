@@ -140,31 +140,15 @@ class MessageFormat(models.TextChoices):
     MMS = 'mms', 'MMS'
 
 
-class GroupSchedule(TenantModel, AuditMixin):
-    name = models.CharField(max_length=255)
-    template = models.ForeignKey(Template, on_delete=models.SET_NULL, null=True, blank=True)
-    text = models.TextField(blank=True, null=True)
-    message_parts = models.PositiveIntegerField(default=1)
-    group = models.ForeignKey(ContactGroup, on_delete=models.CASCADE, related_name='group_schedules')
-    scheduled_time = models.DateTimeField()
-    status = models.CharField(max_length=20, choices=ScheduleStatus.choices, default=ScheduleStatus.PENDING)
-    error = models.TextField(blank=True, null=True)
-
-    class Meta:
-        db_table = 'group_schedules'
-
-    def __str__(self):
-        return f'{self.name} ({self.status})'
-
-
 class Schedule(TenantModel, AuditMixin):
+    name = models.CharField(max_length=255, blank=True, null=True)
     template = models.ForeignKey(Template, on_delete=models.SET_NULL, null=True, blank=True)
     text = models.TextField(blank=True, null=True)
     message_parts = models.PositiveIntegerField(default=1)
     contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True)
     phone = models.CharField(max_length=50, blank=True, null=True)
     group = models.ForeignKey(ContactGroup, on_delete=models.SET_NULL, null=True, blank=True)
-    group_schedule = models.ForeignKey(GroupSchedule, on_delete=models.SET_NULL, null=True, blank=True)
+    parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True)
     scheduled_time = models.DateTimeField()
     sent_time = models.DateTimeField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=ScheduleStatus.choices, default=ScheduleStatus.PENDING)

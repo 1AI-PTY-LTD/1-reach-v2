@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from app.models import (
     User, Organisation, OrganisationMembership,
     Contact, ContactGroup, ContactGroupMember,
-    Template, GroupSchedule, Schedule, Config,
+    Template, Schedule, Config,
 )
 
 
@@ -63,17 +63,10 @@ class TemplateAdmin(admin.ModelAdmin):
     list_filter = ('is_active', 'organisation')
 
 
-@admin.register(GroupSchedule)
-class GroupScheduleAdmin(admin.ModelAdmin):
-    list_display = ('name', 'group', 'status', 'scheduled_time', 'organisation', 'created_at')
-    search_fields = ('name',)
-    list_filter = ('status', 'organisation')
-
-
 @admin.register(Schedule)
 class ScheduleAdmin(admin.ModelAdmin):
-    list_display = ('pk', 'phone', 'status', 'format', 'scheduled_time', 'sent_time', 'organisation')
-    search_fields = ('phone', 'contact__first_name', 'contact__last_name')
+    list_display = ('pk', 'name', 'phone', 'status', 'format', 'scheduled_time', 'sent_time', 'organisation')
+    search_fields = ('name', 'phone', 'contact__first_name', 'contact__last_name')
     list_filter = ('status', 'format', 'organisation')
 
 
