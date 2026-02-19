@@ -28,11 +28,25 @@ class TenantScopedMixin:
         return qs.filter(**{lookup: org_id})
 
     def perform_create(self, serializer):
-        if self.tenant_org_field != 'organisation':
-            serializer.save()
-            return
+        kwargs = {}
 
-        org = getattr(self.request, 'org', None)
-        if not org and getattr(self.request, 'org_id', None):
-            org = Organisation.objects.filter(clerk_org_id=self.request.org_id).first()
-        serializer.save(organisation=org)
+        if self.tenant_org_field == 'organisation':
+            org = getattr(self.request, 'org', None)
+            if not org and getattr(self.request, 'org_id', None):
+                org = Organisation.objects.filter(clerk_org_id=self.request.org_id).first()
+            kwargs['organisation'] = org
+
+        model = serializer.Meta.model
+        if hasattr(model, 'created_by'):
+            kwargs['created_by'] = self.request.user
+        if hasattr(model, 'updated_by'):
+            kwargs['updated_by'] = self.request.user
+
+        serializer.save(**kwargs)
+
+    def perform_update(self, serializer):
+        kwargs = {}
+        model = serializer.Meta.model
+        if hasattr(model, 'updated_by'):
+            kwargs['updated_by'] = self.request.user
+        serializer.save(**kwargs)
