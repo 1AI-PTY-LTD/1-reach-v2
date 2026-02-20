@@ -40,11 +40,14 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'django_filters',
+    'drf_spectacular',
     'app'
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'app.middleware.RequestLoggingMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -132,6 +135,18 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'app.pagination.StandardPagination',
+    'PAGE_SIZE': 50,
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Reach API',
+    'VERSION': '2.0.0',
+    'DESCRIPTION': 'SMS/MMS scheduling and contact management API.',
 }
 
 
@@ -148,3 +163,28 @@ CLERK_WEBHOOK_SIGNING_SECRET = os.environ.get('CLERK_WEBHOOK_SIGNING_SECRET', ''
 CLERK_AUTHORIZED_PARTIES = [
     'http://localhost:5173',
 ]
+
+
+# Logging
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'request': {
+            'format': '%(asctime)s %(levelname)s [%(request_id)s] %(message)s',
+            'defaults': {'request_id': '-'},
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'request',
+        },
+    },
+    'loggers': {
+        'app.request': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    },
+}

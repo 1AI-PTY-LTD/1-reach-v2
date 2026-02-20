@@ -1,11 +1,11 @@
-from .models import Organisation
+from app.models import Organisation
 
 
 class ClerkTenantMiddleware:
     """For handling multi-tenant data
-    
+
     Extracts organisation data from token and inserts it to the request,
-    so that views can access directly. 
+    so that views can access directly.
         * org_id is used by the`TenantScopedMixin` to auto filter querysets
         * org_role is used by `permissions.py` for RBAC
 
