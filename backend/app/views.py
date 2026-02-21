@@ -13,6 +13,7 @@ from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,6 +25,8 @@ from app.models import *
 from app.permissions import IsOrgMember
 from app.serializers import *
 from app.utils import clerk
+from app.utils.limits import check_sms_limit, check_mms_limit
+from app.utils.sms import get_sms_provider
 
 logger = logging.getLogger(__name__)
 
@@ -526,3 +529,244 @@ class ConfigViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     serializer_class = ConfigSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
     http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
+
+
+class SMSViewSet(viewsets.ViewSet):
+    """SMS/MMS endpoints with pluggable provider abstraction."""
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def _get_org(self, request):
+        """Get organisation from request or raise ValidationError."""
+        org = getattr(request, 'org', None)
+        if not org:
+            raise ValidationError('Organisation required.')
+        return org
+
+    def _resolve_contact(self, contact_id, org):
+        """Resolve contact by ID or raise NotFound. Returns None if contact_id is None."""
+        if not contact_id:
+            return None
+        contact = Contact.objects.filter(id=contact_id, organisation=org).first()
+        if not contact:
+            raise NotFound('Contact not found.')
+        return contact
+
+    @action(detail=False, methods=['post'], url_path='send')
+    def send_sms(self, request):
+        """POST /api/sms/send/ — send SMS to single recipient."""
+        org = self._get_org(request)
+
+        serializer = SendSMSSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Check monthly SMS limit
+        check_sms_limit(org)
+
+        # Resolve contact if provided
+        contact = self._resolve_contact(data.get('contact_id'), org)
+
+        # Send via provider
+        provider = get_sms_provider()
+        result = provider.send_sms(to=data['recipient'], message=data['message'])
+
+        # Create Schedule record
+        Schedule.objects.create(
+            organisation=org,
+            contact=contact,
+            phone=data['recipient'],
+            text=data['message'],
+            scheduled_time=timezone.now(),
+            sent_time=timezone.now() if result['success'] else None,
+            status=ScheduleStatus.SENT if result['success'] else ScheduleStatus.FAILED,
+            message_parts=result['message_parts'],
+            format=MessageFormat.SMS,
+            error=result.get('error'),
+            created_by=request.user,
+            updated_by=request.user,
+        )
+
+        if result['success']:
+            return Response({'success': True, 'message': f'SMS sent successfully to {data["recipient"]}'})
+        else:
+            return Response({'success': False, 'message': 'Failed to send SMS', 'error': result.get('error')}, status=500)
+
+    @action(detail=False, methods=['post'], url_path='send-to-group')
+    def send_to_group(self, request):
+        """POST /api/sms/send-to-group/ — send SMS to group members."""
+        org = self._get_org(request)
+
+        serializer = SendGroupSMSSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Resolve group
+        group = ContactGroup.objects.filter(id=data['group_id'], organisation=org).first()
+        if not group:
+            raise NotFound('Group not found.')
+
+        # Get eligible members (active and not opted out)
+        members = Contact.objects.filter(contactgroupmember__group=group, is_active=True, opt_out=False)
+        if not members.exists():
+            raise ValidationError('No eligible contacts found in group.')
+
+        # Check monthly SMS limit
+        check_sms_limit(org)
+
+        # Prepare bulk SMS
+        recipients = [{'to': m.phone, 'message': data['message']} for m in members]
+
+        # Send via provider (calculates message_parts for each recipient)
+        provider = get_sms_provider()
+        bulk_result = provider.send_bulk_sms(recipients)
+
+        # Get message_parts from first result (all same message, so same parts)
+        message_parts = bulk_result['results'][0]['message_parts'] if bulk_result['results'] else 1
+
+        # Create parent schedule (group schedule)
+        parent_name = data['message'][:20] + ('...' if len(data['message']) > 20 else '')
+        parent = Schedule.objects.create(
+            organisation=org,
+            name=parent_name,
+            text=data['message'],
+            message_parts=message_parts,
+            group=group,
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.PROCESSING,
+            created_by=request.user,
+            updated_by=request.user,
+        )
+
+        # Create individual schedule records
+        successful = 0
+        failed = 0
+
+        for i, member in enumerate(members):
+            result = bulk_result['results'][i] if i < len(bulk_result['results']) else {'success': False, 'message_parts': message_parts}
+            is_success = result.get('success', False)
+
+            Schedule.objects.create(
+                organisation=org,
+                contact=member,
+                phone=member.phone,
+                text=data['message'],
+                group=group,
+                parent=parent,
+                scheduled_time=timezone.now(),
+                sent_time=timezone.now() if is_success else None,
+                status=ScheduleStatus.SENT if is_success else ScheduleStatus.FAILED,
+                message_parts=result.get('message_parts', message_parts),
+                format=MessageFormat.SMS,
+                error=result.get('error'),
+                created_by=request.user,
+                updated_by=request.user,
+            )
+
+            if is_success:
+                successful += 1
+            else:
+                failed += 1
+
+        # Update parent schedule
+        if failed == 0:
+            parent.status = ScheduleStatus.SENT
+        elif successful == 0:
+            parent.status = ScheduleStatus.FAILED
+            parent.error = f'All {failed} messages failed'
+        else:
+            parent.status = ScheduleStatus.SENT
+            parent.error = f'{failed} out of {successful + failed} messages failed'
+        parent.save()
+
+        total = successful + failed
+        http_status = 200 if failed == 0 else (207 if successful > 0 else 500)
+
+        return Response({
+            'success': failed == 0,
+            'message': f'SMS sent to group: {successful} successful, {failed} failed',
+            'results': {
+                'successful': successful,
+                'failed': failed,
+                'total': total,
+            },
+            'group_name': group.name,
+            'group_schedule_id': parent.id,
+        }, status=http_status)
+
+    @action(detail=False, methods=['post'], url_path='send-mms')
+    def send_mms(self, request):
+        """POST /api/sms/send-mms/ — send MMS with media."""
+        org = self._get_org(request)
+
+        serializer = SendMMSSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Check monthly MMS limit
+        check_mms_limit(org)
+
+        # Resolve contact if provided
+        contact = self._resolve_contact(data.get('contact_id'), org)
+
+        # Send via provider
+        provider = get_sms_provider()
+        result = provider.send_mms(
+            to=data['recipient'],
+            message=data['message'],
+            media_url=data['media_url'],
+            subject=data.get('subject'),
+        )
+
+        # Create Schedule record
+        Schedule.objects.create(
+            organisation=org,
+            contact=contact,
+            phone=data['recipient'],
+            text=data['message'],
+            scheduled_time=timezone.now(),
+            sent_time=timezone.now() if result['success'] else None,
+            status=ScheduleStatus.SENT if result['success'] else ScheduleStatus.FAILED,
+            message_parts=result['message_parts'],
+            format=MessageFormat.MMS,
+            media_url=data['media_url'],
+            subject=data.get('subject'),
+            error=result.get('error'),
+            created_by=request.user,
+            updated_by=request.user,
+        )
+
+        if result['success']:
+            return Response({
+                'success': True,
+                'message': f'MMS sent successfully to {data["recipient"]}',
+            })
+        else:
+            return Response({
+                'success': False,
+                'message': 'Failed to send MMS',
+                'error': result.get('error'),
+            }, status=500)
+
+    @action(detail=False, methods=['post'], url_path='upload-file')
+    def upload_file(self, request):
+        """POST /api/sms/upload-file/ — upload image for MMS (stub)."""
+        # Validate file is present
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({'success': False, 'message': 'No file provided.', 'error': 'File is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate file type
+        allowed_types = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif']
+        if uploaded.content_type.lower() not in allowed_types:
+            return Response({'success': False, 'error': 'Only PNG, JPEG, and GIF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate file size (400KB)
+        if uploaded.size > 400 * 1024:
+            return Response({'success': False, 'error': 'File size must be less than 400KB.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Stub: file storage not yet configured
+        return Response({
+            'success': False,
+            'message': 'File storage not configured',
+            'error': 'Cloud storage integration pending',
+        }, status=status.HTTP_501_NOT_IMPLEMENTED)

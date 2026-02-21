@@ -6,6 +6,28 @@ from rest_framework import serializers
 from app.models import *
 
 
+# Reusable validators
+def validate_phone_number(value):
+    """Validate and normalize Australian mobile number (04XXXXXXXX or +614XXXXXXXX)."""
+    cleaned = re.sub(r'\s+', '', value)
+    if cleaned.startswith('+614'):
+        cleaned = '0' + cleaned[3:]
+    if not re.match(r'^04\d{8}$', cleaned):
+        raise serializers.ValidationError(
+            'Phone must be an Australian mobile number (04XXXXXXXX or +614XXXXXXXX).'
+        )
+    return cleaned
+
+
+def validate_sms_message(value, allow_empty=False):
+    """Validate and clean SMS/MMS message text."""
+    cleaned = value.strip()
+    cleaned = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F]', '', cleaned)
+    if not allow_empty and not cleaned:
+        raise serializers.ValidationError('Message cannot be empty after cleaning.')
+    return cleaned
+
+
 class OrganisationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organisation
@@ -43,13 +65,7 @@ class ContactSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
     def validate_phone(self, value):
-        cleaned = re.sub(r'\s+', '', value)
-        # Accept +614XXXXXXXX and normalise to 04XXXXXXXX
-        if cleaned.startswith('+614'):
-            cleaned = '0' + cleaned[3:]
-        if not re.match(r'^04\d{8}$', cleaned):
-            raise serializers.ValidationError('Phone must be an Australian mobile number (04XXXXXXXX or +614XXXXXXXX).')
-        return cleaned
+        return validate_phone_number(value)
 
     def validate_first_name(self, value):
         return value.strip()[:100]
@@ -193,3 +209,42 @@ class ConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = Config
         fields = ['id', 'name', 'value']
+
+
+class SendSMSSerializer(serializers.Serializer):
+    message = serializers.CharField(min_length=1, max_length=306)
+    recipient = serializers.CharField()
+    contact_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+
+    def validate_message(self, value):
+        return validate_sms_message(value)
+
+    def validate_recipient(self, value):
+        return validate_phone_number(value)
+
+
+class SendGroupSMSSerializer(serializers.Serializer):
+    message = serializers.CharField(min_length=1, max_length=306)
+    group_id = serializers.IntegerField(min_value=1)
+
+    def validate_message(self, value):
+        return validate_sms_message(value)
+
+
+class SendMMSSerializer(serializers.Serializer):
+    message = serializers.CharField(max_length=306, allow_blank=True)
+    media_url = serializers.URLField()
+    recipient = serializers.CharField()
+    contact_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    subject = serializers.CharField(max_length=64, required=False, allow_blank=True, allow_null=True)
+
+    def validate_message(self, value):
+        return validate_sms_message(value, allow_empty=True)
+
+    def validate_recipient(self, value):
+        return validate_phone_number(value)
+
+    def validate_subject(self, value):
+        if value:
+            return value.strip()
+        return value

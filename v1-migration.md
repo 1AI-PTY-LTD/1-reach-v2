@@ -237,14 +237,108 @@ No filters on either version.
 |---|---|---|
 | `GET /api/stats/monthly` | `GET /api/stats/monthly/` | Scoped to org in v2; response keys use snake_case (`sms_sent` not `smsSent`) |
 
+#### SMS/MMS
+
+| v1 | v2 | Notes |
+|---|---|---|
+| `POST /api/sms/send` | `POST /api/sms/send/` | Uses pluggable provider (MockSMSProvider by default) |
+| `POST /api/sms/send-to-group` | `POST /api/sms/send-to-group/` | Creates parent + child schedules |
+| `POST /api/sms/send-mms` | `POST /api/sms/send-mms/` | Uses same provider abstraction |
+| `POST /api/sms/upload-file` | `POST /api/sms/upload-file/` | Stub — returns 501 (file storage not configured) |
+
+**Provider Abstraction (New in v2):**
+
+v1 had direct provider calls (Mobile Message API, AWS Pinpoint, MessageMedia) scattered throughout the service layer. v2 abstracts all SMS/MMS logic behind a pluggable provider interface:
+
+- **Base class:** `SMSProvider` (abstract) in `backend/app/utils/sms.py`
+- **Methods:** `send_sms()`, `send_bulk_sms()`, `send_mms()`
+- **Configuration:** `settings.SMS_PROVIDER_CLASS` (default: `'app.utils.sms.MockSMSProvider'`)
+- **Mock provider:** Logs operations, always returns success, doesn't send real messages
+- **Future providers:** Twilio, MessageMedia, AWS Pinpoint can be implemented by subclassing `SMSProvider`
+
+**Phone Validation:**
+- Both v1 and v2 accept `04XXXXXXXX` or `+614XXXXXXXX` formats
+- v2 normalizes all phones to `04XXXXXXXX` format before storing
+- Validation happens in provider base class (reusable across all providers)
+
+**Message Parts Calculation (Fixed in v2):**
+
+| Aspect | v1 | v2 |
+|---|---|---|
+| Logic | `message.length > 160 ? 2 : 1` | `length <= 160 ? 1 : Math.ceil(length / 153)` |
+| Accuracy | ❌ Caps at 2 parts (incorrect for 307+ char messages) | ✅ Accurate calculation accounting for SMS headers |
+| Location | Calculated in views | Calculated in provider, returned in result |
+
+v2 correctly accounts for the 7-byte header in concatenated SMS (153 chars per part instead of 160).
+
+**Limit Checking:**
+
+| Aspect | v1 | v2 |
+|---|---|---|
+| Implementation | Inline in each endpoint | Extracted to `check_sms_limit()` / `check_mms_limit()` in `app/utils/limits.py` |
+| Config source | `Config` table | Same (`Config` table) |
+| Timezone | Adelaide (hardcoded) | Adelaide (hardcoded in limit checker) |
+| Error handling | `try/catch` with custom responses | Raises `ValidationError` (DRF handles 400 response) |
+
+**Request/Response Differences:**
+
+**Send SMS:**
+```javascript
+// v1 request (camelCase)
+{ message, recipient, contactId }
+
+// v2 request (snake_case)
+{ message, recipient, contact_id }
+```
+
+**Send to Group:**
+```javascript
+// v1 response
+{
+  success: true,
+  message: "...",
+  results: { successful, failed, total },
+  groupName,
+  groupScheduleId
+}
+
+// v2 response (snake_case)
+{
+  success: true,
+  message: "...",
+  results: { successful, failed, total },
+  group_name,
+  group_schedule_id
+}
+```
+
+**Send MMS:**
+```javascript
+// v1 request
+{ message, mediaUrl, recipient, contactId, subject }
+
+// v2 request
+{ message, media_url, recipient, contact_id, subject }
+```
+
+**Error Handling Improvements:**
+
+v2 uses DRF exceptions consistently instead of mixing exception handling:
+- Organization validation: Raises `ValidationError` (400)
+- Contact/Group not found: Raises `NotFound` (404)
+- Limit exceeded: `check_sms_limit()` raises `ValidationError` (400)
+- No try/except blocks needed — DRF handles exception → HTTP response mapping
+
+**Storage Backend:**
+
+| Aspect | v1 | v2 |
+|---|---|---|
+| File storage | Azure Blob Storage (for MMS media) | Not yet implemented — stub returns 501 |
+| Upload endpoint | Functional | Validates file (PNG/JPEG/GIF, <400KB) but returns "File storage not configured" |
+
 #### Not Yet Migrated
 
-| v1 Endpoint | Status |
-|---|---|
-| `POST /api/sms/send` | Deferred (SMS sending) |
-| `POST /api/sms/send-to-group` | Deferred (SMS sending) |
-| `POST /api/sms/send-mms` | Deferred (MMS sending) |
-| `POST /api/sms/upload-file` | Deferred (file upload) |
+No remaining endpoints — all v1 API surface has been migrated!
 
 #### New in v2
 

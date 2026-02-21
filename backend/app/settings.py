@@ -165,6 +165,10 @@ CLERK_AUTHORIZED_PARTIES = [
 ]
 
 
+# SMS Provider
+SMS_PROVIDER_CLASS = 'app.utils.sms.MockSMSProvider'
+
+
 # Logging
 LOGGING = {
     'version': 1,
