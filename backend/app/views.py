@@ -27,6 +27,7 @@ from app.serializers import *
 from app.utils import clerk
 from app.utils.limits import check_sms_limit, check_mms_limit
 from app.utils.sms import get_sms_provider
+from app.utils.storage import get_storage_provider
 
 logger = logging.getLogger(__name__)
 
@@ -749,24 +750,29 @@ class SMSViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'], url_path='upload-file')
     def upload_file(self, request):
-        """POST /api/sms/upload-file/ — upload image for MMS (stub)."""
-        # Validate file is present
+        """POST /api/sms/upload-file/ — upload image for MMS."""
         uploaded = request.FILES.get('file')
         if not uploaded:
-            return Response({'success': False, 'message': 'No file provided.', 'error': 'File is required'}, status=status.HTTP_400_BAD_REQUEST)
+            raise ValidationError('No file provided.')
 
-        # Validate file type
-        allowed_types = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif']
-        if uploaded.content_type.lower() not in allowed_types:
-            return Response({'success': False, 'error': 'Only PNG, JPEG, and GIF files are allowed.'}, status=status.HTTP_400_BAD_REQUEST)
+        # Get storage provider and upload
+        # Validation happens in provider._validate_file()
+        provider = get_storage_provider()
+        result = provider.upload_file(
+            file_obj=uploaded,
+            filename=uploaded.name,
+            content_type=uploaded.content_type
+        )
 
-        # Validate file size (400KB)
-        if uploaded.size > 400 * 1024:
-            return Response({'success': False, 'error': 'File size must be less than 400KB.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Stub: file storage not yet configured
-        return Response({
-            'success': False,
-            'message': 'File storage not configured',
-            'error': 'Cloud storage integration pending',
-        }, status=status.HTTP_501_NOT_IMPLEMENTED)
+        if result['success']:
+            return Response({
+                'success': True,
+                'url': result['url'],
+                'file_id': result['file_id'],
+                'size': result['size'],
+            })
+        else:
+            return Response({
+                'success': False,
+                'error': result['error']
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

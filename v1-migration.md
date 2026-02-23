@@ -244,7 +244,7 @@ No filters on either version.
 | `POST /api/sms/send` | `POST /api/sms/send/` | Uses pluggable provider (MockSMSProvider by default) |
 | `POST /api/sms/send-to-group` | `POST /api/sms/send-to-group/` | Creates parent + child schedules |
 | `POST /api/sms/send-mms` | `POST /api/sms/send-mms/` | Uses same provider abstraction |
-| `POST /api/sms/upload-file` | `POST /api/sms/upload-file/` | Stub — returns 501 (file storage not configured) |
+| `POST /api/sms/upload-file` | `POST /api/sms/upload-file/` | Uses pluggable storage provider (MockStorageProvider by default) |
 
 **Provider Abstraction (New in v2):**
 
@@ -329,12 +329,26 @@ v2 uses DRF exceptions consistently instead of mixing exception handling:
 - Limit exceeded: `check_sms_limit()` raises `ValidationError` (400)
 - No try/except blocks needed — DRF handles exception → HTTP response mapping
 
-**Storage Backend:**
+**Storage Provider Abstraction (New in v2):**
+
+v1 had direct Azure Blob Storage calls in the upload endpoint. v2 abstracts all file storage behind a pluggable provider interface:
+
+- **Base class:** `StorageProvider` (abstract) in `backend/app/utils/storage.py`
+- **Methods:** `upload_file(file_obj, filename, content_type) -> dict`
+- **Configuration:** `settings.STORAGE_PROVIDER_CLASS` (default: `'app.utils.storage.MockStorageProvider'`)
+- **Mock provider:** Logs operations, returns fake URLs, doesn't store files
+- **Azure provider:** `AzureBlobStorageProvider` — uploads to Azure Blob Storage (v1 parity)
+- **Future providers:** AWS S3, Google Cloud Storage, local storage can be implemented by subclassing `StorageProvider`
+
+**File Storage Details:**
 
 | Aspect | v1 | v2 |
 |---|---|---|
-| File storage | Azure Blob Storage (for MMS media) | Not yet implemented — stub returns 501 |
-| Upload endpoint | Functional | Validates file (PNG/JPEG/GIF, <400KB) but returns "File storage not configured" |
+| File storage | Azure Blob Storage | Pluggable provider (Mock or Azure Blob Storage) |
+| Upload endpoint | Functional | Functional — uses `StorageProvider` abstraction |
+| File naming | UUID-based filenames | Same — UUID-based with preserved extension |
+| File validation | PNG/JPEG/GIF, 400KB max | Same — validation in `StorageProvider` base class |
+| Configuration | Hardcoded Azure SDK | Provider-based via `STORAGE_PROVIDER_CLASS` setting |
 
 #### Not Yet Migrated
 
@@ -368,3 +382,118 @@ No remaining endpoints — all v1 API surface has been migrated!
 | Status soft-delete | `DELETED` status | `CANCELLED` status + `is_active` field |
 | HTTP methods | GET, POST, PUT | GET, POST, PUT, PATCH |
 | Security headers | Helmet middleware (CSP, HSTS, X-Frame-Options, etc.) | Skipped — pure JSON API, no HTML rendered by backend |
+
+---
+
+## Migration Status & Production Readiness
+
+### ✅ Complete — API Surface Migration
+
+All v1 Express API endpoints have been migrated to v2 Django:
+
+- **Contacts** (was Customers) — CRUD, filtering, CSV import, schedules
+- **Groups** — CRUD, member management
+- **Templates** — CRUD
+- **Schedules** — CRUD, filtering by date
+- **Group Schedules** — CRUD, child schedule management
+- **Users** — list, detail, `/me/` endpoint
+- **Stats** — monthly SMS/MMS aggregates
+- **SMS/MMS** — send, send-to-group, send-mms, upload-file (stub)
+- **Configs** — CRUD (new, not exposed in v1)
+- **Webhooks** — Clerk user/org sync (new)
+
+### ✅ Complete — Core Infrastructure
+
+- **Multi-tenancy** — organisation scoping, Clerk integration
+- **Authentication** — Clerk JWT, tenant middleware
+- **Request logging** — request ID tracking, Winston-style logging
+- **Filtering** — django-filter with timezone-aware date defaults
+- **Pagination** — DRF pagination (50 per page)
+- **API documentation** — drf-spectacular (OpenAPI schema, Swagger UI, ReDoc)
+- **Provider abstraction** — pluggable SMS/MMS providers
+
+### ❌ Not Yet Implemented
+
+#### 1. **Real SMS/MMS Providers**
+
+| Aspect | Status |
+|---|---|
+| **v1 providers** | Mobile Message API (primary), AWS Pinpoint (fallback), MessageMedia (MMS) |
+| **v2 current** | `MockSMSProvider` only (logs operations, doesn't send) |
+| **What's needed** | Concrete provider implementations (Twilio, MessageMedia, AWS Pinpoint, etc.) |
+| **How to add** | Subclass `SMSProvider` in `backend/app/utils/sms.py`, implement `_send_sms_impl()`, `_send_bulk_sms_impl()`, `_send_mms_impl()` |
+| **Configuration** | Update `settings.SMS_PROVIDER_CLASS` to new provider class path |
+
+#### 2. **File Storage for MMS Media** ✅ Complete
+
+| Aspect | Status |
+|---|---|
+| **v1 storage** | Azure Blob Storage (hardcoded) |
+| **v2 implementation** | Provider abstraction in `backend/app/utils/storage.py` |
+| **Providers available** | • `MockStorageProvider` (dev/testing)<br>• `AzureBlobStorageProvider` (production, v1 parity) |
+| **Configuration** | `settings.STORAGE_PROVIDER_CLASS` and `STORAGE_PROVIDER_CONFIG` |
+| **File validation** | Implemented in `StorageProvider` base class (PNG/JPEG/GIF, <400KB) |
+| **Dependencies** | `azure-storage-blob==12.19.0` added to requirements.txt |
+| **Environment setup** | `AZURE_BLOB_URL` and `AZURE_CONTAINER` in `.envexample` |
+
+#### 3. **Background Job Processing**
+
+| Aspect | Status |
+|---|---|
+| **v1 implementation** | Likely used scheduled jobs to send messages at `scheduled_time` |
+| **v2 current** | Creates `Schedule` records but has no worker to process them |
+| **What's needed** | Background task queue (Celery, Django-Q, Huey) |
+| **Required tasks** | • Periodic task to check pending schedules<br>• Send messages at `scheduled_time`<br>• Update status (PENDING → SENT/FAILED)<br>• Handle retries for failed sends |
+| **Additional benefit** | Offload slow SMS/MMS sends from HTTP request cycle |
+
+#### 4. **Test Suite**
+
+| Aspect | Status |
+|---|---|
+| **v1 tests** | `.test.ts` files (Jest/Mocha) |
+| **v2 current** | No tests |
+| **What's needed** | Django/DRF test suite |
+| **Test categories** | • Unit tests (models, serializers, validators)<br>• Integration tests (ViewSets, filters)<br>• API tests (endpoint requests/responses)<br>• Provider tests (MockSMSProvider, future providers) |
+| **Framework** | pytest + pytest-django (recommended) or Django TestCase |
+
+#### 5. **Production Deployment Infrastructure**
+
+| Aspect | Status |
+|---|---|
+| **v1 deployment** | Express.js (likely Azure/AWS) |
+| **v2 current** | Development settings only |
+| **What's needed** | • Production settings file (`production.py`)<br>• WSGI/ASGI server (Gunicorn/Uvicorn)<br>• Static file serving (Whitenoise or CDN)<br>• Database migration strategy<br>• Environment variable management<br>• CI/CD pipeline<br>• Monitoring/logging (Sentry, DataDog, etc.) |
+
+### 🔄 Intentional Differences (Not Regressions)
+
+These differences are by design and improve upon v1:
+
+| Aspect | v1 | v2 | Benefit |
+|---|---|---|---|
+| **Multi-tenancy** | None | Organisation scoping | Supports multiple customers in one deployment |
+| **Auth provider** | Azure AD | Clerk | More flexible, better DX |
+| **Message parts** | Caps at 2 (incorrect) | Accurate calculation | Correct billing/limits for long messages |
+| **Error handling** | Mixed try/catch | DRF exceptions | Cleaner, more consistent code |
+| **SMS abstraction** | Direct provider calls | Pluggable provider interface | Easy to swap providers |
+| **Storage abstraction** | Direct Azure Blob calls | Pluggable provider interface | Easy to swap storage backends |
+| **Code organization** | Services + Controllers | ViewSets with inline logic | Simpler, fewer files to navigate |
+| **Field naming** | camelCase | snake_case | Python/Django convention |
+| **API versioning** | None | URL versioning ready | Can add `/api/v2/` when needed |
+
+### Production Readiness Checklist
+
+To make v2 production-ready:
+
+- [x] **API endpoints** — All migrated
+- [x] **Database models** — Complete with multi-tenancy
+- [x] **Authentication** — Clerk integration complete
+- [x] **Request logging** — Implemented
+- [x] **API documentation** — OpenAPI schema + Swagger UI
+- [x] **File storage** — Provider abstraction complete (Mock + Azure Blob Storage)
+- [ ] **Real SMS providers** — Need concrete implementations
+- [ ] **Background workers** — Need scheduled message processing
+- [ ] **Tests** — Need comprehensive test suite
+- [ ] **Production deployment** — Need infrastructure setup
+- [ ] **Monitoring** — Need error tracking, performance monitoring
+- [ ] **Rate limiting** — Consider adding DRF throttling
+- [ ] **API versioning strategy** — Consider if/when needed

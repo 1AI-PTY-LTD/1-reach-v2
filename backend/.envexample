@@ -13,3 +13,10 @@ DEBUG=1
 CLERK_FRONTEND_API=
 CLERK_SECRET_KEY=
 CLERK_WEBHOOK_SIGNING_SECRET=
+
+# Storage Provider (optional - defaults to MockStorageProvider)
+STORAGE_PROVIDER_CLASS=app.utils.storage.AzureBlobStorageProvider
+
+# Azure Blob Storage (required if using AzureBlobStorageProvider)
+AZURE_BLOB_URL=https://<account>.blob.core.windows.net/?<sas-token>
+AZURE_CONTAINER=media

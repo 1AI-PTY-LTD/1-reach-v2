@@ -169,6 +169,23 @@ CLERK_AUTHORIZED_PARTIES = [
 SMS_PROVIDER_CLASS = 'app.utils.sms.MockSMSProvider'
 
 
+# Storage Provider Configuration
+STORAGE_PROVIDER_CLASS = os.environ.get(
+    'STORAGE_PROVIDER_CLASS',
+    'app.utils.storage.MockStorageProvider'  # Default to mock for dev
+)
+
+STORAGE_PROVIDER_CONFIG = {
+    # Azure Blob Storage settings (only used if AzureBlobStorageProvider selected)
+    'account_url': os.environ.get('AZURE_BLOB_URL', ''),
+    'container': os.environ.get('AZURE_CONTAINER', 'media'),
+}
+
+# Optional: Django media files (for LocalStorageProvider if implemented)
+MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = '/media/'
+
+
 # Logging
 LOGGING = {
     'version': 1,
