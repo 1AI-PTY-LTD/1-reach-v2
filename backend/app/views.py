@@ -8,10 +8,10 @@ from datetime import datetime
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
-from rest_framework import status, viewsets
+from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -45,11 +45,22 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             organisationmembership__is_active=True,
         ).order_by('first_name', 'last_name')
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get', 'patch'])
     def me(self, request):
-        """GET /api/users/me/ — authenticated user + org context."""
-        serializer = MeSerializer(request.user, context={'request': request})
-        return Response(serializer.data)
+        """GET/PATCH /api/users/me/ — authenticated user."""
+        if request.method == 'GET':
+            serializer = UserSerializer(request.user)
+            # Exclude clerk_id from response
+            data = serializer.data
+            data.pop('clerk_id', None)
+            return Response(data)
+        else:  # PATCH
+            serializer = UserSerializer(request.user, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            data = serializer.data
+            data.pop('clerk_id', None)
+            return Response(data)
 
 
 class ClerkWebhookView(APIView):
@@ -259,11 +270,22 @@ class TemplateViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet)
     serializer_class = TemplateSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
     http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['name']
+
+    def perform_update(self, serializer):
+        """Auto-increment version on update."""
+        instance = serializer.save()
+        instance.version += 1
+        instance.save(update_fields=['version'])
 
 
 class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     queryset = Schedule.objects.exclude(
         status=ScheduleStatus.CANCELLED,
+    ).filter(
+        parent__isnull=True,  # Exclude child schedules
+        group__isnull=True,   # Exclude group schedules (handled by /api/group-schedules/)
     ).select_related('contact', 'template', 'group').order_by('-scheduled_time')
 
     serializer_class = ScheduleSerializer
@@ -282,7 +304,7 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
         instance.save(update_fields=['status', 'updated_by'])
 
 
-class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):
+class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
     """Manages group schedules — a parent Schedule linked to per-member child Schedules.
 
     A "group schedule" is a parent Schedule row (group set, no contact) with
@@ -290,6 +312,8 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):
     happen inside a transaction so the parent and children stay in sync.
     """
     permission_classes = [IsAuthenticated, IsOrgMember]
+    serializer_class = ScheduleSerializer
+    filterset_class = GroupScheduleFilter
 
     def get_queryset(self):
         # Only return parent-level group schedules for this org
@@ -325,6 +349,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):
         data = ScheduleSerializer(parent).data
         children = Schedule.objects.filter(parent=parent).select_related('contact')
         data['schedules'] = ScheduleSerializer(children, many=True).data
+        data['child_count'] = children.count()
         return Response(data)
 
     def create(self, request):
@@ -351,8 +376,8 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):
         elif text:
             text = text.strip()
 
-        # Ensure the group has members to schedule
-        members = Contact.objects.filter(contactgroupmember__group=group)
+        # Ensure the group has members to schedule (skip opted-out contacts)
+        members = Contact.objects.filter(contactgroupmember__group=group, opt_out=False)
         if not members.exists():
             return Response({'detail': 'Group has no members.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -446,7 +471,13 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):
         resp['schedules'] = ScheduleSerializer(children, many=True).data
         return Response(resp)
 
-    def destroy(self, request, pk=None):
+    def partial_update(self, request, pk=None):
+        """PATCH /api/group-schedules/{id}/ - same as update."""
+        return self.update(request, pk)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """POST /api/group-schedules/{id}/cancel/ - cancel parent and pending children."""
         parent = self.get_queryset().filter(pk=pk).first()
         if not parent:
             return Response(status=status.HTTP_404_NOT_FOUND)
@@ -467,6 +498,28 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):
             parent.save()
 
         return Response({'message': 'Group schedule cancelled.'})
+
+    def destroy(self, request, pk=None):
+        parent = self.get_queryset().filter(pk=pk).first()
+        if not parent:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        if parent.status != ScheduleStatus.PENDING:
+            return Response(
+                {'detail': 'Only pending group schedules can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Cancel the parent and all pending children atomically
+        with transaction.atomic():
+            Schedule.objects.filter(
+                parent=parent, status=ScheduleStatus.PENDING,
+            ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
+            parent.status = ScheduleStatus.CANCELLED
+            parent.updated_by = request.user
+            parent.save()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class StatsView(APIView):
@@ -621,8 +674,29 @@ class SMSViewSet(viewsets.ViewSet):
         if not members.exists():
             raise ValidationError('No eligible contacts found in group.')
 
-        # Check monthly SMS limit
-        check_sms_limit(org)
+        # Check monthly SMS limit (accounting for bulk send size)
+        member_count = members.count()
+
+        config = Config.objects.filter(organisation=org, name='sms_limit').first()
+        if config:
+            limit = int(config.value)
+            ADELAIDE_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
+            now = datetime.now(ADELAIDE_TZ)
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            current_count = Schedule.objects.filter(
+                organisation=org,
+                scheduled_time__gte=month_start,
+            ).filter(
+                Q(format=MessageFormat.SMS) | Q(format__isnull=True)
+            ).exclude(
+                status='cancelled'
+            ).count()
+
+            if current_count + member_count > limit:
+                raise ValidationError(
+                    f'Monthly SMS limit would be exceeded ({current_count + member_count}/{limit}). Cannot send to {member_count} recipients.'
+                )
 
         # Prepare bulk SMS
         recipients = [{'to': m.phone, 'message': data['message']} for m in members]

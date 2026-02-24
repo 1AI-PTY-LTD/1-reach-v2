@@ -2,9 +2,10 @@ import datetime
 import zoneinfo
 
 from django.db.models import Q
+from django.db.models.functions import TruncDate
 from django_filters import rest_framework as filters
 
-from app.models import Contact, ContactGroup, Schedule
+from app.models import Contact, ContactGroup, Schedule, ScheduleStatus
 
 DEFAULT_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
 
@@ -38,15 +39,23 @@ class ContactFilter(filters.FilterSet):
 
 
 class ContactGroupFilter(filters.FilterSet):
-    search = filters.CharFilter(field_name='name', lookup_expr='icontains', min_length=2)
+    search = filters.CharFilter(method='filter_search', min_length=2)
 
     class Meta:
         model = ContactGroup
         fields = []
 
+    def filter_search(self, queryset, name, value):
+        return queryset.filter(
+            Q(name__icontains=value) | Q(description__icontains=value)
+        )
+
 
 class ScheduleFilter(filters.FilterSet):
     date = filters.DateFilter(field_name='scheduled_time', lookup_expr='date')
+    date_from = filters.DateFilter(field_name='scheduled_time', lookup_expr='gte')
+    date_to = filters.DateFilter(field_name='scheduled_time', lookup_expr='lte')
+    status = filters.ChoiceFilter(choices=ScheduleStatus.choices)
 
     class Meta:
         model = Schedule
@@ -55,9 +64,17 @@ class ScheduleFilter(filters.FilterSet):
     @property
     def qs(self):
         queryset = super().qs
-        if 'date' not in self.data:
-            today = _get_today(self.request)
-            queryset = queryset.filter(scheduled_time__date=today)
+        # Only apply default today filter if no date filters provided
+        if 'date' not in self.data and 'date_from' not in self.data and 'date_to' not in self.data:
+            if self.request:
+                today = _get_today(self.request)
+            else:
+                # In tests or when no request, use Adelaide timezone default
+                today = datetime.datetime.now(DEFAULT_TZ).date()
+            # Use timezone-aware date filtering
+            queryset = queryset.annotate(
+                scheduled_date=TruncDate('scheduled_time', tzinfo=DEFAULT_TZ)
+            ).filter(scheduled_date=today)
         return queryset
 
 
@@ -72,7 +89,15 @@ class GroupScheduleFilter(filters.FilterSet):
     @property
     def qs(self):
         queryset = super().qs
+        # Only apply default today filter if no date filter provided
         if 'date' not in self.data:
-            today = _get_today(self.request)
-            queryset = queryset.filter(scheduled_time__date=today)
+            if self.request:
+                today = _get_today(self.request)
+            else:
+                # In tests or when no request, use Adelaide timezone default
+                today = datetime.datetime.now(DEFAULT_TZ).date()
+            # Use timezone-aware date filtering
+            queryset = queryset.annotate(
+                scheduled_date=TruncDate('scheduled_time', tzinfo=DEFAULT_TZ)
+            ).filter(scheduled_date=today)
         return queryset

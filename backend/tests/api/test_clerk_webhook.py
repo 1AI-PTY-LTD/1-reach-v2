@@ -2,7 +2,7 @@
 Tests for Clerk webhook endpoint.
 
 Tests:
-- POST /api/clerk/webhook/ handles all event types
+- POST /api/webhooks/clerk/ handles all event types
 - Signature verification
 - Event processing (user, organization, membership events)
 """
@@ -16,14 +16,20 @@ from app.models import Organisation, OrganisationMembership, User
 from tests.factories import OrganisationFactory, UserFactory
 
 
+# Helper to mock webhook signature verification
+def mock_webhook_verify(body, headers):
+    """Mock svix.Webhook.verify() - parses and returns the JSON payload."""
+    return json.loads(body)
+
+
 @pytest.mark.django_db
 class TestClerkWebhook:
-    """Tests for POST /api/clerk/webhook/ endpoint."""
+    """Tests for POST /api/webhooks/clerk/ endpoint."""
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_user_created_event(self, mock_verify, api_client):
         """user.created webhook creates User."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         payload = {
             'type': 'user.created',
@@ -36,7 +42,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -47,10 +53,10 @@ class TestClerkWebhook:
         assert user.first_name == 'John'
         assert user.email == 'john@example.com'
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_user_updated_event(self, mock_verify, api_client):
         """user.updated webhook updates User."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         user = UserFactory(clerk_id='user_123', first_name='Old')
 
@@ -65,7 +71,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -76,10 +82,10 @@ class TestClerkWebhook:
         assert user.first_name == 'New'
         assert user.email == 'updated@example.com'
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_user_deleted_event(self, mock_verify, api_client):
         """user.deleted webhook soft-deletes User."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         user = UserFactory(clerk_id='user_123')
 
@@ -89,7 +95,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -99,10 +105,10 @@ class TestClerkWebhook:
         user.refresh_from_db()
         assert user.is_active is False
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_organization_created_event(self, mock_verify, api_client):
         """organization.created webhook creates Organisation."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         payload = {
             'type': 'organization.created',
@@ -114,7 +120,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -125,10 +131,10 @@ class TestClerkWebhook:
         assert org.name == 'Acme Corp'
         assert org.slug == 'acme-corp'
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_organization_updated_event(self, mock_verify, api_client):
         """organization.updated webhook updates Organisation."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         org = OrganisationFactory(clerk_org_id='org_123', name='Old')
 
@@ -142,7 +148,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -152,10 +158,10 @@ class TestClerkWebhook:
         org.refresh_from_db()
         assert org.name == 'New Name'
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_organization_deleted_event(self, mock_verify, api_client):
         """organization.deleted webhook soft-deletes Organisation."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         org = OrganisationFactory(clerk_org_id='org_123')
 
@@ -165,7 +171,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -175,10 +181,10 @@ class TestClerkWebhook:
         org.refresh_from_db()
         assert org.is_active is False
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_organization_membership_created_event(self, mock_verify, api_client):
         """organizationMembership.created webhook creates membership."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         user = UserFactory(clerk_id='user_123')
         org = OrganisationFactory(clerk_org_id='org_123')
@@ -193,7 +199,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -203,10 +209,10 @@ class TestClerkWebhook:
         membership = OrganisationMembership.objects.get(user=user, organisation=org)
         assert membership.role == 'admin'
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_organization_membership_deleted_event(self, mock_verify, api_client):
         """organizationMembership.deleted webhook soft-deletes membership."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         user = UserFactory(clerk_id='user_123')
         org = OrganisationFactory(clerk_org_id='org_123')
@@ -222,7 +228,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -241,7 +247,7 @@ class TestClerkWebhook:
 
         # Without signature verification mock, should fail
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )
@@ -253,10 +259,10 @@ class TestClerkWebhook:
             status.HTTP_403_FORBIDDEN
         ]
 
-    @patch('app.views.verify_clerk_signature')
+    @patch('svix.Webhook.verify')
     def test_webhook_handles_unknown_event_type(self, mock_verify, api_client):
         """Unknown event types handled gracefully."""
-        mock_verify.return_value = True
+        mock_verify.side_effect = mock_webhook_verify
 
         payload = {
             'type': 'unknown.event',
@@ -264,7 +270,7 @@ class TestClerkWebhook:
         }
 
         response = api_client.post(
-            '/api/clerk/webhook/',
+            '/api/webhooks/clerk/',
             data=json.dumps(payload),
             content_type='application/json'
         )

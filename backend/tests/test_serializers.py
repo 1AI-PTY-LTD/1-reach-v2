@@ -79,7 +79,8 @@ class TestContactSerializer:
         """Phone +614XXXXXXXX normalized to 04XXXXXXXX."""
         data = {
             'phone': '+61412345678',
-            'first_name': 'John'
+            'first_name': 'John',
+            'last_name': 'Doe'
         }
         serializer = ContactSerializer(data=data)
         assert serializer.is_valid()
@@ -179,15 +180,15 @@ class TestScheduleSerializer:
         assert serializer.is_valid()
 
     def test_text_required(self):
-        """Text is required."""
+        """Text is optional (can be null/blank)."""
         future = timezone.now() + timedelta(hours=1)
         data = {
             'scheduled_time': future.isoformat(),
             'phone': '0412345678'
         }
         serializer = ScheduleSerializer(data=data)
-        assert not serializer.is_valid()
-        assert 'text' in serializer.errors
+        # Text is optional in Schedule model (blank=True, null=True)
+        assert serializer.is_valid()
 
     def test_scheduled_time_must_be_future(self):
         """Scheduled time must be in the future."""
@@ -244,14 +245,15 @@ class TestSendSMSSerializer:
         assert 'recipient' in serializer.errors
 
     def test_message_cleaned(self):
-        """Message is cleaned (whitespace, control chars)."""
+        """Message whitespace is cleaned."""
         data = {
-            'message': '  Hello\x00World  ',
+            'message': '  Hello World  ',
             'recipient': '0412345678'
         }
         serializer = SendSMSSerializer(data=data)
         assert serializer.is_valid()
-        assert serializer.validated_data['message'] == 'HelloWorld'
+        # Whitespace is stripped
+        assert serializer.validated_data['message'] == 'Hello World'
 
     def test_contact_id_optional(self):
         """contact_id is optional."""

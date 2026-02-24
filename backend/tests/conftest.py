@@ -293,7 +293,7 @@ def config_mms_limit(db, organisation):
 @pytest.fixture
 def mock_sms_provider():
     """Mock the SMS provider."""
-    with patch('app.utils.sms.get_sms_provider') as mock:
+    with patch('app.views.get_sms_provider') as mock:
         provider = Mock()
         provider.send_sms.return_value = {
             'success': True,
@@ -301,11 +301,17 @@ def mock_sms_provider():
             'error': None,
             'message_parts': 1
         }
-        provider.send_bulk_sms.return_value = {
-            'success': True,
-            'results': [],
-            'error': None
-        }
+        # Mock send_bulk_sms to dynamically return results based on number of recipients
+        def mock_bulk_send(recipients):
+            return {
+                'success': True,
+                'results': [
+                    {'success': True, 'message_id': f'mock-sms-{i}', 'error': None, 'message_parts': 1}
+                    for i in range(len(recipients))
+                ],
+                'error': None
+            }
+        provider.send_bulk_sms.side_effect = mock_bulk_send
         provider.send_mms.return_value = {
             'success': True,
             'message_id': 'mock-mms-123',
@@ -319,7 +325,7 @@ def mock_sms_provider():
 @pytest.fixture
 def mock_storage_provider():
     """Mock the storage provider."""
-    with patch('app.utils.storage.get_storage_provider') as mock:
+    with patch('app.views.get_storage_provider') as mock:
         provider = Mock()
         provider.upload_file.return_value = {
             'success': True,
@@ -336,7 +342,7 @@ def mock_storage_provider():
 @pytest.fixture
 def mock_check_sms_limit():
     """Mock SMS limit checking."""
-    with patch('app.utils.limits.check_sms_limit') as mock:
+    with patch('app.views.check_sms_limit') as mock:
         mock.return_value = None  # No exception = limit not exceeded
         yield mock
 
@@ -344,7 +350,7 @@ def mock_check_sms_limit():
 @pytest.fixture
 def mock_check_mms_limit():
     """Mock MMS limit checking."""
-    with patch('app.utils.limits.check_mms_limit') as mock:
+    with patch('app.views.check_mms_limit') as mock:
         mock.return_value = None  # No exception = limit not exceeded
         yield mock
 

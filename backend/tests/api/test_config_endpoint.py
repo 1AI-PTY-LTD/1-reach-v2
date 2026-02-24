@@ -125,21 +125,21 @@ class TestConfigDelete:
     """Tests for DELETE /api/configs/{id}/ endpoint."""
 
     def test_delete_config(self, authenticated_client, organisation):
-        """Deleting config succeeds."""
+        """DELETE method not allowed for configs (no hard delete)."""
         config = ConfigFactory(organisation=organisation)
 
         response = authenticated_client.delete(f'/api/configs/{config.id}/')
 
-        assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
 
-        # Verify deleted
-        assert not Config.objects.filter(id=config.id).exists()
+        # Verify config still exists (no hard delete)
+        assert Config.objects.filter(id=config.id).exists()
 
     def test_delete_enforces_org_isolation(self, authenticated_client):
-        """Cannot delete config from different org."""
+        """DELETE method not allowed for configs."""
         other_org = OrganisationFactory()
         config = ConfigFactory(organisation=other_org)
 
         response = authenticated_client.delete(f'/api/configs/{config.id}/')
 
-        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED

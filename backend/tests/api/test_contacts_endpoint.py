@@ -135,7 +135,8 @@ class TestContactCreate:
         """Phone number normalized on create."""
         data = {
             'phone': '+61412345678',
-            'first_name': 'Test'
+            'first_name': 'Test',
+            'last_name': 'User'
         }
 
         response = authenticated_client.post('/api/contacts/', data)
@@ -265,7 +266,7 @@ class TestContactDelete:
 
 @pytest.mark.django_db
 class TestContactImportCSV:
-    """Tests for POST /api/contacts/import-csv/ endpoint."""
+    """Tests for POST /api/contacts/import/ endpoint."""
 
     def test_import_csv_creates_contacts(self, authenticated_client, organisation):
         """CSV import creates contacts."""
@@ -273,15 +274,16 @@ class TestContactImportCSV:
         csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
 
         response = authenticated_client.post(
-            '/api/contacts/import-csv/',
+            '/api/contacts/import/',
             {'file': csv_file},
             format='multipart'
         )
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.data['total'] == 2
-        assert response.data['created'] == 2
-        assert response.data['errors'] == 0
+        assert response.data['record_count'] == 2
+        assert response.data['success_count'] == 2
+        assert response.data['error_count'] == 0
+        assert response.data['status'] == 'success'
 
         # Verify contacts created
         assert Contact.objects.filter(organisation=organisation).count() == 2
@@ -292,20 +294,21 @@ class TestContactImportCSV:
         csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
 
         response = authenticated_client.post(
-            '/api/contacts/import-csv/',
+            '/api/contacts/import/',
             {'file': csv_file},
             format='multipart'
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data['total'] == 3
-        assert response.data['created'] == 2  # Only valid rows
-        assert response.data['errors'] == 1
+        assert response.status_code == 207  # Multi-Status when there are errors
+        assert response.data['record_count'] == 3
+        assert response.data['success_count'] == 2  # Only valid rows
+        assert response.data['error_count'] == 1
+        assert response.data['status'] == 'partial'
 
     def test_import_csv_requires_file(self, authenticated_client):
         """Import without file rejected."""
         response = authenticated_client.post(
-            '/api/contacts/import-csv/',
+            '/api/contacts/import/',
             {},
             format='multipart'
         )

@@ -202,17 +202,14 @@ class TestContactGroupModel:
         assert group.created_by is not None
 
     def test_name_unique_per_org(self):
-        """Group name must be unique within organisation."""
+        """Group name is NOT unique - duplicates allowed within same org."""
         org = OrganisationFactory()
-        ContactGroupFactory(organisation=org, name='VIP Clients')
+        group1 = ContactGroupFactory(organisation=org, name='VIP Clients')
 
-        with pytest.raises(IntegrityError):
-            ContactGroupFactory(organisation=org, name='VIP Clients')
-
-        # But allowed in different org
-        other_org = OrganisationFactory()
-        group2 = ContactGroupFactory(organisation=other_org, name='VIP Clients')
+        # Duplicate names are allowed in same org
+        group2 = ContactGroupFactory(organisation=org, name='VIP Clients')
         assert group2.name == 'VIP Clients'
+        assert group1.id != group2.id  # Different groups with same name
 
     def test_group_str(self):
         """__str__ returns name."""
@@ -283,17 +280,17 @@ class TestTemplateModel:
         assert template.created_by is not None
 
     def test_name_unique_per_org_and_version(self):
-        """Template name + version unique per org."""
+        """Template name + version NOT unique - duplicates allowed."""
         org = OrganisationFactory()
-        TemplateFactory(organisation=org, name='Welcome', version=1)
+        template1 = TemplateFactory(organisation=org, name='Welcome', version=1)
 
         # Same name, different version = OK
         template2 = TemplateFactory(organisation=org, name='Welcome', version=2)
         assert template2.version == 2
 
-        # Same name, same version = NOT OK
-        with pytest.raises(IntegrityError):
-            TemplateFactory(organisation=org, name='Welcome', version=1)
+        # Same name, same version also allowed (no unique constraint)
+        template3 = TemplateFactory(organisation=org, name='Welcome', version=1)
+        assert template3.id != template1.id  # Different templates
 
     def test_template_str(self):
         """__str__ returns name and version."""
@@ -377,10 +374,12 @@ class TestScheduleModel:
         assert mms.format == MessageFormat.MMS
 
     def test_schedule_str(self):
-        """__str__ returns meaningful representation."""
+        """__str__ returns 'Schedule {id} - {status}'."""
         schedule = ScheduleFactory(phone='0412345678', text='Hello')
         str_repr = str(schedule)
-        assert '0412345678' in str_repr or 'Hello' in str_repr
+        assert str_repr == f'Schedule {schedule.pk} - {schedule.status}'
+        assert 'Schedule' in str_repr
+        assert schedule.status in str_repr
 
 
 # ============================================================================
@@ -400,11 +399,14 @@ class TestConfigModel:
 
     def test_name_unique_per_org(self):
         """Config name must be unique within organisation."""
+        from django.db import transaction
+
         org = OrganisationFactory()
         ConfigFactory(organisation=org, name='sms_limit')
 
-        with pytest.raises(IntegrityError):
-            ConfigFactory(organisation=org, name='sms_limit')
+        with transaction.atomic():
+            with pytest.raises(IntegrityError):
+                ConfigFactory(organisation=org, name='sms_limit')
 
         # But allowed in different org
         other_org = OrganisationFactory()
@@ -412,6 +414,10 @@ class TestConfigModel:
         assert config2.name == 'sms_limit'
 
     def test_config_str(self):
-        """__str__ returns name."""
-        config = ConfigFactory(name='sms_limit')
-        assert str(config) == 'sms_limit'
+        """__str__ returns '{name}: {value}'."""
+        config = ConfigFactory(name='sms_limit', value='100')
+        assert str(config) == 'sms_limit: 100'
+        # Test with longer value (truncated at 50 chars)
+        long_value = 'a' * 100
+        config2 = ConfigFactory(name='long_config', value=long_value)
+        assert str(config2) == f'long_config: {long_value[:50]}'

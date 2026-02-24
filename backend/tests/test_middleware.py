@@ -25,9 +25,11 @@ class TestClerkTenantMiddleware:
         request.user = Mock()
         request.user.is_authenticated = True
         request.auth = {
-            'org_id': 'org_123',
-            'org_role': 'member',
-            'org_permissions': []
+            'o': {
+                'id': 'org_123',
+                'rol': 'member',
+                'per': ''
+            }
         }
 
         get_response = lambda r: HttpResponse()
@@ -61,9 +63,11 @@ class TestClerkTenantMiddleware:
         request.user = Mock()
         request.user.is_authenticated = True
         request.auth = {
-            'org_id': 'org_nonexistent',
-            'org_role': 'member',
-            'org_permissions': []
+            'o': {
+                'id': 'org_nonexistent',
+                'rol': 'member',
+                'per': ''
+            }
         }
 
         get_response = lambda r: HttpResponse()
@@ -95,9 +99,11 @@ class TestClerkTenantMiddleware:
         request.user = Mock()
         request.user.is_authenticated = True
         request.auth = {
-            'org_id': 'org_123',
-            'org_role': 'admin',
-            'org_permissions': ['*']
+            'o': {
+                'id': 'org_123',
+                'rol': 'admin',
+                'per': '*'
+            }
         }
 
         get_response = lambda r: HttpResponse()

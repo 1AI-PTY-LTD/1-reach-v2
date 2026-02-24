@@ -356,10 +356,14 @@ class TestGroupScheduleDelete:
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
-        # Verify deletion (soft delete via is_active=False or actual deletion)
-        # This depends on implementation - adjust as needed
-        assert not Schedule.objects.filter(id=parent.id, is_active=True).exists()
-        assert not Schedule.objects.filter(id=child_pending.id, is_active=True).exists()
+        # Verify deletion (soft delete via status=CANCELLED)
+        parent.refresh_from_db()
+        child_pending.refresh_from_db()
+        child_sent.refresh_from_db()
+
+        assert parent.status == ScheduleStatus.CANCELLED
+        assert child_pending.status == ScheduleStatus.CANCELLED
+        assert child_sent.status == ScheduleStatus.SENT  # SENT children not cancelled
 
         # SENT child preserved
         child_sent.refresh_from_db()

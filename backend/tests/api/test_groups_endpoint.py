@@ -150,44 +150,46 @@ class TestContactGroupMembers:
     """Tests for group member management endpoints."""
 
     def test_add_member(self, authenticated_client, organisation, user):
-        """POST /api/groups/{id}/add-member/ adds member."""
+        """POST /api/groups/{id}/members/ adds member."""
         group = ContactGroupFactory(organisation=organisation, created_by=user)
         contact = ContactFactory(organisation=organisation, created_by=user)
 
-        data = {'contact_id': contact.id}
+        data = {'contact_ids': [contact.id]}
 
         response = authenticated_client.post(
-            f'/api/groups/{group.id}/add-member/',
+            f'/api/groups/{group.id}/members/',
             data
         )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['added_count'] == 1
 
         # Verify member added
         member = ContactGroupMember.objects.filter(group=group, contact=contact).first()
         assert member is not None
 
     def test_remove_member(self, authenticated_client, organisation, user):
-        """POST /api/groups/{id}/remove-member/ removes member."""
+        """DELETE /api/groups/{id}/members/ removes member."""
         group = ContactGroupFactory(organisation=organisation, created_by=user)
         contact = ContactFactory(organisation=organisation, created_by=user)
         ContactGroupMemberFactory(group=group, contact=contact)
 
-        data = {'contact_id': contact.id}
+        data = {'contact_ids': [contact.id]}
 
-        response = authenticated_client.post(
-            f'/api/groups/{group.id}/remove-member/',
+        response = authenticated_client.delete(
+            f'/api/groups/{group.id}/members/',
             data
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert response.data['removed_count'] == 1
 
         # Verify member removed
         member = ContactGroupMember.objects.filter(group=group, contact=contact).first()
         assert member is None
 
     def test_bulk_add_members(self, authenticated_client, organisation, user):
-        """POST /api/groups/{id}/bulk-add-members/ adds multiple."""
+        """POST /api/groups/{id}/members/ adds multiple."""
         group = ContactGroupFactory(organisation=organisation, created_by=user)
         contact1 = ContactFactory(organisation=organisation, created_by=user)
         contact2 = ContactFactory(organisation=organisation, created_by=user)
@@ -195,9 +197,10 @@ class TestContactGroupMembers:
         data = {'contact_ids': [contact1.id, contact2.id]}
 
         response = authenticated_client.post(
-            f'/api/groups/{group.id}/bulk-add-members/',
+            f'/api/groups/{group.id}/members/',
             data
         )
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['added_count'] == 2
         assert ContactGroupMember.objects.filter(group=group).count() == 2

@@ -102,6 +102,24 @@ class ContactGroupSerializer(serializers.ModelSerializer):
             return value.strip()[:500]
         return value
 
+    def create(self, validated_data):
+        """Create ContactGroup and optionally add members."""
+        member_ids = validated_data.pop('member_ids', [])
+        group = ContactGroup.objects.create(**validated_data)
+
+        # Add members if provided
+        if member_ids:
+            from app.models import Contact, ContactGroupMember
+            request = self.context.get('request')
+            org = request.organisation if request else None
+
+            for contact_id in member_ids:
+                contact = Contact.objects.filter(id=contact_id, organisation=org).first()
+                if contact:
+                    ContactGroupMember.objects.create(group=group, contact=contact)
+
+        return group
+
 
 class GroupMemberActionSerializer(serializers.Serializer):
     contact_ids = serializers.ListField(
