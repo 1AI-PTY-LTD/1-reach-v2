@@ -45,16 +45,24 @@ def _handle_organisation_updated(data):
 
 
 def _handle_organisation_deleted(data):
+    # Soft-delete the organisation
     Organisation.objects.filter(clerk_org_id=data['id']).update(is_active=False)
-    
+
+    # Cascade soft-delete to related tenant objects that have is_active
+    Contact.objects.filter(organisation__clerk_org_id=data['id']).update(is_active=False)
+    ContactGroup.objects.filter(organisation__clerk_org_id=data['id']).update(is_active=False)
+    Template.objects.filter(organisation__clerk_org_id=data['id']).update(is_active=False)
+
+    # Soft-delete memberships
     memberships = OrganisationMembership.objects.filter(organisation__clerk_org_id=data['id'], is_active=True)
     memberships.update(is_active=False)
-    
+
+    # Soft-delete users who have no other active memberships
     user_ids = list(memberships.values_list('user_id', flat=True))
     User.objects.filter(
         id__in=user_ids,
     ).exclude(
-        memberships__is_active=True,
+        organisationmembership__is_active=True,
     ).update(is_active=False)
 
 

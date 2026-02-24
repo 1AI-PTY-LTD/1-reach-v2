@@ -43,31 +43,30 @@ def api_client():
 
 
 @pytest.fixture
-def authenticated_client(api_client, user, organisation, org_membership):
-    """Return an authenticated API client with JWT token."""
-    # Mock the authentication to set user and org on request
-    # In real tests, we'd generate a proper JWT token
-    api_client.force_authenticate(user=user)
+def authenticated_client(user, organisation, org_membership):
+    """Return an authenticated API client with JWT token and org context."""
+    client = APIClient()
+    client.force_authenticate(user=user)
 
-    # Mock middleware attributes
-    def add_org_context(request):
-        request.user = user
+    # Monkey-patch DRF's APIView dispatch to inject org context
+    from rest_framework.views import APIView
+    original_dispatch = APIView.dispatch
+
+    def patched_dispatch(self, request, *args, **kwargs):
+        """Dispatch with org context injected."""
+        # Inject org context that middleware would normally add
         request.org = organisation
+        request.org_id = organisation.clerk_org_id
         request.org_role = 'member'
         request.org_permissions = []
-        return request
+        return original_dispatch(self, request, *args, **kwargs)
 
-    # Patch the middleware to add org context
-    original_request = api_client.request
-    def patched_request(*args, **kwargs):
-        response = original_request(*args, **kwargs)
-        return response
+    APIView.dispatch = patched_dispatch
 
-    api_client.request = patched_request
-    api_client._user = user
-    api_client._org = organisation
+    yield client
 
-    return api_client
+    # Restore original
+    APIView.dispatch = original_dispatch
 
 
 # ============================================================================

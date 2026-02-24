@@ -20,7 +20,7 @@ from rest_framework.views import APIView
 from svix.webhooks import Webhook, WebhookVerificationError
 
 from app.filters import ContactFilter, ContactGroupFilter, GroupScheduleFilter, ScheduleFilter
-from app.mixins import TenantScopedMixin
+from app.mixins import SoftDeleteMixin, TenantScopedMixin
 from app.models import *
 from app.permissions import IsOrgMember
 from app.serializers import *
@@ -88,12 +88,12 @@ class ClerkWebhookView(APIView):
         return Response({'status': 'ok'})
 
 
-class ContactViewSet(TenantScopedMixin, viewsets.ModelViewSet):
+class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
     queryset = Contact.objects.order_by('-created_at')
     serializer_class = ContactSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
     filterset_class = ContactFilter
-    http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
     @action(detail=True, methods=['get'])
     def schedules(self, request, pk=None):
@@ -193,7 +193,7 @@ class ContactViewSet(TenantScopedMixin, viewsets.ModelViewSet):
         )
 
 
-class ContactGroupViewSet(TenantScopedMixin, viewsets.ModelViewSet):
+class ContactGroupViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
     queryset = ContactGroup.objects.all()
     serializer_class = ContactGroupSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
@@ -254,11 +254,11 @@ class ContactGroupViewSet(TenantScopedMixin, viewsets.ModelViewSet):
             )
 
 
-class TemplateViewSet(TenantScopedMixin, viewsets.ModelViewSet):
+class TemplateViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
     queryset = Template.objects.filter(is_active=True).order_by('name')
     serializer_class = TemplateSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
-    http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
 
 class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
@@ -269,7 +269,17 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     serializer_class = ScheduleSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
     filterset_class = ScheduleFilter
-    http_method_names = ['get', 'post', 'put', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
+
+    def perform_destroy(self, instance):
+        """Soft delete by setting status=CANCELLED (v1 used DELETED, v2 uses CANCELLED)."""
+        # Only allow deleting PENDING schedules
+        if instance.status != ScheduleStatus.PENDING:
+            raise ValidationError(f'Cannot delete schedule - only {ScheduleStatus.PENDING} schedules can be deleted')
+
+        instance.status = ScheduleStatus.CANCELLED
+        instance.updated_by = self.request.user
+        instance.save(update_fields=['status', 'updated_by'])
 
 
 class GroupScheduleViewSet(TenantScopedMixin, viewsets.ViewSet):

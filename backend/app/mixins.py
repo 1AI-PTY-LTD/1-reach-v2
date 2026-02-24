@@ -1,4 +1,27 @@
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.exceptions import MethodNotAllowed
+
 from .models import Organisation
+
+
+class SoftDeleteMixin:
+    """
+    Mixin for DRF viewsets that implements soft delete.
+    Sets is_active=False instead of deleting the object from the database.
+    Only works with models that have an is_active field.
+    """
+    def perform_destroy(self, instance):
+        """Soft delete by setting is_active=False."""
+        if not hasattr(instance, 'is_active'):
+            raise MethodNotAllowed('DELETE', detail='This resource does not support deletion')
+
+        instance.is_active = False
+        if hasattr(instance, 'updated_by'):
+            instance.updated_by = self.request.user
+            instance.save(update_fields=['is_active', 'updated_by'])
+        else:
+            instance.save(update_fields=['is_active'])
 
 
 class TenantScopedMixin:

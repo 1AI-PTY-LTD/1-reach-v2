@@ -145,7 +145,6 @@ class ScheduleFactory(DjangoModelFactory):
     status = ScheduleStatus.PENDING
     format = MessageFormat.SMS
     message_parts = 1
-    is_active = True
     created_by = factory.SubFactory(UserFactory)
     updated_by = factory.SelfAttribute('created_by')
 

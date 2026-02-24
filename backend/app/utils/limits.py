@@ -36,7 +36,7 @@ def check_sms_limit(org) -> None:
     # Count SMS schedules this month (format=SMS or null for backward compat)
     count = Schedule.objects.filter(
         organisation=org,
-        created_at__gte=month_start,
+        scheduled_time__gte=month_start,
     ).filter(
         Q(format=MessageFormat.SMS) | Q(format__isnull=True)
     ).exclude(
@@ -75,7 +75,7 @@ def check_mms_limit(org) -> None:
     # Count MMS schedules this month
     count = Schedule.objects.filter(
         organisation=org,
-        created_at__gte=month_start,
+        scheduled_time__gte=month_start,
         format=MessageFormat.MMS,
     ).exclude(
         status='cancelled'
