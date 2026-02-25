@@ -602,7 +602,7 @@ To make v2 production-ready:
 - [x] **Request logging** — Implemented
 - [x] **API documentation** — OpenAPI schema + Swagger UI
 - [x] **File storage** — Provider abstraction complete (Mock + Azure Blob Storage)
-- [x] **Test suite** — 316 tests with 89% coverage
+- [x] **Test suite** — 351 tests with 92% coverage
 - [x] **SMS/MMS limit checking** — Refactored with capacity-based validation
 - [x] **User profile** — Read-only, Clerk-managed
 - [x] **Schedule update validation** — Validated in serializer (working correctly)
@@ -621,7 +621,7 @@ The Django v2 backend has successfully achieved **98% feature parity** with the 
 - ✅ Clerk authentication (replacing Azure AD)
 - ✅ Improved SMS/MMS provider abstraction
 - ✅ Better file storage abstraction
-- ✅ Comprehensive test suite (316 tests, 89% coverage)
+- ✅ Comprehensive test suite (351 tests, 92% coverage)
 - ✅ API documentation (OpenAPI/Swagger)
 - ✅ Proper soft delete patterns
 - ✅ Capacity-based limit checking
@@ -632,3 +632,34 @@ The Django v2 backend has successfully achieved **98% feature parity** with the 
 The remaining 2% consists of:
 - Real SMS provider implementations (depends on provider choice - Twilio, MessageMedia, etc.)
 - Background job processing (architectural decision needed - Celery, Django-Q, Huey)
+
+### Test Coverage Details
+
+**Overall: 92% coverage (351 tests)**
+
+Files at 100% coverage:
+- ✅ `models.py` — All model logic covered
+- ✅ `mixins.py` — Soft delete and tenant scoping mixins
+- ✅ `utils/clerk.py` — Webhook handlers for Clerk events
+- ✅ `pagination.py` — Custom pagination logic
+- ✅ `permissions.py` — All permission classes
+- ✅ `throttles.py` — Rate limiting classes
+- ✅ `urls.py` — URL routing
+- ✅ `utils/limits.py` — SMS/MMS capacity checking
+- ✅ `middleware/logging.py` — Request logging middleware
+- ✅ `middleware/tenant.py` — Multi-tenancy middleware
+- ✅ `admin.py` — Django admin configuration
+
+Near-perfect coverage (96-99%):
+- 📊 `utils/storage.py` — 99% (only abstract method pass statement)
+- 📊 `filters.py` — 99% (1 edge case in request handling)
+- 📊 `utils/sms.py` — 96% (only abstract method pass statements)
+- 📊 `serializers.py` — 94% (complex validation edge cases)
+
+Remaining gaps:
+- 🔄 `views.py` — 88% (54 lines: error handling, edge cases)
+- 🔄 `authentication.py` — 43% (16 lines: requires complex JWT mocking)
+
+**Bug fixes found during coverage push:**
+- Fixed logger using reserved 'filename' attribute (changed to 'blob_name')
+- Fixed ContactFilter phone search not removing spaces before query
