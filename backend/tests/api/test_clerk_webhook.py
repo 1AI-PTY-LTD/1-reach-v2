@@ -13,7 +13,7 @@ from unittest.mock import patch
 from rest_framework import status
 
 from app.models import Organisation, OrganisationMembership, User
-from tests.factories import OrganisationFactory, UserFactory
+from tests.factories import OrganisationFactory, OrganisationMembershipFactory, UserFactory
 
 
 # Helper to mock webhook signature verification
@@ -191,6 +191,35 @@ class TestClerkWebhook:
 
         payload = {
             'type': 'organizationMembership.created',
+            'data': {
+                'organization': {'id': 'org_123'},
+                'public_user_data': {'user_id': 'user_123'},
+                'role': 'admin'
+            }
+        }
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json'
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+        membership = OrganisationMembership.objects.get(user=user, organisation=org)
+        assert membership.role == 'admin'
+
+    @patch('svix.Webhook.verify')
+    def test_organization_membership_updated_event(self, mock_verify, api_client):
+        """organizationMembership.updated webhook updates membership."""
+        mock_verify.side_effect = mock_webhook_verify
+
+        user = UserFactory(clerk_id='user_123')
+        org = OrganisationFactory(clerk_org_id='org_123')
+        OrganisationMembershipFactory(user=user, organisation=org, role='member')
+
+        payload = {
+            'type': 'organizationMembership.updated',
             'data': {
                 'organization': {'id': 'org_123'},
                 'public_user_data': {'user_id': 'user_123'},

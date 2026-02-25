@@ -101,7 +101,7 @@ class MockStorageProvider(StorageProvider):
         logger.info(
             'MockStorageProvider.upload_file',
             extra={
-                'filename': unique_filename,
+                'blob_name': unique_filename,
                 'content_type': content_type,
                 'size': file_obj.size,
                 'url': mock_url,
@@ -177,7 +177,7 @@ class AzureBlobStorageProvider(StorageProvider):
             logger.info(
                 'AzureBlobStorageProvider.upload_file',
                 extra={
-                    'filename': unique_filename,
+                    'blob_name': unique_filename,
                     'content_type': content_type,
                     'size': file_obj.size,
                     'url': url,
@@ -195,7 +195,7 @@ class AzureBlobStorageProvider(StorageProvider):
             logger.error(
                 'AzureBlobStorageProvider.upload_file failed',
                 extra={
-                    'filename': unique_filename,
+                    'blob_name': unique_filename,
                     'error': error_msg,
                 },
                 exc_info=True,

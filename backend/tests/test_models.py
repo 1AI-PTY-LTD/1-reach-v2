@@ -141,6 +141,17 @@ class TestOrganisationMembershipModel:
 
         assert m1.organisation != m2.organisation
 
+    def test_membership_str(self):
+        """__str__ returns user clerk_id, org name, and role."""
+        user = UserFactory(clerk_id='user_123')
+        org = OrganisationFactory(name='Test Org')
+        membership = OrganisationMembershipFactory(
+            user=user,
+            organisation=org,
+            role='admin'
+        )
+        assert str(membership) == 'user_123 - Test Org (admin)'
+
 
 # ============================================================================
 # Contact Model Tests
@@ -261,6 +272,15 @@ class TestContactGroupMemberModel:
         m2 = ContactGroupMemberFactory(contact=contact2, group=group)
 
         assert m1.contact != m2.contact
+
+    def test_member_str(self):
+        """__str__ returns contact and group."""
+        contact = ContactFactory(first_name='John', last_name='Doe')
+        group = ContactGroupFactory(name='VIP')
+        member = ContactGroupMemberFactory(contact=contact, group=group)
+        # Uses Contact.__str__ and ContactGroup.__str__
+        assert 'John Doe' in str(member)
+        assert 'VIP' in str(member)
 
 
 # ============================================================================

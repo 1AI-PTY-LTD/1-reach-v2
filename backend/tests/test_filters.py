@@ -226,3 +226,53 @@ class TestScheduleFilter:
             assert today in filterset.qs
             assert yesterday not in filterset.qs
             assert tomorrow not in filterset.qs
+
+    def test_invalid_timezone_fallback(self):
+        """Invalid timezone parameter falls back to default Adelaide timezone."""
+        with freezegun.freeze_time('2024-01-15 10:00:00', tz_offset=-10.5):  # Adelaide
+            org = OrganisationFactory()
+            now = timezone.now()
+            today = ScheduleFactory(
+                organisation=org,
+                scheduled_time=now,
+                for_contact=True
+            )
+
+            # Create a mock request with invalid timezone
+            from django.test import RequestFactory
+            request = RequestFactory().get('/?tz=Invalid/Timezone')
+
+            # Filter with invalid timezone should fall back to Adelaide
+            filterset = ScheduleFilter(
+                data={},
+                queryset=Schedule.objects.filter(organisation=org, parent=None),
+                request=request
+            )
+
+            # Should still work with default timezone
+            assert today in filterset.qs
+
+    def test_default_filter_with_request(self):
+        """Default filter uses timezone from request when provided."""
+        with freezegun.freeze_time('2024-01-15 10:00:00', tz_offset=-10.5):  # Adelaide
+            org = OrganisationFactory()
+            now = timezone.now()
+            today = ScheduleFactory(
+                organisation=org,
+                scheduled_time=now,
+                for_contact=True
+            )
+
+            # Create a mock request with Adelaide timezone
+            from django.test import RequestFactory
+            request = RequestFactory().get('/?tz=Australia/Adelaide')
+
+            # Filter with valid request should use _get_today with request
+            filterset = ScheduleFilter(
+                data={},
+                queryset=Schedule.objects.filter(organisation=org, parent=None),
+                request=request
+            )
+
+            # Should work with request timezone
+            assert today in filterset.qs

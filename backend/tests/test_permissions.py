@@ -138,3 +138,33 @@ class TestHasOrgPermission:
 
         permission = HasOrgPermission()
         assert not permission.has_permission(request, view)
+
+    def test_allows_when_no_required_permissions(self, rf):
+        """View with no required_permissions allows access."""
+        request = rf.get('/')
+        request.org = OrganisationFactory.build()
+        request.org_permissions = []
+        request.user = UserFactory.build()
+
+        view = type('MockView', (), {})()  # No required_permissions attribute
+
+        permission = HasOrgPermission()
+        assert permission.has_permission(request, view)
+
+    def test_denies_method_not_in_dict(self, rf):
+        """Method not defined in required_permissions dict denies access."""
+        request = rf.delete('/')  # DELETE not in dict below
+        request.org = OrganisationFactory.build()
+        request.org_permissions = ['contacts:delete']
+        request.user = UserFactory.build()
+
+        view = type('MockView', (), {
+            'required_permissions': {
+                'GET': ['contacts:read'],
+                'POST': ['contacts:write'],
+                # DELETE not included
+            }
+        })()
+
+        permission = HasOrgPermission()
+        assert not permission.has_permission(request, view)
