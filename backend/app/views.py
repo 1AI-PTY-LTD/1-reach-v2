@@ -8,7 +8,7 @@ from datetime import datetime
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework import filters, status, viewsets
@@ -25,7 +25,7 @@ from app.models import *
 from app.permissions import IsOrgMember
 from app.serializers import *
 from app.utils import clerk
-from app.utils.limits import check_sms_limit, check_mms_limit
+from app.utils.limits import get_sms_limit_info, get_mms_limit_info
 from app.utils.sms import get_sms_provider
 from app.utils.storage import get_storage_provider
 
@@ -624,8 +624,15 @@ class SMSViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Check monthly SMS limit
-        check_sms_limit(org)
+        # Check if we have SMS capacity
+        limit_info = get_sms_limit_info(org)
+
+        if limit_info['limit'] is not None:
+            if limit_info['remaining'] < 1:
+                raise ValidationError(
+                    f'Monthly SMS limit reached. No remaining capacity '
+                    f'({limit_info["current"]}/{limit_info["limit"]} used this month).'
+                )
 
         # Resolve contact if provided
         contact = self._resolve_contact(data.get('contact_id'), org)
@@ -674,28 +681,15 @@ class SMSViewSet(viewsets.ViewSet):
         if not members.exists():
             raise ValidationError('No eligible contacts found in group.')
 
-        # Check monthly SMS limit (accounting for bulk send size)
+        # Check if we have enough SMS capacity for bulk send
         member_count = members.count()
+        limit_info = get_sms_limit_info(org)
 
-        config = Config.objects.filter(organisation=org, name='sms_limit').first()
-        if config:
-            limit = int(config.value)
-            ADELAIDE_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
-            now = datetime.now(ADELAIDE_TZ)
-            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-            current_count = Schedule.objects.filter(
-                organisation=org,
-                scheduled_time__gte=month_start,
-            ).filter(
-                Q(format=MessageFormat.SMS) | Q(format__isnull=True)
-            ).exclude(
-                status='cancelled'
-            ).count()
-
-            if current_count + member_count > limit:
+        if limit_info['limit'] is not None:
+            if limit_info['remaining'] < member_count:
                 raise ValidationError(
-                    f'Monthly SMS limit would be exceeded ({current_count + member_count}/{limit}). Cannot send to {member_count} recipients.'
+                    f'Monthly SMS limit would be exceeded. Need {member_count} messages but only {limit_info["remaining"]} remaining '
+                    f'({limit_info["current"]}/{limit_info["limit"]} used this month).'
                 )
 
         # Prepare bulk SMS
@@ -787,8 +781,15 @@ class SMSViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Check monthly MMS limit
-        check_mms_limit(org)
+        # Check if we have MMS capacity
+        limit_info = get_mms_limit_info(org)
+
+        if limit_info['limit'] is not None:
+            if limit_info['remaining'] < 1:
+                raise ValidationError(
+                    f'Monthly MMS limit reached. No remaining capacity '
+                    f'({limit_info["current"]}/{limit_info["limit"]} used this month).'
+                )
 
         # Resolve contact if provided
         contact = self._resolve_contact(data.get('contact_id'), org)

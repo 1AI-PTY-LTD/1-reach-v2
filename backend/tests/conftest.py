@@ -341,17 +341,25 @@ def mock_storage_provider():
 
 @pytest.fixture
 def mock_check_sms_limit():
-    """Mock SMS limit checking."""
-    with patch('app.views.check_sms_limit') as mock:
-        mock.return_value = None  # No exception = limit not exceeded
+    """Mock SMS limit info to allow unlimited sending."""
+    with patch('app.views.get_sms_limit_info') as mock:
+        mock.return_value = {
+            'current': 0,
+            'limit': None,  # No limit configured = unlimited
+            'remaining': None
+        }
         yield mock
 
 
 @pytest.fixture
 def mock_check_mms_limit():
-    """Mock MMS limit checking."""
-    with patch('app.views.check_mms_limit') as mock:
-        mock.return_value = None  # No exception = limit not exceeded
+    """Mock MMS limit info to allow unlimited sending."""
+    with patch('app.views.get_mms_limit_info') as mock:
+        mock.return_value = {
+            'current': 0,
+            'limit': None,  # No limit configured = unlimited
+            'remaining': None
+        }
         yield mock
 
 
