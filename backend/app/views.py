@@ -45,22 +45,14 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             organisationmembership__is_active=True,
         ).order_by('first_name', 'last_name')
 
-    @action(detail=False, methods=['get', 'patch'])
+    @action(detail=False, methods=['get'])
     def me(self, request):
-        """GET/PATCH /api/users/me/ — authenticated user."""
-        if request.method == 'GET':
-            serializer = UserSerializer(request.user)
-            # Exclude clerk_id from response
-            data = serializer.data
-            data.pop('clerk_id', None)
-            return Response(data)
-        else:  # PATCH
-            serializer = UserSerializer(request.user, data=request.data, partial=True)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            data = serializer.data
-            data.pop('clerk_id', None)
-            return Response(data)
+        """GET /api/users/me/ — authenticated user (read-only, managed by Clerk)."""
+        serializer = UserSerializer(request.user)
+        # Exclude clerk_id from response
+        data = serializer.data
+        data.pop('clerk_id', None)
+        return Response(data)
 
 
 class ClerkWebhookView(APIView):

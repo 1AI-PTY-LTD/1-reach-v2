@@ -2,8 +2,7 @@
 Tests for User API endpoints (UserViewSet).
 
 Tests:
-- Retrieve current user (GET /api/users/me/)
-- Update current user
+- Retrieve current user (GET /api/users/me/) - read-only, managed by Clerk
 - List org members (with admin permission)
 """
 
@@ -30,18 +29,6 @@ class TestUserMe:
         """Unauthenticated requests denied."""
         response = api_client.get('/api/users/me/')
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
-
-    def test_update_me(self, authenticated_client, user):
-        """PATCH /me/ updates current user."""
-        data = {'first_name': 'Updated'}
-
-        response = authenticated_client.patch('/api/users/me/', data)
-
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data['first_name'] == 'Updated'
-
-        user.refresh_from_db()
-        assert user.first_name == 'Updated'
 
 
 @pytest.mark.django_db
