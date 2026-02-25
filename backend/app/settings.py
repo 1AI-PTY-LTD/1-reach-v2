@@ -141,6 +141,16 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'app.pagination.StandardPagination',
     'PAGE_SIZE': 50,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': os.environ.get('THROTTLE_RATE_ANON', '1000/min'),
+        'user': os.environ.get('THROTTLE_RATE_USER', '1000/min'),
+        'sms': os.environ.get('THROTTLE_RATE_SMS', '100/min'),
+        'import': os.environ.get('THROTTLE_RATE_IMPORT', '10/min'),
+    },
 }
 
 SPECTACULAR_SETTINGS = {

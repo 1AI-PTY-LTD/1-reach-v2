@@ -17,6 +17,8 @@ from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from app.throttles import ImportThrottle, SMSThrottle
 from svix.webhooks import Webhook, WebhookVerificationError
 
 from app.filters import ContactFilter, ContactGroupFilter, GroupScheduleFilter, ScheduleFilter
@@ -113,7 +115,7 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         serializer = ScheduleSerializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
-    @action(detail=False, methods=['post'], url_path='import')
+    @action(detail=False, methods=['post'], url_path='import', throttle_classes=[ImportThrottle])
     def import_contacts(self, request):
         """POST /api/contacts/import/ — bulk import contacts from a CSV file."""
         org = getattr(request, 'org', None)
@@ -607,7 +609,7 @@ class SMSViewSet(viewsets.ViewSet):
             raise NotFound('Contact not found.')
         return contact
 
-    @action(detail=False, methods=['post'], url_path='send')
+    @action(detail=False, methods=['post'], url_path='send', throttle_classes=[SMSThrottle])
     def send_sms(self, request):
         """POST /api/sms/send/ — send SMS to single recipient."""
         org = self._get_org(request)
@@ -654,7 +656,7 @@ class SMSViewSet(viewsets.ViewSet):
         else:
             return Response({'success': False, 'message': 'Failed to send SMS', 'error': result.get('error')}, status=500)
 
-    @action(detail=False, methods=['post'], url_path='send-to-group')
+    @action(detail=False, methods=['post'], url_path='send-to-group', throttle_classes=[SMSThrottle])
     def send_to_group(self, request):
         """POST /api/sms/send-to-group/ — send SMS to group members."""
         org = self._get_org(request)
@@ -764,7 +766,7 @@ class SMSViewSet(viewsets.ViewSet):
             'group_schedule_id': parent.id,
         }, status=http_status)
 
-    @action(detail=False, methods=['post'], url_path='send-mms')
+    @action(detail=False, methods=['post'], url_path='send-mms', throttle_classes=[SMSThrottle])
     def send_mms(self, request):
         """POST /api/sms/send-mms/ — send MMS with media."""
         org = self._get_org(request)

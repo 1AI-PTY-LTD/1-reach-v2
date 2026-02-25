@@ -30,8 +30,10 @@ class ContactFilter(filters.FilterSet):
 
     def filter_search(self, queryset, name, value):
         q = Q(first_name__icontains=value) | Q(last_name__icontains=value)
-        if value.replace(' ', '').isdigit():
-            q |= Q(phone__icontains=value)
+        # If input is all digits (ignoring spaces), search phone with spaces removed
+        clean_value = value.replace(' ', '')
+        if clean_value.isdigit():
+            q |= Q(phone__icontains=clean_value)
         return queryset.filter(q)
 
     def filter_exclude_group(self, queryset, name, value):

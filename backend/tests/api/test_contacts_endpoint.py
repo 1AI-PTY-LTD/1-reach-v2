@@ -88,6 +88,66 @@ class TestContactList:
         assert response.data['pagination']['total'] == 1
         assert response.data['results'][0]['phone'] == contact1.phone
 
+    def test_list_search_by_phone_digits(self, authenticated_client, organisation, user):
+        """Search filters contacts by phone when digits provided."""
+        contact1 = ContactFactory(
+            organisation=organisation,
+            phone='0412345678',
+            first_name='Alice',
+            created_by=user,
+            updated_by=user
+        )
+        contact2 = ContactFactory(
+            organisation=organisation,
+            phone='0487654321',
+            first_name='Bob',
+            created_by=user,
+            updated_by=user
+        )
+
+        # Search by full phone number
+        response = authenticated_client.get('/api/contacts/?search=0412345678')
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['phone'] == contact1.phone
+
+        # Search by partial phone number
+        response = authenticated_client.get('/api/contacts/?search=0412')
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['phone'] == contact1.phone
+
+    def test_list_search_by_phone_with_spaces(self, authenticated_client, organisation, user):
+        """Search handles phone numbers with spaces."""
+        contact = ContactFactory(
+            organisation=organisation,
+            phone='0412345678',
+            first_name='Alice',
+            created_by=user,
+            updated_by=user
+        )
+
+        # Phone with spaces should still match (spaces removed by filter)
+        response = authenticated_client.get('/api/contacts/?search=041%20234%205678')
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['phone'] == contact.phone
+
+    def test_list_search_name_not_affected_by_phone_logic(self, authenticated_client, organisation, user):
+        """Search still works for names when non-digits present."""
+        contact = ContactFactory(
+            organisation=organisation,
+            phone='0412345678',
+            first_name='Alice123',
+            created_by=user,
+            updated_by=user
+        )
+
+        # Mixed alphanumeric should search name, not phone
+        response = authenticated_client.get('/api/contacts/?search=Alice')
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+
     def test_list_exclude_group(self, authenticated_client, organisation, user):
         """exclude_group_id filters out group members."""
         group = ContactGroupFactory(organisation=organisation, created_by=user)
