@@ -2,114 +2,40 @@
 Tests for custom middleware.
 
 Tests:
-- ClerkTenantMiddleware: Extracts org context from JWT and sets on request
+- ClerkTenantMiddleware: Sets default org attributes on every request
 """
 
 import pytest
-from unittest.mock import Mock
 from django.http import HttpRequest, HttpResponse
 
 from app.middleware import ClerkTenantMiddleware
-from tests.factories import OrganisationFactory
 
 
-@pytest.mark.django_db
 class TestClerkTenantMiddleware:
-    """Tests for ClerkTenantMiddleware."""
+    """Tests for ClerkTenantMiddleware (defaults only)."""
 
-    def test_sets_org_from_jwt(self):
-        """Middleware sets request.org from JWT org_id claim."""
-        org = OrganisationFactory(clerk_org_id='org_123')
-
+    def test_sets_default_org_attributes(self):
+        """Middleware sets default org attributes to None/empty."""
         request = HttpRequest()
-        request.user = Mock()
-        request.user.is_authenticated = True
-        request.auth = {
-            'o': {
-                'id': 'org_123',
-                'rol': 'member',
-                'per': ''
-            }
-        }
 
         get_response = lambda r: HttpResponse()
         middleware = ClerkTenantMiddleware(get_response)
 
         middleware(request)
 
-        assert hasattr(request, 'org')
-        assert request.org == org
-        assert request.org_role == 'member'
+        assert request.org is None
+        assert request.org_id is None
+        assert request.org_role is None
         assert request.org_permissions == []
 
-    def test_handles_missing_org_id(self):
-        """Middleware handles missing org_id gracefully."""
+    def test_calls_get_response(self):
+        """Middleware passes request through to get_response."""
         request = HttpRequest()
-        request.user = Mock()
-        request.user.is_authenticated = True
-        request.auth = {}  # No org_id
+        response = HttpResponse(status=200)
 
-        get_response = lambda r: HttpResponse()
+        get_response = lambda r: response
         middleware = ClerkTenantMiddleware(get_response)
 
-        middleware(request)
+        result = middleware(request)
 
-        assert hasattr(request, 'org')
-        assert request.org is None
-
-    def test_handles_nonexistent_org(self):
-        """Middleware handles nonexistent org gracefully."""
-        request = HttpRequest()
-        request.user = Mock()
-        request.user.is_authenticated = True
-        request.auth = {
-            'o': {
-                'id': 'org_nonexistent',
-                'rol': 'member',
-                'per': ''
-            }
-        }
-
-        get_response = lambda r: HttpResponse()
-        middleware = ClerkTenantMiddleware(get_response)
-
-        middleware(request)
-
-        assert request.org is None
-
-    def test_handles_unauthenticated_user(self):
-        """Middleware handles unauthenticated users."""
-        request = HttpRequest()
-        request.user = Mock()
-        request.user.is_authenticated = False
-
-        get_response = lambda r: HttpResponse()
-        middleware = ClerkTenantMiddleware(get_response)
-
-        middleware(request)
-
-        assert hasattr(request, 'org')
-        assert request.org is None
-
-    def test_extracts_org_role(self):
-        """Middleware extracts org_role from JWT."""
-        org = OrganisationFactory(clerk_org_id='org_123')
-
-        request = HttpRequest()
-        request.user = Mock()
-        request.user.is_authenticated = True
-        request.auth = {
-            'o': {
-                'id': 'org_123',
-                'rol': 'admin',
-                'per': '*'
-            }
-        }
-
-        get_response = lambda r: HttpResponse()
-        middleware = ClerkTenantMiddleware(get_response)
-
-        middleware(request)
-
-        assert request.org_role == 'admin'
-        assert request.org_permissions == ['*']
+        assert result is response

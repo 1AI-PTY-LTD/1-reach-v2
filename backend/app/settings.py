@@ -11,7 +11,11 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import json
+import logging
 import os
+
+import sentry_sdk
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -27,7 +31,7 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG')
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 
 # Application definition
@@ -135,6 +139,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'EXCEPTION_HANDLER': 'app.exception_handler.custom_exception_handler',
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
@@ -196,26 +201,77 @@ MEDIA_ROOT = BASE_DIR / 'media'
 MEDIA_URL = '/media/'
 
 
+# Sentry
+SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.environ.get('SENTRY_ENVIRONMENT', 'production'),
+        traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.1')),
+        send_default_pii=False,
+    )
+
+
 # Logging
+class JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter for Azure App Service / Azure Monitor."""
+
+    def format(self, record):
+        log_entry = {
+            'timestamp': self.formatTime(record),
+            'level': record.levelname,
+            'logger': record.name,
+            'message': record.getMessage(),
+        }
+        # Include extra fields from RequestLoggingMiddleware
+        for field in ('request_id', 'method', 'path', 'status', 'duration_ms',
+                      'ip', 'user_agent', 'org_id', 'user_id'):
+            value = getattr(record, field, None)
+            if value is not None:
+                log_entry[field] = value
+        if record.exc_info and record.exc_info[0] is not None:
+            log_entry['exception'] = self.formatException(record.exc_info)
+        return json.dumps(log_entry)
+
+
+LOG_FORMAT = os.environ.get('LOG_FORMAT', 'json' if not DEBUG else 'text')
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'request': {
-            'format': '%(asctime)s %(levelname)s [%(request_id)s] %(message)s',
-            'defaults': {'request_id': '-'},
+        'text': {
+            'format': '%(asctime)s %(levelname)s [%(name)s] %(message)s',
+        },
+        'json': {
+            '()': JSONFormatter,
         },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'formatter': 'request',
+            'formatter': LOG_FORMAT,
         },
     },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
     'loggers': {
-        'app.request': {
+        'app': {
             'handlers': ['console'],
-            'level': 'INFO',
+            'level': os.environ.get('LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'django.security': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
         },
     },
 }

@@ -184,6 +184,11 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         error_count = len(error_records)
         has_errors = error_count > 0
 
+        logger.info('Contact import: %d imported, %d failed', success_count, error_count, extra={
+            'org_id': getattr(request, 'org_id', None),
+            'record_count': record_count,
+        })
+
         return Response(
             {
                 'status': 'partial' if has_errors else 'success',
@@ -654,6 +659,11 @@ class SMSViewSet(viewsets.ViewSet):
         if result['success']:
             return Response({'success': True, 'message': f'SMS sent successfully to {data["recipient"]}'})
         else:
+            logger.error('SMS send failed', extra={
+                'org_id': getattr(request, 'org_id', None),
+                'recipient': data['recipient'],
+                'error': result.get('error'),
+            })
             return Response({'success': False, 'message': 'Failed to send SMS', 'error': result.get('error')}, status=500)
 
     @action(detail=False, methods=['post'], url_path='send-to-group', throttle_classes=[SMSThrottle])
@@ -754,6 +764,18 @@ class SMSViewSet(viewsets.ViewSet):
         total = successful + failed
         http_status = 200 if failed == 0 else (207 if successful > 0 else 500)
 
+        if failed > 0:
+            logger.error('Bulk SMS partial failure: %d/%d failed', failed, total, extra={
+                'org_id': getattr(request, 'org_id', None),
+                'group_id': str(data['group_id']),
+                'successful': successful,
+                'failed': failed,
+            })
+        else:
+            logger.info('Bulk SMS sent: %d messages to group %s', total, group.name, extra={
+                'org_id': getattr(request, 'org_id', None),
+            })
+
         return Response({
             'success': failed == 0,
             'message': f'SMS sent to group: {successful} successful, {failed} failed',
@@ -821,6 +843,11 @@ class SMSViewSet(viewsets.ViewSet):
                 'message': f'MMS sent successfully to {data["recipient"]}',
             })
         else:
+            logger.error('MMS send failed', extra={
+                'org_id': getattr(request, 'org_id', None),
+                'recipient': data['recipient'],
+                'error': result.get('error'),
+            })
             return Response({
                 'success': False,
                 'message': 'Failed to send MMS',

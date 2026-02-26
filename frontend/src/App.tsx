@@ -1,12 +1,23 @@
 import './App.css'
-import { useState } from 'react'
-import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton, useAuth } from '@clerk/clerk-react'
+import { useEffect, useState } from 'react'
+import { SignedIn, SignedOut, SignInButton, SignUpButton, UserButton, useAuth, useOrganization, useOrganizationList } from '@clerk/clerk-react'
 import { ApiClient } from './lib/helper'
 import { UserApi } from './lib/api'
 
 
 function App() {
   const { getToken } = useAuth()
+  const { organization } = useOrganization()
+  const { userMemberships, setActive, isLoaded } = useOrganizationList({ userMemberships: true })
+
+  // Auto-activate the first org if none is active (e.g. after signup or login)
+  useEffect(() => {
+    if (!isLoaded || organization) return
+    const memberships = userMemberships?.data
+    if (memberships && memberships.length > 0) {
+      setActive({ organization: memberships[0].organization.id })
+    }
+  }, [isLoaded, organization, userMemberships?.data, setActive])
 
   const [response, setResponse] = useState<any>(null)
 

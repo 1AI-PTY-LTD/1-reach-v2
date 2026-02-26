@@ -8,6 +8,7 @@ POSTGRES_PORT=5432
 # Backend
 DJANGO_SECRET_KEY=
 DEBUG=1
+ALLOWED_HOSTS=localhost,127.0.0.1
 
 # Clerk
 CLERK_FRONTEND_API=
@@ -20,3 +21,12 @@ STORAGE_PROVIDER_CLASS=app.utils.storage.AzureBlobStorageProvider
 # Azure Blob Storage (required if using AzureBlobStorageProvider)
 AZURE_BLOB_URL=https://<account>.blob.core.windows.net/?<sas-token>
 AZURE_CONTAINER=media
+
+# Sentry (optional - disabled if not set)
+SENTRY_DSN=
+SENTRY_ENVIRONMENT=production
+SENTRY_TRACES_SAMPLE_RATE=0.1
+
+# Logging (optional)
+LOG_LEVEL=INFO
+LOG_FORMAT=json

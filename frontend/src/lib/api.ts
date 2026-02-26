@@ -9,7 +9,7 @@ export class UserApi {
   }
 
   async getMe() {
-    return this.client.request('/api/me/', {
+    return this.client.request('/api/users/me/', {
       method: 'GET',
     })
   }

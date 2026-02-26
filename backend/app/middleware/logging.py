@@ -3,7 +3,7 @@ import time
 import uuid
 
 
-logger = logging.getLogger('app.request')
+logger = logging.getLogger('app.middleware')
 
 
 class RequestLoggingMiddleware:
