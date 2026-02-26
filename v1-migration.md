@@ -133,8 +133,8 @@ Both versions use `/api/` as the base path.
 
 | Aspect | v1 | v2 |
 |---|---|---|
-| Middleware | `authenticateAzureAD` on all `/api` routes | `ClerkJWTAuthentication` (DRF default) + `ClerkTenantMiddleware` |
-| Org context | None (single-tenant) | `org_id`, `org`, `org_role`, `org_permissions` set on request from Clerk JWT |
+| Middleware | `authenticateAzureAD` on all `/api` routes | `ClerkJWTAuthentication` (DRF default) + `ClerkTenantMiddleware` (sets defaults) |
+| Org context | None (single-tenant) | `org_id`, `org`, `org_role`, `org_permissions` extracted from Clerk JWT `o` claim during DRF authentication (`ClerkJWTAuthentication.authenticate()`) |
 | Permissions | None beyond auth | `IsOrgMember` on all CRUD endpoints; `IsOrgAdmin` and `HasOrgPermission` available |
 
 ### Endpoint Mapping
@@ -405,8 +405,8 @@ All v1 Express API endpoints have been migrated to v2 Django:
 ### ✅ Complete — Core Infrastructure
 
 - **Multi-tenancy** — organisation scoping, Clerk integration
-- **Authentication** — Clerk JWT, tenant middleware
-- **Request logging** — request ID tracking, Winston-style logging
+- **Authentication** — Clerk JWT with org claim extraction in `ClerkJWTAuthentication`, tenant middleware sets defaults
+- **Request logging** — request ID tracking, structured JSON logging (Azure Monitor compatible)
 - **Filtering** — django-filter with timezone-aware date defaults
 - **Pagination** — DRF pagination (50 per page)
 - **API documentation** — drf-spectacular (OpenAPI schema, Swagger UI, ReDoc)
@@ -451,18 +451,30 @@ All v1 Express API endpoints have been migrated to v2 Django:
 | Aspect | Status |
 |---|---|
 | **v1 tests** | `.test.ts` files (Jest/Mocha) |
-| **v2 current** | **316 tests with 89% code coverage** |
+| **v2 current** | **354 tests with 91% code coverage** |
 | **Framework** | pytest + pytest-django |
 | **Test categories** | • Unit tests (models, serializers, validators) ✅<br>• Integration tests (ViewSets, filters) ✅<br>• API tests (endpoint requests/responses) ✅<br>• Provider tests (MockSMSProvider, MockStorageProvider) ✅<br>• Throttling tests (rate limiting) ✅ |
 | **Coverage highlights** | • limits.py: 100%<br>• middleware: 100%<br>• throttles.py: 100%<br>• models.py: 98%<br>• filters.py: 96%<br>• views.py: 88%<br>• serializers.py: 85% |
 
-#### 5. **Production Deployment Infrastructure**
+#### 5. **Monitoring & Logging** ✅ Complete
+
+| Aspect | Status |
+|---|---|
+| **Error tracking** | Sentry SDK integrated (conditional on `SENTRY_DSN` env var) |
+| **Structured logging** | JSON formatter for Azure App Service / Azure Monitor |
+| **Request logging** | Request ID tracking via `RequestLoggingMiddleware` |
+| **Exception handling** | Custom DRF exception handler — logs 5xx at ERROR, 4xx at WARNING, attaches `request_id` to responses |
+| **Auth logging** | Token expiry, invalid tokens, unauthorized party logged at WARNING |
+| **View logging** | SMS/MMS send failures at ERROR, bulk results and CSV imports at INFO |
+| **Configuration** | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `LOG_LEVEL`, `LOG_FORMAT` env vars |
+
+#### 6. **Production Deployment Infrastructure**
 
 | Aspect | Status |
 |---|---|
 | **v1 deployment** | Express.js (likely Azure/AWS) |
 | **v2 current** | Development settings only |
-| **What's needed** | • Production settings file (`production.py`)<br>• WSGI/ASGI server (Gunicorn/Uvicorn)<br>• Static file serving (Whitenoise or CDN)<br>• Database migration strategy<br>• Environment variable management<br>• CI/CD pipeline<br>• Monitoring/logging (Sentry, DataDog, etc.) |
+| **What's needed** | • Production settings file (`production.py`)<br>• WSGI/ASGI server (Gunicorn/Uvicorn)<br>• Static file serving (Whitenoise or CDN)<br>• Database migration strategy<br>• Environment variable management<br>• CI/CD pipeline |
 
 ### 🔄 Intentional Differences (Not Regressions)
 
@@ -602,7 +614,7 @@ To make v2 production-ready:
 - [x] **Request logging** — Implemented
 - [x] **API documentation** — OpenAPI schema + Swagger UI
 - [x] **File storage** — Provider abstraction complete (Mock + Azure Blob Storage)
-- [x] **Test suite** — 351 tests with 92% coverage
+- [x] **Test suite** — 354 tests with 91% coverage
 - [x] **SMS/MMS limit checking** — Refactored with capacity-based validation
 - [x] **User profile** — Read-only, Clerk-managed
 - [x] **Schedule update validation** — Validated in serializer (working correctly)
@@ -611,7 +623,7 @@ To make v2 production-ready:
 - [ ] **Real SMS providers** — Need concrete implementations (Twilio, MessageMedia, etc.)
 - [ ] **Background workers** — Need scheduled message processing (Celery/Django-Q)
 - [ ] **Production deployment** — Need infrastructure setup
-- [ ] **Monitoring** — Need error tracking, performance monitoring
+- [x] **Monitoring** — Sentry error tracking + structured JSON logging for Azure Monitor
 - [ ] **API versioning strategy** — Consider if/when needed
 
 ### Feature Parity Score: **98%**
@@ -621,7 +633,7 @@ The Django v2 backend has successfully achieved **98% feature parity** with the 
 - ✅ Clerk authentication (replacing Azure AD)
 - ✅ Improved SMS/MMS provider abstraction
 - ✅ Better file storage abstraction
-- ✅ Comprehensive test suite (351 tests, 92% coverage)
+- ✅ Comprehensive test suite (354 tests, 91% coverage)
 - ✅ API documentation (OpenAPI/Swagger)
 - ✅ Proper soft delete patterns
 - ✅ Capacity-based limit checking
@@ -635,7 +647,7 @@ The remaining 2% consists of:
 
 ### Test Coverage Details
 
-**Overall: 92% coverage (351 tests)**
+**Overall: 91% coverage (354 tests)**
 
 Files at 100% coverage:
 - ✅ `models.py` — All model logic covered
@@ -647,7 +659,8 @@ Files at 100% coverage:
 - ✅ `urls.py` — URL routing
 - ✅ `utils/limits.py` — SMS/MMS capacity checking
 - ✅ `middleware/logging.py` — Request logging middleware
-- ✅ `middleware/tenant.py` — Multi-tenancy middleware
+- ✅ `middleware/tenant.py` — Multi-tenancy middleware (sets defaults)
+- 📊 `exception_handler.py` — 86% (custom DRF exception handler)
 - ✅ `admin.py` — Django admin configuration
 
 Near-perfect coverage (96-99%):
@@ -657,8 +670,8 @@ Near-perfect coverage (96-99%):
 - 📊 `serializers.py` — 94% (complex validation edge cases)
 
 Remaining gaps:
-- 🔄 `views.py` — 88% (54 lines: error handling, edge cases)
-- 🔄 `authentication.py` — 43% (16 lines: requires complex JWT mocking)
+- 🔄 `views.py` — 87% (error handling, edge cases)
+- 📊 `authentication.py` — 80% (org extraction and auth flow covered)
 
 **Bug fixes found during coverage push:**
 - Fixed logger using reserved 'filename' attribute (changed to 'blob_name')
