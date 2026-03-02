@@ -676,3 +676,144 @@ Remaining gaps:
 **Bug fixes found during coverage push:**
 - Fixed logger using reserved 'filename' attribute (changed to 'blob_name')
 - Fixed ContactFilter phone search not removing spaces before query
+
+---
+
+## Frontend Migration (v1 → v2)
+
+### Overview
+
+The v1 frontend (React 18 + Azure AD/MSAL + Express backend) was ported to work with the v2 Django backend. The v2 frontend skeleton already had Clerk auth integrated. The migration preserved the same UI and features while adapting the data layer for the v2 API contract.
+
+### Tech Stack Changes
+
+| Aspect | v1 | v2 |
+|---|---|---|
+| React | 18 | 19 |
+| Auth | Azure AD (MSAL) | Clerk (`@clerk/clerk-react`) |
+| Bundler | Vite | Vite 7 |
+| Router | TanStack Router (file-based) | TanStack Router (file-based) |
+| Data fetching | TanStack React Query | TanStack React Query |
+| Forms | TanStack Form | TanStack Form |
+| UI library | HeadlessUI + Tailwind CSS 3 | HeadlessUI + Tailwind CSS 3 (unchanged) |
+| API client | Custom fetch wrapper with MSAL tokens | Custom `ApiClient` class with Clerk tokens |
+
+### Architecture Changes
+
+#### API Client Pattern
+
+v1 had API modules that called `getAuthHeaders()` internally (MSAL-based). v2 uses a React context pattern:
+
+- **`ApiClient`** class (`src/lib/helper.ts`) — enhanced with typed convenience methods (`get<T>()`, `post<T>()`, `put<T>()`, `patch<T>()`, `del<T>()`, `uploadFile<T>()`)
+- **`ApiClientProvider`** (`src/lib/ApiClientProvider.tsx`) — React context that creates an `ApiClient` initialized with Clerk's `getToken`
+- **`useApiClient()`** hook — used in all components and API modules to get the authenticated client
+- All API query options and mutation hooks accept `client: ApiClient` as their first parameter
+
+#### Auth Integration
+
+| v1 | v2 |
+|---|---|
+| `AuthGuard` component wrapping `<Outlet>` | Clerk `<SignedIn>` / `<SignedOut>` in `__root.tsx` |
+| `useMsal()` for user info and logout | `<UserButton>` component in navbar |
+| `getAuthHeaders()` per API call | `useApiClient()` hook providing pre-authenticated client |
+| No org management | Auto-activates first org membership on login (via `useOrganizationList`) |
+
+#### App Entry Point (`main.tsx`)
+
+v1 provider stack: `ClerkProvider` → `App`
+
+v2 provider stack: `ClerkProvider` → `QueryClientProvider` → `ApiClientProvider` → `RouterProvider`
+
+### File Structure Changes
+
+#### Types (`src/types/`)
+
+All new files with snake_case fields matching the v2 Django backend:
+
+| File | Replaces | Key Changes |
+|---|---|---|
+| `contact.types.ts` | `customer.types.ts` | `Customer` → `Contact`, `first_name` not `firstName` |
+| `group.types.ts` | `groups.types.ts` | `member_count` not `_count.members`, `member_ids` not `customerIds` |
+| `template.types.ts` | same | `is_active` not `active` |
+| `schedule.types.ts` | `schedule.types.ts` | Status is lowercase string union (`'pending' \| 'processing' \| 'sent' \| 'failed' \| 'cancelled'`), `scheduled_time`, `sent_time`, `message_parts`, `contact_detail` |
+| `groupSchedule.types.ts` | `groupSchedule.types.ts` | Nested `group` object, `child_count`, `schedules` array |
+| `sms.types.ts` | same | `contact_id` not `customerId`, `media_url` not `mediaUrl` |
+| `stats.types.ts` | same | `monthly_stats`, `sms_sent`, `sms_message_parts` |
+| `pagination.types.ts` | new | `PaginatedResponse<T>` with `results` key (was `data`) |
+
+#### API Modules (`src/api/`)
+
+All rewritten to use the `ApiClient` pattern and v2 endpoints:
+
+| File | Replaces | Key Changes |
+|---|---|---|
+| `contactsApi.ts` | `customersApi.ts` | `/api/contacts/`, snake_case params, `client` first arg |
+| `groupsApi.ts` | `groupsApi.ts` | `/api/groups/:id/members/` (was `/customers`), `member_ids` |
+| `templatesApi.ts` | `templatesApi.ts` | Trailing slashes, `client` first arg |
+| `schedulesApi.ts` | `messagesApi.ts` | `/api/schedules/`, `results` key in response |
+| `groupSchedulesApi.ts` | `groupSchedulesApi.ts` | `group_id` param, `client` first arg |
+| `smsApi.ts` | `smsApi.ts` | `contact_id`, `media_url`, `client` first arg |
+| `statsApi.ts` | extracted from `messagesApi.ts` | `/api/stats/monthly/`, snake_case response fields |
+
+#### UI Components (`src/ui/`)
+
+All 26 HeadlessUI + Tailwind components copied as-is from v1. No changes needed — these are framework-agnostic.
+
+#### Feature Components (`src/components/`)
+
+| v1 Directory | v2 Directory | Changes |
+|---|---|---|
+| `components/customers/` | `components/contacts/` | `Customer` → `Contact` types, `first_name`/`last_name` fields, `useApiClient()` |
+| `components/groups/` | `components/groups/` | `member_count` not `_count.members`, `contact_ids` not `customerIds`, `useApiClient()` |
+| `components/shared/` | `components/shared/` | Unchanged (LoadingSpinner, TableSkeleton) |
+| `components/` (root) | `components/` (root) | snake_case fields, `useApiClient()`, `results` not `schedules`/`data` |
+
+#### Routes (`src/routes/`)
+
+All route files rewritten for v2:
+
+| v1 Route | v2 Route | Changes |
+|---|---|---|
+| `/app/customers` | `/app/contacts` | Renamed path |
+| `/app/customers/$customerId` | `/app/contacts/$contactId` | Renamed path + param |
+| All other routes | Same paths | `useApiClient()`, snake_case fields, Clerk auth |
+
+### Systematic Changes Applied to All Components
+
+1. **Import paths**: `../../../../common/types/*` → `../../types/*`
+2. **Type renames**: `Customer` → `Contact`, `CustomerGroup` → `ContactGroup`
+3. **Field names**: `firstName` → `first_name`, `lastName` → `last_name`, `customerId` → `contact_id`, `scheduledTime` → `scheduled_time`, `sentTime` → `sent_time`, `templateId` → `template_id`, `mediaUrl` → `media_url`, `messageParts` → `message_parts`
+4. **API imports**: `customersApi` → `contactsApi`, `messagesApi` → `schedulesApi`
+5. **Auth removal**: Removed all `getAuthHeaders()` calls, replaced with `useApiClient()` hook
+6. **Status values**: Uppercase strings/enums → lowercase string union (`'pending'`, `'sent'`, `'failed'`, `'cancelled'`)
+7. **Pagination response**: `data.schedules` / `data.data` → `data.results`. All "fetch all" queries use `?limit=1000` to avoid default 50-item pagination, and unwrap via `client.get<PaginatedResponse<T>>(url)` → `data.results`
+8. **Group member count**: `group._count?.members` → `group.member_count`
+9. **Type imports**: All type-only imports use `import type { ... }` syntax
+
+### Config File Changes
+
+| File | Change |
+|---|---|
+| `tailwind.config.cjs` | Created (`.cjs` extension for ESM compatibility) |
+| `postcss.config.cjs` | Created (`.cjs` extension for ESM compatibility) |
+| `src/index.css` | Replaced Vite defaults with Tailwind directives |
+| `vite.config.ts` | Added TanStack Router plugin |
+
+### Files Removed
+
+| File | Reason |
+|---|---|
+| `src/App.tsx` | Replaced by TanStack Router |
+| `src/App.css` | Replaced by Tailwind |
+| `src/lib/api.ts` | Replaced by API modules |
+
+### Build & Dependencies
+
+New dependencies added:
+- `@tanstack/react-router`, `@tanstack/react-query`, `@tanstack/react-form`
+- `@headlessui/react`, `@heroicons/react`
+- `tailwindcss@3`, `postcss`, `autoprefixer`
+- `clsx`, `dayjs`, `zod`, `xlsx`, `framer-motion`
+- `@tanstack/router-plugin` (dev)
+
+Build: `vite build` completes successfully with no errors.
