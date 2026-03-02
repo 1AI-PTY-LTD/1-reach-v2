@@ -319,7 +319,7 @@ function SendContent() {
                         <div className="relative">
                           <ComboboxInput
                             ref={recipientInputRef}
-                            className="w-full bg-transparent px-1 outline-none"
+                            className="w-full bg-transparent px-1 outline-none text-zinc-950 dark:text-white"
                             onKeyDown={(e) => {
                               if ((e.key === 'Enter' || e.key === ',' || e.key === 'Tab') && inputValue.trim().length > 0) {
                                 e.preventDefault()
