@@ -55,7 +55,7 @@ export default function TemplateDetails({
     };
 
     return (
-        <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+        <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
             <div className="flex justify-between mb-2">
                 <Heading>Template Name: {template.name}</Heading>
                 <Heading>Message parts: {template.text.length === 0 ? "0" : template.text.length > 160 ? "2" : "1"} / 2</Heading>

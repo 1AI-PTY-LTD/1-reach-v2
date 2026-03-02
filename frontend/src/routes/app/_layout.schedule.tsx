@@ -99,8 +99,8 @@ function ScheduleContent() {
         </Button>
       </div>
       {messagesQuery?.data?.pagination && (
-        <div className="flex items-center justify-between px-2 py-4 border-b">
-          <div className="text-sm text-gray-700">
+        <div className="flex items-center justify-between px-2 py-4 border-b dark:border-white/10">
+          <div className="text-sm text-gray-700 dark:text-gray-300">
             Showing {messagesQuery.data.pagination.total === 0 ? 0 : ((messagesQuery.data.pagination.page - 1) * messagesQuery.data.pagination.limit) + 1} to{' '}
             {Math.min(messagesQuery.data.pagination.page * messagesQuery.data.pagination.limit, messagesQuery.data.pagination.total)} of{' '}
             {messagesQuery.data.pagination.total} results
@@ -170,7 +170,7 @@ function ScheduleContent() {
 function ScheduleLayout() {
   return (
     <Suspense fallback={<LoadingSpinner />}>
-      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 max-h-[85vh] bg-white shadow-lg flex flex-col">
+      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 max-h-[85vh] bg-white dark:bg-zinc-900 shadow-lg flex flex-col">
         <ScheduleContent />
       </div>
     </Suspense>

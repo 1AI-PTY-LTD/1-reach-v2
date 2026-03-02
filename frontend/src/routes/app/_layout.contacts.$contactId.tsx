@@ -78,7 +78,7 @@ function ContactDetails() {
 
   if (contactsQuery.status === 'error' || (individualContactQuery.isEnabled && individualContactQuery.status === 'error')) {
     return (
-      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
         <div className="flex items-center justify-center h-full">
           <div className="text-red-600">Error loading contact details</div>
         </div>
@@ -88,9 +88,9 @@ function ContactDetails() {
 
   if (contactsQuery.status === 'pending' || (individualContactQuery.isEnabled && individualContactQuery.status === 'pending')) {
     return (
-      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
         <div className="flex items-center justify-center h-full">
-          <div className="text-gray-600">Loading contact...</div>
+          <div className="text-gray-600 dark:text-gray-400">Loading contact...</div>
         </div>
       </div>
     )
@@ -98,9 +98,9 @@ function ContactDetails() {
 
   if (!contact) {
     return (
-      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
         <div className="flex items-center justify-center h-full">
-          <div className="text-gray-600">Contact not found</div>
+          <div className="text-gray-600 dark:text-gray-400">Contact not found</div>
         </div>
       </div>
     )
@@ -177,7 +177,7 @@ function ContactDetails() {
 
   return (
     <>
-      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 max-h-[85vh] bg-white shadow-lg flex flex-col">
+      <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 max-h-[85vh] bg-white dark:bg-zinc-900 shadow-lg flex flex-col">
         <div className="flex justify-between mb-2">
           <div className="flex gap-4">
             <Button outline onClick={() => setIsEditContactOpen(true)}>
@@ -196,7 +196,7 @@ function ContactDetails() {
         </div>
         {contactMessagesQuery.data?.pagination && (
           <div className="flex items-center justify-between px-2 py-4 border-b border-zinc-950/10 dark:border-white/10">
-            <div className="text-sm text-gray-700">
+            <div className="text-sm text-gray-700 dark:text-gray-300">
               Showing {contactMessagesQuery.data.pagination.total === 0 ? 0 : ((contactMessagesQuery.data.pagination.page - 1) * contactMessagesQuery.data.pagination.limit) + 1} to{' '}
               {Math.min(contactMessagesQuery.data.pagination.page * contactMessagesQuery.data.pagination.limit, contactMessagesQuery.data.pagination.total)} of{' '}
               {contactMessagesQuery.data.pagination.total} results

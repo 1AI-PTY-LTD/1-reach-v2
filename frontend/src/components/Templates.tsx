@@ -109,7 +109,7 @@ function TemplatesContent() {
 
     return (
         <div className="flex">
-            <div className="w-1/4 overflow-hidden border-light-gray mr-4 bg-white rounded-lg shadow-lg">
+            <div className="w-1/4 overflow-hidden border-light-gray mr-4 bg-white dark:bg-zinc-900 rounded-lg shadow-lg">
                 <div className="max-h-[85vh] flex flex-col border rounded-lg p-4 border-zinc-950/10 dark:border-white/10">
                     <div className="flex flex-row justify-between align-middle mb-4">
                         <Heading>Templates</Heading>

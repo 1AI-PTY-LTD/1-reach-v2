@@ -57,7 +57,7 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
     // Handle error state
     if (groupQuery.status === "error") {
         return (
-            <div className="h-full flex flex-col justify-start overflow-hidden border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+            <div className="h-full flex flex-col justify-start overflow-hidden border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
                 <div className="flex items-center justify-center h-full">
                     <div className="text-red-600">Error loading group members</div>
                 </div>
@@ -79,7 +79,7 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
 
         const members = groupQuery.data?.members || [];
         return members.map((member) => (
-            <TableRow key={member.id} className="cursor-pointer hover:bg-gray-50">
+            <TableRow key={member.id} className="cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800">
                 <TableCell className="w-1/4">{member.first_name}</TableCell>
                 <TableCell className="w-1/4">{member.last_name}</TableCell>
                 <TableCell className="w-1/3">
@@ -111,7 +111,7 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
             <div className="flex items-center px-2 py-4 border-b border-zinc-950/10 dark:border-white/10 mb-4">
                 {groupQuery.data && 'pagination' in groupQuery.data && groupQuery.data.pagination ? (
                     <div className="flex items-center justify-between flex-1 mr-4">
-                        <div className="text-sm text-gray-700">
+                        <div className="text-sm text-gray-700 dark:text-gray-300">
                             Showing {(groupQuery.data as any).pagination.total === 0 ? 0 : (((groupQuery.data as any).pagination.page - 1) * (groupQuery.data as any).pagination.limit) + 1} to{" "}
                             {Math.min((groupQuery.data as any).pagination.page * (groupQuery.data as any).pagination.limit, (groupQuery.data as any).pagination.total)} of{" "}
                             {(groupQuery.data as any).pagination.total} members

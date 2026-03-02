@@ -344,7 +344,7 @@ function ImportIndex() {
 
   return (
     <div className="flex justify-center">
-      <Fieldset className="max-w-[600px] flex-1 border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+      <Fieldset className="max-w-[600px] flex-1 border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
         <div className="space-y-3">
           <div className="py-2">
             <FileUpload onFileSelect={handleFileSelect} disabled={state.isProcessing} sheetName={state.sheetName || undefined} onFileRemove={handleFileRemove} />

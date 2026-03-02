@@ -9,7 +9,7 @@ export const Route = createRootRouteWithContext<{
   errorComponent: (props) => {
     return (
       <div>
-        <div className="p-4">
+        <div className="p-4 dark:text-white">
           <h1 className="text-2xl font-bold mb-2">Error</h1>
           <pre className="whitespace-pre-wrap">
             {JSON.stringify(props.error, null, 2)}
@@ -27,7 +27,7 @@ function Root() {
         <Outlet />
       </SignedIn>
       <SignedOut>
-        <div className="flex flex-col items-center justify-center min-h-screen gap-4">
+        <div className="flex flex-col items-center justify-center min-h-screen gap-4 dark:text-white">
           <h1 className="text-2xl font-bold">Welcome to 1Reach</h1>
           <div className="flex gap-4">
             <SignInButton mode="modal">
@@ -36,7 +36,7 @@ function Root() {
               </button>
             </SignInButton>
             <SignUpButton mode="modal">
-              <button className="px-4 py-2 border border-emerald-600 text-emerald-600 rounded-lg hover:bg-emerald-50">
+              <button className="px-4 py-2 border border-emerald-600 text-emerald-600 rounded-lg hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-400 dark:hover:bg-emerald-950">
                 Sign Up
               </button>
             </SignUpButton>

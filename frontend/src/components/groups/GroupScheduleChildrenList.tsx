@@ -27,8 +27,8 @@ export default function GroupScheduleChildrenList({ groupScheduleId, onEdit }: G
 	// Handle loading state with proper table row structure
 	if (groupScheduleListQuery.isPending) {
 		return (
-			<TableRow className="bg-gray-50">
-				<TableCell colSpan={3} className="pl-8 text-sm text-gray-500">
+			<TableRow className="bg-gray-50 dark:bg-zinc-800/50">
+				<TableCell colSpan={3} className="pl-8 text-sm text-gray-500 dark:text-gray-400">
 					<LoadingSpinner />
 				</TableCell>
 			</TableRow>
@@ -38,7 +38,7 @@ export default function GroupScheduleChildrenList({ groupScheduleId, onEdit }: G
 	// Handle error state
 	if (groupScheduleListQuery.isError) {
 		return (
-			<TableRow className="bg-gray-50">
+			<TableRow className="bg-gray-50 dark:bg-zinc-800/50">
 				<TableCell colSpan={3} className="pl-8 text-sm text-red-500">
 					Error loading individual schedules
 				</TableCell>
@@ -50,8 +50,8 @@ export default function GroupScheduleChildrenList({ groupScheduleId, onEdit }: G
 
 	if (!groupScheduleData?.schedules || groupScheduleData.schedules.length === 0) {
 		return (
-			<TableRow className="bg-gray-50">
-				<TableCell colSpan={3} className="pl-8 text-sm text-gray-500">
+			<TableRow className="bg-gray-50 dark:bg-zinc-800/50">
+				<TableCell colSpan={3} className="pl-8 text-sm text-gray-500 dark:text-gray-400">
 					No individual schedules found
 				</TableCell>
 			</TableRow>

@@ -257,11 +257,11 @@ function SendContent() {
 
   return (
     <div className="flex justify-center">
-      <Fieldset className="max-w-[600px] flex-1 border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg overflow-y-auto max-h-[calc(100vh-120px)]">
+      <Fieldset className="max-w-[600px] flex-1 border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg overflow-y-auto max-h-[calc(100vh-120px)]">
         <Legend>Send Message</Legend>
         <FieldGroup>
           {errorMessage && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+            <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-md">
               <div className="flex items-center">
                 <div className="flex-shrink-0">
                   <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -269,8 +269,8 @@ function SendContent() {
                   </svg>
                 </div>
                 <div className="ml-3">
-                  <h3 className="text-sm font-medium text-red-800">Error</h3>
-                  <div className="mt-1 text-sm text-red-700">{errorMessage}</div>
+                  <h3 className="text-sm font-medium text-red-800 dark:text-red-200">Error</h3>
+                  <div className="mt-1 text-sm text-red-700 dark:text-red-300">{errorMessage}</div>
                 </div>
               </div>
             </div>
@@ -293,7 +293,7 @@ function SendContent() {
                       {selectedRecipients.length > 0 && (
                         <div ref={chipsContainerRef} className="flex flex-wrap gap-2 mb-1 pr-1 overflow-y-auto max-h-16">
                           {selectedRecipients.map((r, idx) => (
-                            <span key={`${r.phone}-${idx}`} className="inline-flex items-center gap-1 rounded-md bg-emerald-50 text-emerald-900 px-2 py-0.5 border border-emerald-200">
+                            <span key={`${r.phone}-${idx}`} className="inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 px-2 py-0.5 border border-emerald-200 dark:border-emerald-800">
                               <span className="truncate max-w-[200px]">{r.name ? r.name : r.phone}</span>
                               <button type="button" className="text-emerald-800 hover:text-emerald-900" onClick={() => setSelectedRecipients((prev) => prev.filter((_, i) => i !== idx))}>
                                 <XMarkIcon className="size-4" />

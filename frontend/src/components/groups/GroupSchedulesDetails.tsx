@@ -68,7 +68,7 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 	// Handle error state
 	if (groupQuery.status === 'error') {
 		return (
-			<div className="h-full flex flex-col justify-start overflow-hidden border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+			<div className="h-full flex flex-col justify-start overflow-hidden border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
 				<div className="flex items-center justify-center h-full">
 					<div className="text-red-600">Error loading group schedules</div>
 				</div>
@@ -91,7 +91,7 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 		return (
 			<Fragment key={groupSchedule.id}>
 				<TableRow
-					className={`cursor-pointer hover:bg-gray-50 ${isExpanded ? 'bg-gray-50 dark:bg-zinc-800/50' : ''}`}
+					className={`cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800 ${isExpanded ? 'bg-gray-50 dark:bg-zinc-800/50' : ''}`}
 				>
 					<TableCell onClick={() => handleToggleRow(groupSchedule.id)}>
 						<div className="flex items-center gap-2">
@@ -128,7 +128,7 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 			<div className="px-2 py-2 border-b border-zinc-950/10 dark:border-white/10 mb-2 flex-shrink-0">
 				{groupQuery?.data?.pagination ? (
 					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-1">
-						<div className="text-sm text-gray-700 flex-shrink-0 min-w-0">
+						<div className="text-sm text-gray-700 dark:text-gray-300 flex-shrink-0 min-w-0">
 							<span className="whitespace-nowrap">
 								Showing{' '}
 								{groupQuery.data.pagination.total === 0

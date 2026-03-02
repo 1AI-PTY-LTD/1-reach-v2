@@ -1,10 +1,10 @@
 export function Background() {
     return (
         <div className="fixed inset-0 -z-10 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-gray-100 via-white to-gray-50" />
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-100 via-white to-gray-50 dark:from-zinc-950 dark:via-zinc-900 dark:to-zinc-950" />
             <div className="absolute inset-0 bg-[url('/api/noise')] opacity-50 mix-blend-soft-light" />
             <svg
-                className="absolute inset-0 h-full w-full"
+                className="absolute inset-0 h-full w-full dark:opacity-30"
                 xmlns="http://www.w3.org/2000/svg"
             >
                 <defs>

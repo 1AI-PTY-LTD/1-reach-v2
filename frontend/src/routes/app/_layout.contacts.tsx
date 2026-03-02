@@ -45,14 +45,14 @@ function ContactsLayout() {
   if (allContactsQuery.status === 'pending') {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="text-gray-600">Loading contacts...</div>
+        <div className="text-gray-600 dark:text-gray-400">Loading contacts...</div>
       </div>
     )
   }
 
   return (
     <div className="flex">
-      <div className="w-1/4 overflow-hidden border-light-gray rounded-md mr-4 bg-white shadow-lg">
+      <div className="w-1/4 overflow-hidden border-light-gray rounded-md mr-4 bg-white dark:bg-zinc-900 shadow-lg">
         <ContactsWidget contacts={contacts} />
       </div>
       <div className="w-3/4 overflow-auto border-light-gray rounded-md">

@@ -75,7 +75,7 @@ export default function GroupsWidget({ userGroups }: { userGroups: ContactGroup[
 				params={{ groupId: group.id }}
 				className={isSelected ? 'font-bold' : ''}
 			>
-				<TableCell className={isSelected ? 'w-10 rounded-l-md bg-purple-50 m4' : 'w-10'}>
+				<TableCell className={isSelected ? 'w-10 rounded-l-md bg-purple-50 dark:bg-purple-950/30 m4' : 'w-10'}>
 					<Avatar
 						square
 						initials={initials}
@@ -86,7 +86,7 @@ export default function GroupsWidget({ userGroups }: { userGroups: ContactGroup[
 						}
 					></Avatar>
 				</TableCell>
-				<TableCell className={isSelected ? ' rounded-r-lg bg-purple-50' : ''}>
+				<TableCell className={isSelected ? ' rounded-r-lg bg-purple-50 dark:bg-purple-950/30' : ''}>
 					<div className="flex flex-col">
 						<span className="font-medium">{group.name}</span>
 					</div>
@@ -127,7 +127,7 @@ export default function GroupsWidget({ userGroups }: { userGroups: ContactGroup[
 	};
 
 	return (
-		<div className="h-full flex flex-col border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white shadow-lg">
+		<div className="h-full flex flex-col border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
 			<div className="flex flex-row justify-between align-middle mb-4">
 				<Heading>Groups</Heading>
 				<Button
