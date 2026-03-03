@@ -3,3 +3,6 @@
 __pycache__/
 .coverage
 htmlcov/
+test-results/
+.tanstack/
+.pytest_cache/

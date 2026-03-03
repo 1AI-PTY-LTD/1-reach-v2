@@ -133,8 +133,8 @@ Both versions use `/api/` as the base path.
 
 | Aspect | v1 | v2 |
 |---|---|---|
-| Middleware | `authenticateAzureAD` on all `/api` routes | `ClerkJWTAuthentication` (DRF default) + `ClerkTenantMiddleware` |
-| Org context | None (single-tenant) | `org_id`, `org`, `org_role`, `org_permissions` set on request from Clerk JWT |
+| Middleware | `authenticateAzureAD` on all `/api` routes | `ClerkJWTAuthentication` (DRF default) + `ClerkTenantMiddleware` (sets defaults) |
+| Org context | None (single-tenant) | `org_id`, `org`, `org_role`, `org_permissions` extracted from Clerk JWT `o` claim during DRF authentication (`ClerkJWTAuthentication.authenticate()`) |
 | Permissions | None beyond auth | `IsOrgMember` on all CRUD endpoints; `IsOrgAdmin` and `HasOrgPermission` available |
 
 ### Endpoint Mapping
@@ -405,8 +405,8 @@ All v1 Express API endpoints have been migrated to v2 Django:
 ### ✅ Complete — Core Infrastructure
 
 - **Multi-tenancy** — organisation scoping, Clerk integration
-- **Authentication** — Clerk JWT, tenant middleware
-- **Request logging** — request ID tracking, Winston-style logging
+- **Authentication** — Clerk JWT with org claim extraction in `ClerkJWTAuthentication`, tenant middleware sets defaults
+- **Request logging** — request ID tracking, structured JSON logging (Azure Monitor compatible)
 - **Filtering** — django-filter with timezone-aware date defaults
 - **Pagination** — DRF pagination (50 per page)
 - **API documentation** — drf-spectacular (OpenAPI schema, Swagger UI, ReDoc)
@@ -451,18 +451,43 @@ All v1 Express API endpoints have been migrated to v2 Django:
 | Aspect | Status |
 |---|---|
 | **v1 tests** | `.test.ts` files (Jest/Mocha) |
-| **v2 current** | **316 tests with 89% code coverage** |
+| **v2 current** | **354 tests with 91% code coverage** |
 | **Framework** | pytest + pytest-django |
 | **Test categories** | • Unit tests (models, serializers, validators) ✅<br>• Integration tests (ViewSets, filters) ✅<br>• API tests (endpoint requests/responses) ✅<br>• Provider tests (MockSMSProvider, MockStorageProvider) ✅<br>• Throttling tests (rate limiting) ✅ |
 | **Coverage highlights** | • limits.py: 100%<br>• middleware: 100%<br>• throttles.py: 100%<br>• models.py: 98%<br>• filters.py: 96%<br>• views.py: 88%<br>• serializers.py: 85% |
 
-#### 5. **Production Deployment Infrastructure**
+#### 5. **Frontend Test Suite** ✅ Complete
+
+| Aspect | Status |
+|---|---|
+| **v1 tests** | None |
+| **v2 current** | **226 unit/integration tests + 21 E2E tests** |
+| **Unit/Integration framework** | Vitest + React Testing Library + MSW |
+| **E2E framework** | Playwright (Chromium) |
+| **Test categories** | • Unit tests (useDebounce, logger, ApiClient) ✅<br>• Component tests (StatusBadge, TabbedContainer, ScheduleTable, DateSelect, TemplateModal, TemplateDetails, ScheduleDetails) ✅<br>• Complex component tests (CustomerModal, CustomerMessageModal, Customers, GroupsWidget, AddContactsToGroupModal, GroupUsersDetails) ✅<br>• Send page tests (recipients, templates, messaging, MMS) ✅<br>• API layer tests (contacts, templates, schedules, groups, SMS, stats, group schedules) ✅<br>• Route integration tests (contacts, groups, schedule, summary) ✅<br>• E2E tests (contacts, templates, schedules, groups, send-sms) ✅ |
+| **E2E auth** | Clerk sign-in tokens via Backend API (bypasses MFA), `@clerk/testing/playwright` for dev mode |
+| **Infrastructure** | `vitest.config.ts`, `playwright.config.ts`, MSW handlers, test data factories, custom render wrapper with QueryClient + ApiClientProvider |
+| **Config changes** | `tsconfig.app.json` excludes test files from build, `vite.config.ts` ignores `__tests__` in TanStack Router plugin |
+
+#### 6. **Monitoring & Logging** ✅ Complete
+
+| Aspect | Status |
+|---|---|
+| **Error tracking** | Sentry SDK integrated (conditional on `SENTRY_DSN` env var) |
+| **Structured logging** | JSON formatter for Azure App Service / Azure Monitor |
+| **Request logging** | Request ID tracking via `RequestLoggingMiddleware` |
+| **Exception handling** | Custom DRF exception handler — logs 5xx at ERROR, 4xx at WARNING, attaches `request_id` to responses |
+| **Auth logging** | Token expiry, invalid tokens, unauthorized party logged at WARNING |
+| **View logging** | SMS/MMS send failures at ERROR, bulk results and CSV imports at INFO |
+| **Configuration** | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `LOG_LEVEL`, `LOG_FORMAT` env vars |
+
+#### 7. **Production Deployment Infrastructure**
 
 | Aspect | Status |
 |---|---|
 | **v1 deployment** | Express.js (likely Azure/AWS) |
 | **v2 current** | Development settings only |
-| **What's needed** | • Production settings file (`production.py`)<br>• WSGI/ASGI server (Gunicorn/Uvicorn)<br>• Static file serving (Whitenoise or CDN)<br>• Database migration strategy<br>• Environment variable management<br>• CI/CD pipeline<br>• Monitoring/logging (Sentry, DataDog, etc.) |
+| **What's needed** | • Production settings file (`production.py`)<br>• WSGI/ASGI server (Gunicorn/Uvicorn)<br>• Static file serving (Whitenoise or CDN)<br>• Database migration strategy<br>• Environment variable management<br>• CI/CD pipeline |
 
 ### 🔄 Intentional Differences (Not Regressions)
 
@@ -602,7 +627,8 @@ To make v2 production-ready:
 - [x] **Request logging** — Implemented
 - [x] **API documentation** — OpenAPI schema + Swagger UI
 - [x] **File storage** — Provider abstraction complete (Mock + Azure Blob Storage)
-- [x] **Test suite** — 351 tests with 92% coverage
+- [x] **Backend test suite** — 354 tests with 91% coverage
+- [x] **Frontend test suite** — 226 Vitest tests + 21 Playwright E2E tests
 - [x] **SMS/MMS limit checking** — Refactored with capacity-based validation
 - [x] **User profile** — Read-only, Clerk-managed
 - [x] **Schedule update validation** — Validated in serializer (working correctly)
@@ -611,7 +637,7 @@ To make v2 production-ready:
 - [ ] **Real SMS providers** — Need concrete implementations (Twilio, MessageMedia, etc.)
 - [ ] **Background workers** — Need scheduled message processing (Celery/Django-Q)
 - [ ] **Production deployment** — Need infrastructure setup
-- [ ] **Monitoring** — Need error tracking, performance monitoring
+- [x] **Monitoring** — Sentry error tracking + structured JSON logging for Azure Monitor
 - [ ] **API versioning strategy** — Consider if/when needed
 
 ### Feature Parity Score: **98%**
@@ -621,7 +647,7 @@ The Django v2 backend has successfully achieved **98% feature parity** with the 
 - ✅ Clerk authentication (replacing Azure AD)
 - ✅ Improved SMS/MMS provider abstraction
 - ✅ Better file storage abstraction
-- ✅ Comprehensive test suite (351 tests, 92% coverage)
+- ✅ Comprehensive test suite (backend: 354 tests/91% coverage, frontend: 226 unit + 21 E2E tests)
 - ✅ API documentation (OpenAPI/Swagger)
 - ✅ Proper soft delete patterns
 - ✅ Capacity-based limit checking
@@ -635,7 +661,7 @@ The remaining 2% consists of:
 
 ### Test Coverage Details
 
-**Overall: 92% coverage (351 tests)**
+**Overall: 91% coverage (354 tests)**
 
 Files at 100% coverage:
 - ✅ `models.py` — All model logic covered
@@ -647,7 +673,8 @@ Files at 100% coverage:
 - ✅ `urls.py` — URL routing
 - ✅ `utils/limits.py` — SMS/MMS capacity checking
 - ✅ `middleware/logging.py` — Request logging middleware
-- ✅ `middleware/tenant.py` — Multi-tenancy middleware
+- ✅ `middleware/tenant.py` — Multi-tenancy middleware (sets defaults)
+- 📊 `exception_handler.py` — 86% (custom DRF exception handler)
 - ✅ `admin.py` — Django admin configuration
 
 Near-perfect coverage (96-99%):
@@ -657,9 +684,156 @@ Near-perfect coverage (96-99%):
 - 📊 `serializers.py` — 94% (complex validation edge cases)
 
 Remaining gaps:
-- 🔄 `views.py` — 88% (54 lines: error handling, edge cases)
-- 🔄 `authentication.py` — 43% (16 lines: requires complex JWT mocking)
+- 🔄 `views.py` — 87% (error handling, edge cases)
+- 📊 `authentication.py` — 80% (org extraction and auth flow covered)
 
 **Bug fixes found during coverage push:**
 - Fixed logger using reserved 'filename' attribute (changed to 'blob_name')
 - Fixed ContactFilter phone search not removing spaces before query
+
+---
+
+## Frontend Migration (v1 → v2)
+
+### Overview
+
+The v1 frontend (React 18 + Azure AD/MSAL + Express backend) was ported to work with the v2 Django backend. The v2 frontend skeleton already had Clerk auth integrated. The migration preserved the same UI and features while adapting the data layer for the v2 API contract.
+
+### Tech Stack Changes
+
+| Aspect | v1 | v2 |
+|---|---|---|
+| React | 18 | 19 |
+| Auth | Azure AD (MSAL) | Clerk (`@clerk/clerk-react`) |
+| Bundler | Vite | Vite 7 |
+| Router | TanStack Router (file-based) | TanStack Router (file-based) |
+| Data fetching | TanStack React Query | TanStack React Query |
+| Forms | TanStack Form | TanStack Form |
+| UI library | HeadlessUI + Tailwind CSS 3 | HeadlessUI + Tailwind CSS 3 (unchanged) |
+| API client | Custom fetch wrapper with MSAL tokens | Custom `ApiClient` class with Clerk tokens |
+
+### Architecture Changes
+
+#### API Client Pattern
+
+v1 had API modules that called `getAuthHeaders()` internally (MSAL-based). v2 uses a React context pattern:
+
+- **`ApiClient`** class (`src/lib/helper.ts`) — enhanced with typed convenience methods (`get<T>()`, `post<T>()`, `put<T>()`, `patch<T>()`, `del<T>()`, `uploadFile<T>()`)
+- **`ApiClientProvider`** (`src/lib/ApiClientProvider.tsx`) — React context that creates an `ApiClient` initialized with Clerk's `getToken`
+- **`useApiClient()`** hook — used in all components and API modules to get the authenticated client
+- All API query options and mutation hooks accept `client: ApiClient` as their first parameter
+
+#### Auth Integration
+
+| v1 | v2 |
+|---|---|
+| `AuthGuard` component wrapping `<Outlet>` | Clerk `<SignedIn>` / `<SignedOut>` in `__root.tsx` |
+| `useMsal()` for user info and logout | `<UserButton>` component in navbar |
+| `getAuthHeaders()` per API call | `useApiClient()` hook providing pre-authenticated client |
+| No org management | Auto-activates first org membership on login (via `useOrganizationList`) |
+
+#### App Entry Point (`main.tsx`)
+
+v1 provider stack: `ClerkProvider` → `App`
+
+v2 provider stack: `ClerkProvider` → `QueryClientProvider` → `ApiClientProvider` → `RouterProvider`
+
+### File Structure Changes
+
+#### Types (`src/types/`)
+
+All new files with snake_case fields matching the v2 Django backend:
+
+| File | Replaces | Key Changes |
+|---|---|---|
+| `contact.types.ts` | `customer.types.ts` | `Customer` → `Contact`, `first_name` not `firstName` |
+| `group.types.ts` | `groups.types.ts` | `member_count` not `_count.members`, `member_ids` not `customerIds` |
+| `template.types.ts` | same | `is_active` not `active` |
+| `schedule.types.ts` | `schedule.types.ts` | Status is lowercase string union (`'pending' \| 'processing' \| 'sent' \| 'failed' \| 'cancelled'`), `scheduled_time`, `sent_time`, `message_parts`, `contact_detail` |
+| `groupSchedule.types.ts` | `groupSchedule.types.ts` | Nested `group` object, `child_count`, `schedules` array |
+| `sms.types.ts` | same | `contact_id` not `customerId`, `media_url` not `mediaUrl` |
+| `stats.types.ts` | same | `monthly_stats`, `sms_sent`, `sms_message_parts` |
+| `pagination.types.ts` | new | `PaginatedResponse<T>` with `results` key (was `data`) |
+
+#### API Modules (`src/api/`)
+
+All rewritten to use the `ApiClient` pattern and v2 endpoints:
+
+| File | Replaces | Key Changes |
+|---|---|---|
+| `contactsApi.ts` | `customersApi.ts` | `/api/contacts/`, snake_case params, `client` first arg |
+| `groupsApi.ts` | `groupsApi.ts` | `/api/groups/:id/members/` (was `/customers`), `member_ids` |
+| `templatesApi.ts` | `templatesApi.ts` | Trailing slashes, `client` first arg |
+| `schedulesApi.ts` | `messagesApi.ts` | `/api/schedules/`, `results` key in response |
+| `groupSchedulesApi.ts` | `groupSchedulesApi.ts` | `group_id` param, `client` first arg |
+| `smsApi.ts` | `smsApi.ts` | `contact_id`, `media_url`, `client` first arg |
+| `statsApi.ts` | extracted from `messagesApi.ts` | `/api/stats/monthly/`, snake_case response fields |
+
+#### UI Components (`src/ui/`)
+
+All 26 HeadlessUI + Tailwind components copied as-is from v1. No changes needed — these are framework-agnostic.
+
+#### Feature Components (`src/components/`)
+
+| v1 Directory | v2 Directory | Changes |
+|---|---|---|
+| `components/customers/` | `components/contacts/` | `Customer` → `Contact` types, `first_name`/`last_name` fields, `useApiClient()` |
+| `components/groups/` | `components/groups/` | `member_count` not `_count.members`, `contact_ids` not `customerIds`, `useApiClient()` |
+| `components/shared/` | `components/shared/` | Unchanged (LoadingSpinner, TableSkeleton) |
+| `components/` (root) | `components/` (root) | snake_case fields, `useApiClient()`, `results` not `schedules`/`data` |
+
+#### Routes (`src/routes/`)
+
+All route files rewritten for v2:
+
+| v1 Route | v2 Route | Changes |
+|---|---|---|
+| `/app/customers` | `/app/contacts` | Renamed path |
+| `/app/customers/$customerId` | `/app/contacts/$contactId` | Renamed path + param |
+| All other routes | Same paths | `useApiClient()`, snake_case fields, Clerk auth |
+
+### Systematic Changes Applied to All Components
+
+1. **Import paths**: `../../../../common/types/*` → `../../types/*`
+2. **Type renames**: `Customer` → `Contact`, `CustomerGroup` → `ContactGroup`
+3. **Field names**: `firstName` → `first_name`, `lastName` → `last_name`, `customerId` → `contact_id`, `scheduledTime` → `scheduled_time`, `sentTime` → `sent_time`, `templateId` → `template_id`, `mediaUrl` → `media_url`, `messageParts` → `message_parts`
+4. **API imports**: `customersApi` → `contactsApi`, `messagesApi` → `schedulesApi`
+5. **Auth removal**: Removed all `getAuthHeaders()` calls, replaced with `useApiClient()` hook
+6. **Status values**: Uppercase strings/enums → lowercase string union (`'pending'`, `'sent'`, `'failed'`, `'cancelled'`)
+7. **Pagination response**: `data.schedules` / `data.data` → `data.results`. All "fetch all" queries use `?limit=1000` to avoid default 50-item pagination, and unwrap via `client.get<PaginatedResponse<T>>(url)` → `data.results`
+8. **Group member count**: `group._count?.members` → `group.member_count`
+9. **Type imports**: All type-only imports use `import type { ... }` syntax
+
+### Config File Changes
+
+| File | Change |
+|---|---|
+| `tailwind.config.cjs` | Created (`.cjs` extension for ESM compatibility) |
+| `postcss.config.cjs` | Created (`.cjs` extension for ESM compatibility) |
+| `src/index.css` | Replaced Vite defaults with Tailwind directives |
+| `vite.config.ts` | Added TanStack Router plugin |
+
+### Files Removed
+
+| File | Reason |
+|---|---|
+| `src/App.tsx` | Replaced by TanStack Router |
+| `src/App.css` | Replaced by Tailwind |
+| `src/lib/api.ts` | Replaced by API modules |
+
+### Build & Dependencies
+
+New dependencies added:
+- `@tanstack/react-router`, `@tanstack/react-query`, `@tanstack/react-form`
+- `@headlessui/react`, `@heroicons/react`
+- `tailwindcss@3`, `postcss`, `autoprefixer`
+- `clsx`, `dayjs`, `zod`, `xlsx`, `framer-motion`
+- `@tanstack/router-plugin` (dev)
+- `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`, `msw` (dev — unit/integration tests)
+- `@playwright/test`, `@clerk/testing` (dev — E2E tests)
+
+Build: `vite build` completes successfully with no errors.
+
+Test commands:
+- `npm test` / `npm run test:run` — Vitest unit/integration tests (226 tests)
+- `npm run test:e2e` — Playwright E2E tests (21 tests, requires `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` env vars)
