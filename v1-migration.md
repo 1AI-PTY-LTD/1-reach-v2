@@ -456,7 +456,20 @@ All v1 Express API endpoints have been migrated to v2 Django:
 | **Test categories** | • Unit tests (models, serializers, validators) ✅<br>• Integration tests (ViewSets, filters) ✅<br>• API tests (endpoint requests/responses) ✅<br>• Provider tests (MockSMSProvider, MockStorageProvider) ✅<br>• Throttling tests (rate limiting) ✅ |
 | **Coverage highlights** | • limits.py: 100%<br>• middleware: 100%<br>• throttles.py: 100%<br>• models.py: 98%<br>• filters.py: 96%<br>• views.py: 88%<br>• serializers.py: 85% |
 
-#### 5. **Monitoring & Logging** ✅ Complete
+#### 5. **Frontend Test Suite** ✅ Complete
+
+| Aspect | Status |
+|---|---|
+| **v1 tests** | None |
+| **v2 current** | **226 unit/integration tests + 21 E2E tests** |
+| **Unit/Integration framework** | Vitest + React Testing Library + MSW |
+| **E2E framework** | Playwright (Chromium) |
+| **Test categories** | • Unit tests (useDebounce, logger, ApiClient) ✅<br>• Component tests (StatusBadge, TabbedContainer, ScheduleTable, DateSelect, TemplateModal, TemplateDetails, ScheduleDetails) ✅<br>• Complex component tests (CustomerModal, CustomerMessageModal, Customers, GroupsWidget, AddContactsToGroupModal, GroupUsersDetails) ✅<br>• Send page tests (recipients, templates, messaging, MMS) ✅<br>• API layer tests (contacts, templates, schedules, groups, SMS, stats, group schedules) ✅<br>• Route integration tests (contacts, groups, schedule, summary) ✅<br>• E2E tests (contacts, templates, schedules, groups, send-sms) ✅ |
+| **E2E auth** | Clerk sign-in tokens via Backend API (bypasses MFA), `@clerk/testing/playwright` for dev mode |
+| **Infrastructure** | `vitest.config.ts`, `playwright.config.ts`, MSW handlers, test data factories, custom render wrapper with QueryClient + ApiClientProvider |
+| **Config changes** | `tsconfig.app.json` excludes test files from build, `vite.config.ts` ignores `__tests__` in TanStack Router plugin |
+
+#### 6. **Monitoring & Logging** ✅ Complete
 
 | Aspect | Status |
 |---|---|
@@ -468,7 +481,7 @@ All v1 Express API endpoints have been migrated to v2 Django:
 | **View logging** | SMS/MMS send failures at ERROR, bulk results and CSV imports at INFO |
 | **Configuration** | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `LOG_LEVEL`, `LOG_FORMAT` env vars |
 
-#### 6. **Production Deployment Infrastructure**
+#### 7. **Production Deployment Infrastructure**
 
 | Aspect | Status |
 |---|---|
@@ -614,7 +627,8 @@ To make v2 production-ready:
 - [x] **Request logging** — Implemented
 - [x] **API documentation** — OpenAPI schema + Swagger UI
 - [x] **File storage** — Provider abstraction complete (Mock + Azure Blob Storage)
-- [x] **Test suite** — 354 tests with 91% coverage
+- [x] **Backend test suite** — 354 tests with 91% coverage
+- [x] **Frontend test suite** — 226 Vitest tests + 21 Playwright E2E tests
 - [x] **SMS/MMS limit checking** — Refactored with capacity-based validation
 - [x] **User profile** — Read-only, Clerk-managed
 - [x] **Schedule update validation** — Validated in serializer (working correctly)
@@ -633,7 +647,7 @@ The Django v2 backend has successfully achieved **98% feature parity** with the 
 - ✅ Clerk authentication (replacing Azure AD)
 - ✅ Improved SMS/MMS provider abstraction
 - ✅ Better file storage abstraction
-- ✅ Comprehensive test suite (354 tests, 91% coverage)
+- ✅ Comprehensive test suite (backend: 354 tests/91% coverage, frontend: 226 unit + 21 E2E tests)
 - ✅ API documentation (OpenAPI/Swagger)
 - ✅ Proper soft delete patterns
 - ✅ Capacity-based limit checking
@@ -815,5 +829,11 @@ New dependencies added:
 - `tailwindcss@3`, `postcss`, `autoprefixer`
 - `clsx`, `dayjs`, `zod`, `xlsx`, `framer-motion`
 - `@tanstack/router-plugin` (dev)
+- `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event`, `jsdom`, `msw` (dev — unit/integration tests)
+- `@playwright/test`, `@clerk/testing` (dev — E2E tests)
 
 Build: `vite build` completes successfully with no errors.
+
+Test commands:
+- `npm test` / `npm run test:run` — Vitest unit/integration tests (226 tests)
+- `npm run test:e2e` — Playwright E2E tests (21 tests, requires `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` env vars)
