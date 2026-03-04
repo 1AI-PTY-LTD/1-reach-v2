@@ -6,6 +6,7 @@ import zoneinfo
 from collections import defaultdict
 from datetime import datetime
 
+from clerk_backend_api import Clerk
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, OuterRef, Subquery, Sum
@@ -44,17 +45,21 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             return User.objects.none()
         return User.objects.filter(
             organisationmembership__organisation=org,
-            organisationmembership__is_active=True,
         ).annotate(
             _membership_role=Subquery(
                 OrganisationMembership.objects.filter(
-                    user=OuterRef('pk'), organisation=org, is_active=True
+                    user=OuterRef('pk'), organisation=org,
                 ).values('role')[:1]
             ),
             _org_name=Subquery(
                 OrganisationMembership.objects.filter(
-                    user=OuterRef('pk'), organisation=org, is_active=True
+                    user=OuterRef('pk'), organisation=org,
                 ).values('organisation__name')[:1]
+            ),
+            _is_active=Subquery(
+                OrganisationMembership.objects.filter(
+                    user=OuterRef('pk'), organisation=org,
+                ).values('is_active')[:1]
             ),
         ).order_by('first_name', 'last_name')
 
@@ -90,6 +95,40 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         except Exception as e:
             logger.error('Failed to update role via Clerk: %s', e)
             return Response({'detail': f'Failed to update role: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated, IsOrgAdmin])
+    def status(self, request, pk=None):
+        """PATCH /api/users/{id}/status/ — deactivate/reactivate a member (admin only)."""
+        is_active = request.data.get('is_active')
+        if not isinstance(is_active, bool):
+            return Response({'detail': 'is_active must be a boolean.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = self.get_object()
+        if user == request.user:
+            return Response({'detail': 'Cannot change your own status.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+
+            if not is_active:
+                # Deactivate: delete membership via Clerk → webhook will soft-delete locally
+                clerk_client.organization_memberships.delete(
+                    organization_id=request.org.clerk_org_id,
+                    user_id=user.clerk_id,
+                )
+                return Response({'status': 'deactivated', 'is_active': False})
+            else:
+                # Reactivate: send a new invitation via Clerk
+                clerk_client.organization_invitations.create(
+                    organization_id=request.org.clerk_org_id,
+                    email_address=user.email,
+                    role='org:member',
+                    inviter_user_id=request.user.clerk_id,
+                )
+                return Response({'status': 'invitation_sent', 'is_active': False})
+        except Exception as e:
+            logger.error('Failed to update member status via Clerk: %s', e)
+            return Response({'detail': f'Failed to update status: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 class ClerkWebhookView(APIView):

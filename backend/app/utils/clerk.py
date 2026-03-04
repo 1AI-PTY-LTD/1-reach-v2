@@ -76,6 +76,9 @@ def _handle_membership_created(data):
             organisation=org,
             defaults={'role': data.get('role', 'member'), 'is_active': True},
         )
+        # Ensure the user account is active (handles reactivation case)
+        if not user.is_active:
+            User.objects.filter(pk=user.pk).update(is_active=True)
 
 
 def _handle_membership_updated(data):
@@ -90,6 +93,13 @@ def _handle_membership_deleted(data):
         OrganisationMembership.objects.filter(
             user__clerk_id=user_id,
             organisation__clerk_org_id=org_id,
+        ).update(is_active=False)
+
+        # Deactivate user if they have no other active memberships
+        User.objects.filter(
+            clerk_id=user_id,
+        ).exclude(
+            organisationmembership__is_active=True,
         ).update(is_active=False)
 
 
