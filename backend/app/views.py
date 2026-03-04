@@ -8,7 +8,7 @@ from datetime import datetime
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, OuterRef, Subquery, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from rest_framework import filters, status, viewsets
@@ -24,7 +24,7 @@ from svix.webhooks import Webhook, WebhookVerificationError
 from app.filters import ContactFilter, ContactGroupFilter, GroupScheduleFilter, ScheduleFilter
 from app.mixins import SoftDeleteMixin, TenantScopedMixin
 from app.models import *
-from app.permissions import IsOrgMember
+from app.permissions import IsOrgAdmin, IsOrgMember
 from app.serializers import *
 from app.utils import clerk
 from app.utils.limits import get_sms_limit_info, get_mms_limit_info
@@ -45,6 +45,17 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         return User.objects.filter(
             organisationmembership__organisation=org,
             organisationmembership__is_active=True,
+        ).annotate(
+            _membership_role=Subquery(
+                OrganisationMembership.objects.filter(
+                    user=OuterRef('pk'), organisation=org, is_active=True
+                ).values('role')[:1]
+            ),
+            _org_name=Subquery(
+                OrganisationMembership.objects.filter(
+                    user=OuterRef('pk'), organisation=org, is_active=True
+                ).values('organisation__name')[:1]
+            ),
         ).order_by('first_name', 'last_name')
 
     @action(detail=False, methods=['get'])
@@ -55,6 +66,30 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.data
         data.pop('clerk_id', None)
         return Response(data)
+
+    @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated, IsOrgAdmin])
+    def role(self, request, pk=None):
+        """PATCH /api/users/{id}/role/ — update a member's role (admin only)."""
+        new_role = request.data.get('role')
+        if new_role not in ('org:admin', 'org:member'):
+            return Response({'detail': 'Role must be org:admin or org:member.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = self.get_object()
+        if user == request.user:
+            return Response({'detail': 'Cannot change your own role.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from clerk_backend_api import Clerk
+            clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+            result = clerk_client.organization_memberships.update(
+                organization_id=request.org.clerk_org_id,
+                user_id=user.clerk_id,
+                role=new_role,
+            )
+            return Response({'status': 'updated', 'role': result.role})
+        except Exception as e:
+            logger.error('Failed to update role via Clerk: %s', e)
+            return Response({'detail': f'Failed to update role: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
 class ClerkWebhookView(APIView):

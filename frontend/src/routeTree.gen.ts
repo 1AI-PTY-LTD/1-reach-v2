@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppLayoutRouteImport } from './routes/app/_layout'
+import { Route as AppLayoutUsersRouteImport } from './routes/app/_layout.users'
 import { Route as AppLayoutTemplatesRouteImport } from './routes/app/_layout.templates'
 import { Route as AppLayoutSummaryRouteImport } from './routes/app/_layout.summary'
 import { Route as AppLayoutSendRouteImport } from './routes/app/_layout.send'
@@ -37,6 +38,11 @@ const AppLayoutRoute = AppLayoutRouteImport.update({
   id: '/app/_layout',
   path: '/app',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AppLayoutUsersRoute = AppLayoutUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AppLayoutRoute,
 } as any)
 const AppLayoutTemplatesRoute = AppLayoutTemplatesRouteImport.update({
   id: '/templates',
@@ -131,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/app/send': typeof AppLayoutSendRouteWithChildren
   '/app/summary': typeof AppLayoutSummaryRoute
   '/app/templates': typeof AppLayoutTemplatesRouteWithChildren
+  '/app/users': typeof AppLayoutUsersRoute
   '/app/contacts/$contactId': typeof AppLayoutContactsContactIdRoute
   '/app/groups/$groupId': typeof AppLayoutGroupsGroupIdRoute
   '/app/schedule/$msgId': typeof AppLayoutScheduleMsgIdRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/app': typeof AppLayoutRouteWithChildren
   '/app/groups': typeof AppLayoutGroupsRouteWithChildren
   '/app/summary': typeof AppLayoutSummaryRoute
+  '/app/users': typeof AppLayoutUsersRoute
   '/app/contacts/$contactId': typeof AppLayoutContactsContactIdRoute
   '/app/groups/$groupId': typeof AppLayoutGroupsGroupIdRoute
   '/app/schedule/$msgId': typeof AppLayoutScheduleMsgIdRoute
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/app/_layout/send': typeof AppLayoutSendRouteWithChildren
   '/app/_layout/summary': typeof AppLayoutSummaryRoute
   '/app/_layout/templates': typeof AppLayoutTemplatesRouteWithChildren
+  '/app/_layout/users': typeof AppLayoutUsersRoute
   '/app/_layout/contacts/$contactId': typeof AppLayoutContactsContactIdRoute
   '/app/_layout/groups/$groupId': typeof AppLayoutGroupsGroupIdRoute
   '/app/_layout/schedule/$msgId': typeof AppLayoutScheduleMsgIdRoute
@@ -189,6 +198,7 @@ export interface FileRouteTypes {
     | '/app/send'
     | '/app/summary'
     | '/app/templates'
+    | '/app/users'
     | '/app/contacts/$contactId'
     | '/app/groups/$groupId'
     | '/app/schedule/$msgId'
@@ -204,6 +214,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/app/groups'
     | '/app/summary'
+    | '/app/users'
     | '/app/contacts/$contactId'
     | '/app/groups/$groupId'
     | '/app/schedule/$msgId'
@@ -224,6 +235,7 @@ export interface FileRouteTypes {
     | '/app/_layout/send'
     | '/app/_layout/summary'
     | '/app/_layout/templates'
+    | '/app/_layout/users'
     | '/app/_layout/contacts/$contactId'
     | '/app/_layout/groups/$groupId'
     | '/app/_layout/schedule/$msgId'
@@ -255,6 +267,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/app'
       preLoaderRoute: typeof AppLayoutRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/app/_layout/users': {
+      id: '/app/_layout/users'
+      path: '/users'
+      fullPath: '/app/users'
+      preLoaderRoute: typeof AppLayoutUsersRouteImport
+      parentRoute: typeof AppLayoutRoute
     }
     '/app/_layout/templates': {
       id: '/app/_layout/templates'
@@ -454,6 +473,7 @@ interface AppLayoutRouteChildren {
   AppLayoutSendRoute: typeof AppLayoutSendRouteWithChildren
   AppLayoutSummaryRoute: typeof AppLayoutSummaryRoute
   AppLayoutTemplatesRoute: typeof AppLayoutTemplatesRouteWithChildren
+  AppLayoutUsersRoute: typeof AppLayoutUsersRoute
 }
 
 const AppLayoutRouteChildren: AppLayoutRouteChildren = {
@@ -464,6 +484,7 @@ const AppLayoutRouteChildren: AppLayoutRouteChildren = {
   AppLayoutSendRoute: AppLayoutSendRouteWithChildren,
   AppLayoutSummaryRoute: AppLayoutSummaryRoute,
   AppLayoutTemplatesRoute: AppLayoutTemplatesRouteWithChildren,
+  AppLayoutUsersRoute: AppLayoutUsersRoute,
 }
 
 const AppLayoutRouteWithChildren = AppLayoutRoute._addFileChildren(

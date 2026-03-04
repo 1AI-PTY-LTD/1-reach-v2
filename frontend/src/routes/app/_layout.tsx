@@ -11,7 +11,7 @@ import {
   NavbarSection,
   NavbarSpacer,
 } from '../../ui/navbar'
-import { UserButton } from '@clerk/clerk-react'
+import { UserButton, useOrganization } from '@clerk/clerk-react'
 import logo from '../../assets/images/1ai_logo.png'
 
 export const Route = createFileRoute('/app/_layout')({
@@ -19,44 +19,55 @@ export const Route = createFileRoute('/app/_layout')({
 })
 
 const allNavItems = [
-  { label: 'Send', to: '/app/send', match: '/app/_layout/send/' },
+  { label: 'Send', to: '/app/send', match: '/app/_layout/send/', adminOnly: false },
   {
     label: 'Schedule',
     to: '/app/schedule',
     match: '/app/_layout/schedule/',
+    adminOnly: false,
   },
   {
     label: 'Contacts',
     to: '/app/contacts',
     match: '/app/_layout/contacts/',
+    adminOnly: false,
   },
   {
     label: 'Groups',
     to: '/app/groups',
     match: '/app/_layout/groups/',
+    adminOnly: false,
   },
   {
     label: 'Import',
     to: '/app/import',
     match: '/app/_layout/import/',
+    adminOnly: false,
   },
   {
     label: 'Templates',
     to: '/app/templates',
     match: '/app/_layout/templates/',
+    adminOnly: false,
   },
-  { label: 'Summary', to: '/app/summary', match: '/app/_layout/summary' },
-] as const
-
-const navItems = allNavItems.filter((item) => {
-  if (item.label === 'Import') {
-    return import.meta.env.VITE_IMPORT_ENABLED === 'true'
-  }
-  return true
-})
+  { label: 'Summary', to: '/app/summary', match: '/app/_layout/summary', adminOnly: false },
+  { label: 'Users', to: '/app/users', match: '/app/_layout/users/', adminOnly: true },
+]
 
 function AppLayout() {
   const matches = useMatches()
+  const { membership } = useOrganization()
+  const isAdmin = membership?.role === 'org:admin'
+
+  const navItems = allNavItems.filter((item) => {
+    if (item.label === 'Import') {
+      return import.meta.env.VITE_IMPORT_ENABLED === 'true'
+    }
+    if (item.adminOnly) {
+      return isAdmin
+    }
+    return true
+  })
 
   return (
     <StackedLayout
