@@ -213,10 +213,7 @@ export default function GroupsModal({
 						disabled={isSubmitting || (isEditMode && isLoading)}
 					>
 						{isSubmitting ? (
-							<div className="flex items-center gap-2">
-								<div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-								{isEditMode ? 'Updating...' : 'Creating...'}
-							</div>
+							<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 						) : (
 							buttonText
 						)}

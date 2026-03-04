@@ -88,7 +88,9 @@ function InviteUserDialog({
             Cancel
           </Button>
           <Button type="submit" color="emerald" disabled={inviteUser.isPending}>
-            {inviteUser.isPending ? 'Sending...' : 'Send Invite'}
+            {inviteUser.isPending ? (
+              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : 'Send Invite'}
           </Button>
         </DialogActions>
       </form>

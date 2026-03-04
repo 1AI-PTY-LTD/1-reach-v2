@@ -173,10 +173,7 @@ export default function GroupScheduleChildrenList({ groupScheduleId, onEdit }: G
 									disabled={deleteGroupScheduleMutation.isPending}
 								>
 									{deleteGroupScheduleMutation.isPending ? (
-										<div className="flex items-center gap-2">
-											<div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-											Deleting...
-										</div>
+										<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 									) : (
 										<>
 											<TrashIcon />

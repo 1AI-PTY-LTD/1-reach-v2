@@ -216,9 +216,11 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
                             disabled={removeMembersMutation.isPending}
                             color="red"
                         >
-                            {removeMembersMutation.isPending
-                                ? "Removing..."
-                                : "Remove Member"}
+                            {removeMembersMutation.isPending ? (
+                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                            ) : (
+                                "Remove Member"
+                            )}
                         </Button>
                     </DialogActions>
                 </DialogBody>

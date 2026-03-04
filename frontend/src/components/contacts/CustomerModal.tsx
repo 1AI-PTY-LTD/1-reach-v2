@@ -378,10 +378,7 @@ export function ContactModal({
                         disabled={createContact.isPending || updateContact.isPending}
                     >
                         {(createContact.isPending || updateContact.isPending) ? (
-                            <div className="flex items-center gap-2">
-                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                {buttonText === "Create" ? "Creating..." : "Updating..."}
-                            </div>
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                         ) : buttonText}
                     </Button>
                 </div>

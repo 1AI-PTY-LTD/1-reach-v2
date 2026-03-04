@@ -140,9 +140,16 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 							await handleDelete();
 							setIsAlertOpen(false);
 						}}
+						disabled={updateScheduleMutation.isPending}
 					>
-						<TrashIcon />
-						Delete
+						{updateScheduleMutation.isPending ? (
+							<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+						) : (
+							<>
+								<TrashIcon />
+								Delete
+							</>
+						)}
 					</Button>
 				</AlertActions>
 			</Alert>

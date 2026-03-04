@@ -239,10 +239,7 @@ export function TemplateModal({
                             disabled={createNewTemplate.isPending || updateTemplate.isPending}
                         >
                             {(createNewTemplate.isPending || updateTemplate.isPending) ? (
-                                <div className="flex items-center gap-2">
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    {template ? "Updating..." : "Creating..."}
-                                </div>
+                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                             ) : (template ? "Update" : "Create")}
                         </Button>
                     </DialogActions>

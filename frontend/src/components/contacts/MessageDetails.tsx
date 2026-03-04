@@ -116,10 +116,7 @@ export function MessageDetails({ message }: { message: Schedule }) {
 						disabled={updateScheduleMutation.isPending}
 					>
 						{updateScheduleMutation.isPending ? (
-							<div className="flex items-center gap-2">
-								<div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-								Deleting...
-							</div>
+							<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 						) : (
 							<>
 								<TrashIcon />

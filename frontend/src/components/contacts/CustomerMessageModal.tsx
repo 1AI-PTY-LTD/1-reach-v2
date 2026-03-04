@@ -481,10 +481,7 @@ export function ContactMessageModal({
                             }}
                         >
                             {isSubmitting ? (
-                                <div className="flex items-center gap-2">
-                                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    Processing...
-                                </div>
+                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                             ) : (isEditMode ? "Update" : "Create")}
                         </Button>
                     </DialogActions>

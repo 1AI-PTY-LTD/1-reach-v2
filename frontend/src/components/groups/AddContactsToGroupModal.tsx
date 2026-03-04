@@ -264,10 +264,7 @@ export const AddContactsToGroupModal: React.FC<AddContactsToGroupModalProps> = (
                     disabled={selectedContactIds.size === 0 || addMembersMutation.isPending}
                 >
                     {addMembersMutation.isPending ? (
-                        <div className="flex items-center gap-2">
-                            <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                            Adding...
-                        </div>
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                     ) : (
                         `Add ${selectedContactIds.size} Contact${selectedContactIds.size !== 1 ? 's' : ''}`
                     )}

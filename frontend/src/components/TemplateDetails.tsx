@@ -92,12 +92,22 @@ export default function TemplateDetails({
                     <Button plain onClick={() => setIsAlertOpen(false)}>
                         Cancel
                     </Button>
-                    <Button color="red" onClick={async () => {
-                        await archiveTemplate();
-                        setIsAlertOpen(false);
-                    }}>
-                        <TrashIcon />
-                        Archive
+                    <Button
+                        color="red"
+                        onClick={async () => {
+                            await archiveTemplate();
+                            setIsAlertOpen(false);
+                        }}
+                        disabled={updateTemplate.isPending}
+                    >
+                        {updateTemplate.isPending ? (
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                        ) : (
+                            <>
+                                <TrashIcon />
+                                Archive
+                            </>
+                        )}
                     </Button>
                 </AlertActions>
             </Alert>
