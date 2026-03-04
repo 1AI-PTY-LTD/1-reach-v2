@@ -39,6 +39,26 @@ export function useToggleUserStatusMutation(client: ApiClient) {
   })
 }
 
+export function useInviteUserMutation(client: ApiClient) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ email, role }: { email: string; role?: string }) => {
+      Logger.debug('Inviting user', { component: 'usersApi.inviteUser', data: { email, role } })
+      return client.post<{ status: string; email: string }>('/api/users/invite/', { email, role: role || 'org:member' })
+    },
+    onSuccess: () => {
+      Logger.info('User invitation sent successfully', { component: 'usersApi.inviteUser' })
+      return queryClient.invalidateQueries({ queryKey: ['users'] })
+    },
+    onError: (error) => {
+      Logger.error('Failed to invite user', {
+        component: 'usersApi.inviteUser',
+        data: { error: error.message },
+      })
+    },
+  })
+}
+
 export function useUpdateUserRoleMutation(client: ApiClient) {
   const queryClient = useQueryClient()
   return useMutation({

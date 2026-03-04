@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { useOrganization, useUser } from '@clerk/clerk-react'
-import { Suspense } from 'react'
+import { Suspense, useState } from 'react'
 import {
   Table,
   TableBody,
@@ -12,14 +12,89 @@ import {
 } from '../../ui/table'
 import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
+import { Dialog, DialogActions, DialogBody, DialogTitle } from '../../ui/dialog'
+import { Field, Label } from '../../ui/fieldset'
+import { Input } from '../../ui/input'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
-import { getAllUsersQueryOptions, useUpdateUserRoleMutation, useToggleUserStatusMutation } from '../../api/usersApi'
+import {
+  getAllUsersQueryOptions,
+  useUpdateUserRoleMutation,
+  useToggleUserStatusMutation,
+  useInviteUserMutation,
+} from '../../api/usersApi'
 
 export const Route = createFileRoute('/app/_layout/users')({
   component: RouteComponent,
   pendingComponent: () => <LoadingSpinner />,
 })
+
+function InviteUserDialog({
+  isOpen,
+  setIsOpen,
+}: {
+  isOpen: boolean
+  setIsOpen: (value: boolean) => void
+}) {
+  const client = useApiClient()
+  const inviteUser = useInviteUserMutation(client)
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+
+    if (!email.trim()) {
+      setError('Email is required.')
+      return
+    }
+
+    inviteUser.mutate(
+      { email: email.trim() },
+      {
+        onSuccess: () => {
+          setEmail('')
+          setIsOpen(false)
+        },
+        onError: (err) => {
+          setError(err.message || 'Failed to send invitation.')
+        },
+      },
+    )
+  }
+
+  return (
+    <Dialog open={isOpen} onClose={() => setIsOpen(false)} size="sm">
+      <form onSubmit={handleSubmit}>
+        <DialogTitle>Invite User</DialogTitle>
+        <DialogBody>
+          <Field>
+            <Label>Email address</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="user@example.com"
+              autoFocus
+            />
+          </Field>
+          {error && (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>
+          )}
+        </DialogBody>
+        <DialogActions>
+          <Button plain onClick={() => setIsOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" color="emerald" disabled={inviteUser.isPending}>
+            {inviteUser.isPending ? 'Sending...' : 'Send Invite'}
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  )
+}
 
 function UsersContent() {
   const client = useApiClient()
@@ -28,6 +103,7 @@ function UsersContent() {
   const { user: clerkUser } = useUser()
   const updateRole = useUpdateUserRoleMutation(client)
   const toggleStatus = useToggleUserStatusMutation(client)
+  const [inviteOpen, setInviteOpen] = useState(false)
 
   const isAdmin = membership?.role === 'org:admin'
 
@@ -42,6 +118,14 @@ function UsersContent() {
 
   return (
     <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-4">
+      {isAdmin && (
+        <div className="mb-4 flex justify-end">
+          <Button color="emerald" onClick={() => setInviteOpen(true)}>
+            Invite User
+          </Button>
+          <InviteUserDialog isOpen={inviteOpen} setIsOpen={setInviteOpen} />
+        </div>
+      )}
       <Table className="max-h-[80vh]">
         <TableHead>
           <TableRow>

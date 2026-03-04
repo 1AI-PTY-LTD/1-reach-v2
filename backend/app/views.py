@@ -130,6 +130,30 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             logger.error('Failed to update member status via Clerk: %s', e)
             return Response({'detail': f'Failed to update status: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsOrgAdmin])
+    def invite(self, request):
+        """POST /api/users/invite/ — invite a new user by email (admin only)."""
+        email = request.data.get('email', '').strip()
+        role = request.data.get('role', 'org:member')
+
+        if not email:
+            return Response({'detail': 'Email is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if role not in ('org:admin', 'org:member'):
+            return Response({'detail': 'Role must be org:admin or org:member.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+            clerk_client.organization_invitations.create(
+                organization_id=request.org.clerk_org_id,
+                email_address=email,
+                role=role,
+                inviter_user_id=request.user.clerk_id,
+            )
+            return Response({'status': 'invitation_sent', 'email': email}, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error('Failed to invite user via Clerk: %s', e)
+            return Response({'detail': f'Failed to send invitation: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
+
 
 class ClerkWebhookView(APIView):
     authentication_classes = []
