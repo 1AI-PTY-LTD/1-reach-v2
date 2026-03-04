@@ -28,7 +28,9 @@ export function useToggleUserStatusMutation(client: ApiClient) {
     },
     onSuccess: () => {
       Logger.info('User status updated successfully', { component: 'usersApi.toggleUserStatus' })
-      return queryClient.invalidateQueries({ queryKey: ['users'] })
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(queryClient.invalidateQueries({ queryKey: ['users'] })), 2000),
+      )
     },
     onError: (error) => {
       Logger.error('Failed to toggle user status', {
@@ -68,7 +70,9 @@ export function useUpdateUserRoleMutation(client: ApiClient) {
     },
     onSuccess: () => {
       Logger.info('User role updated successfully', { component: 'usersApi.updateUserRole' })
-      return queryClient.invalidateQueries({ queryKey: ['users'] })
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(queryClient.invalidateQueries({ queryKey: ['users'] })), 2000),
+      )
     },
     onError: (error) => {
       Logger.error('Failed to update user role', {

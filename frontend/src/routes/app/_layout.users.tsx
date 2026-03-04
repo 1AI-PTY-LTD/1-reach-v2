@@ -107,13 +107,24 @@ function UsersContent() {
 
   const isAdmin = membership?.role === 'org:admin'
 
+  const [pendingRoleUserId, setPendingRoleUserId] = useState<number | null>(null)
+  const [pendingStatusUserId, setPendingStatusUserId] = useState<number | null>(null)
+
   const handleToggleRole = (userId: number, currentRole: string) => {
     const newRole = currentRole === 'org:admin' ? 'org:member' : 'org:admin'
-    updateRole.mutate({ userId, role: newRole })
+    setPendingRoleUserId(userId)
+    updateRole.mutate(
+      { userId, role: newRole },
+      { onSettled: () => setPendingRoleUserId(null) },
+    )
   }
 
   const handleToggleStatus = (userId: number, currentlyActive: boolean) => {
-    toggleStatus.mutate({ userId, isActive: !currentlyActive })
+    setPendingStatusUserId(userId)
+    toggleStatus.mutate(
+      { userId, isActive: !currentlyActive },
+      { onSettled: () => setPendingStatusUserId(null) },
+    )
   }
 
   return (
@@ -167,16 +178,28 @@ function UsersContent() {
                         <Button
                           outline
                           onClick={() => handleToggleRole(user.id, user.role)}
-                          disabled={updateRole.isPending}
+                          disabled={pendingRoleUserId !== null || pendingStatusUserId !== null}
                         >
-                          {user.role === 'org:admin' ? 'Revoke Admin' : 'Make Admin'}
+                          {pendingRoleUserId === user.id ? (
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                          ) : user.role === 'org:admin' ? (
+                            'Revoke Admin'
+                          ) : (
+                            'Make Admin'
+                          )}
                         </Button>
                         <Button
                           outline
                           onClick={() => handleToggleStatus(user.id, user.is_active)}
-                          disabled={toggleStatus.isPending}
+                          disabled={pendingStatusUserId !== null || pendingRoleUserId !== null}
                         >
-                          {user.is_active ? 'Deactivate' : 'Re-invite'}
+                          {pendingStatusUserId === user.id ? (
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                          ) : user.is_active ? (
+                            'Deactivate'
+                          ) : (
+                            'Re-invite'
+                          )}
                         </Button>
                       </div>
                     )}
