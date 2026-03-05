@@ -98,7 +98,7 @@ function InviteUserDialog({
   )
 }
 
-function UsersContent() {
+export function UsersContent() {
   const client = useApiClient()
   const { data: users } = useSuspenseQuery(getAllUsersQueryOptions(client))
   const { membership } = useOrganization()

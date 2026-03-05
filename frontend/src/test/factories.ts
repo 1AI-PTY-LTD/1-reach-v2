@@ -1,4 +1,5 @@
 import type { Contact, CreateContact } from '../types/contact.types'
+import type { OrgUser } from '../types/user.types'
 import type { Template } from '../types/template.types'
 import type { Schedule, ScheduleStatus } from '../types/schedule.types'
 import type { ContactGroup } from '../types/group.types'
@@ -16,6 +17,23 @@ export function resetIdCounter() {
 }
 
 const now = new Date().toISOString()
+
+export function createUser(overrides: Partial<OrgUser> = {}): OrgUser {
+  const id = overrides.id ?? nextId()
+  return {
+    id,
+    first_name: 'Test',
+    last_name: 'User',
+    email: `user${id}@example.com`,
+    clerk_id: `user_clerk${id}`,
+    role: 'org:member',
+    organisation: 'Test Org',
+    is_active: true,
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  }
+}
 
 export function createContact(overrides: Partial<Contact> = {}): Contact {
   const id = overrides.id ?? nextId()

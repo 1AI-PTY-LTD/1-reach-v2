@@ -289,6 +289,46 @@ export async function mockApiEndpoints(page: Page) {
     })
   })
 
+  // Users
+  await page.route(`${BASE}/api/users/?**`, (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        results: [
+          { id: 1, first_name: 'Admin', last_name: 'User', email: 'admin@example.com', clerk_id: 'user_test123', role: 'org:admin', organisation: 'Test Org', is_active: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+          { id: 2, first_name: 'Member', last_name: 'User', email: 'member@example.com', clerk_id: 'user_member1', role: 'org:member', organisation: 'Test Org', is_active: true, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+          { id: 3, first_name: 'Inactive', last_name: 'User', email: 'inactive@example.com', clerk_id: 'user_inactive1', role: 'org:member', organisation: 'Test Org', is_active: false, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+        ],
+        pagination: { total: 3, page: 1, limit: 1000, totalPages: 1, hasNext: false, hasPrev: false },
+      }),
+    })
+  })
+
+  await page.route(new RegExp(`${escapeRegex(BASE)}/api/users/\\d+/role/`), (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'updated', role: 'org:admin' }),
+    })
+  })
+
+  await page.route(new RegExp(`${escapeRegex(BASE)}/api/users/\\d+/status/`), (route) => {
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'deactivated', is_active: false }),
+    })
+  })
+
+  await page.route(`${BASE}/api/users/invite/`, (route) => {
+    return route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'invitation_sent', email: 'new@example.com' }),
+    })
+  })
+
   // Stats
   await page.route(`${BASE}/api/stats/**`, (route) => {
     return route.fulfill({

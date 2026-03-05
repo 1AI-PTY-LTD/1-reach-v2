@@ -7,10 +7,17 @@ import {
   createGroup,
   createGroupSchedule,
   createSummaryData,
+  createUser,
   paginate,
 } from './factories'
 
 const BASE_URL = 'http://localhost:8000'
+
+const users = [
+  createUser({ id: 1, first_name: 'Admin', last_name: 'User', email: 'admin@example.com', clerk_id: 'user_test123', role: 'org:admin', organisation: 'Test Org' }),
+  createUser({ id: 2, first_name: 'Member', last_name: 'User', email: 'member@example.com', clerk_id: 'user_member1', role: 'org:member', organisation: 'Test Org' }),
+  createUser({ id: 3, first_name: 'Inactive', last_name: 'User', email: 'inactive@example.com', clerk_id: 'user_inactive1', role: 'org:member', organisation: 'Test Org', is_active: false }),
+]
 
 const contacts = [
   createContact({ id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' }),
@@ -240,6 +247,30 @@ export const handlers = [
   // Stats
   http.get(`${BASE_URL}/api/stats/monthly/`, () => {
     return HttpResponse.json(createSummaryData())
+  }),
+
+  // Users
+  http.get(`${BASE_URL}/api/users/`, () => {
+    return HttpResponse.json(paginate(users))
+  }),
+
+  http.patch(`${BASE_URL}/api/users/:id/role/`, async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({ status: 'updated', role: body.role })
+  }),
+
+  http.patch(`${BASE_URL}/api/users/:id/status/`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    const isActive = body.is_active as boolean
+    if (isActive) {
+      return HttpResponse.json({ status: 'invitation_sent', is_active: false })
+    }
+    return HttpResponse.json({ status: 'deactivated', is_active: false })
+  }),
+
+  http.post(`${BASE_URL}/api/users/invite/`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>
+    return HttpResponse.json({ status: 'invitation_sent', email: body.email }, { status: 201 })
   }),
 ]
 
