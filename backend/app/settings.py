@@ -166,18 +166,14 @@ SPECTACULAR_SETTINGS = {
 
 
 # CORS
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-]
+CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:5173').split(',')
 
 
 # Clerk
-CLERK_FRONTEND_API = os.environ.get('CLERK_FRONTEND_API', '') 
+CLERK_FRONTEND_API = os.environ.get('CLERK_FRONTEND_API', '')
 CLERK_SECRET_KEY = os.environ.get('CLERK_SECRET_KEY', '')
 CLERK_WEBHOOK_SIGNING_SECRET = os.environ.get('CLERK_WEBHOOK_SIGNING_SECRET', '')
-CLERK_AUTHORIZED_PARTIES = [
-    'http://localhost:5173',
-]
+CLERK_AUTHORIZED_PARTIES = os.environ.get('CLERK_AUTHORIZED_PARTIES', 'http://localhost:5173').split(',')
 
 
 # SMS Provider
