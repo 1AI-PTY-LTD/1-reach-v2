@@ -227,9 +227,12 @@ No filters on either version.
 
 | v1 | v2 | Notes |
 |---|---|---|
-| `GET /api/users` | `GET /api/users/` | Scoped to org members in v2 |
+| `GET /api/users` | `GET /api/users/` | Scoped to org members in v2; includes `role`, `organisation`, `is_active` annotations |
 | `GET /api/users/:id` | `GET /api/users/:id/` | |
 | — | `GET /api/users/me/` | Replaces old `/api/me/` — returns authenticated user + org context |
+| — | `PATCH /api/users/:id/role/` | New — admin only; updates member role via Clerk API (`org:admin` / `org:member`) |
+| — | `PATCH /api/users/:id/status/` | New — admin only; deactivate (deletes Clerk membership) or re-invite (sends Clerk invitation) |
+| — | `POST /api/users/invite/` | New — admin only; invites a new user to the org by email via Clerk |
 
 #### Stats
 
@@ -360,6 +363,9 @@ No remaining endpoints — all v1 API surface has been migrated!
 |---|---|
 | `POST /api/webhooks/clerk/` | Clerk webhook receiver (user/org sync) |
 | `GET/POST/PUT/PATCH /api/configs/` | Config CRUD (was not exposed in v1) |
+| `PATCH /api/users/:id/role/` | Update org member role (admin only, via Clerk API) |
+| `PATCH /api/users/:id/status/` | Deactivate/re-invite org member (admin only, via Clerk API) |
+| `POST /api/users/invite/` | Invite new user to org by email (admin only, via Clerk API) |
 
 ### Pagination
 
@@ -461,10 +467,10 @@ All v1 Express API endpoints have been migrated to v2 Django:
 | Aspect | Status |
 |---|---|
 | **v1 tests** | None |
-| **v2 current** | **226 unit/integration tests + 21 E2E tests** |
+| **v2 current** | **243 unit/integration tests + 28 E2E tests** |
 | **Unit/Integration framework** | Vitest + React Testing Library + MSW |
 | **E2E framework** | Playwright (Chromium) |
-| **Test categories** | • Unit tests (useDebounce, logger, ApiClient) ✅<br>• Component tests (StatusBadge, TabbedContainer, ScheduleTable, DateSelect, TemplateModal, TemplateDetails, ScheduleDetails) ✅<br>• Complex component tests (CustomerModal, CustomerMessageModal, Customers, GroupsWidget, AddContactsToGroupModal, GroupUsersDetails) ✅<br>• Send page tests (recipients, templates, messaging, MMS) ✅<br>• API layer tests (contacts, templates, schedules, groups, SMS, stats, group schedules) ✅<br>• Route integration tests (contacts, groups, schedule, summary) ✅<br>• E2E tests (contacts, templates, schedules, groups, send-sms) ✅ |
+| **Test categories** | • Unit tests (useDebounce, logger, ApiClient, usersApi) ✅<br>• Component tests (StatusBadge, TabbedContainer, ScheduleTable, DateSelect, TemplateModal, TemplateDetails, ScheduleDetails) ✅<br>• Complex component tests (CustomerModal, CustomerMessageModal, Customers, GroupsWidget, AddContactsToGroupModal, GroupUsersDetails) ✅<br>• Send page tests (recipients, templates, messaging, MMS) ✅<br>• API layer tests (contacts, templates, schedules, groups, SMS, stats, group schedules, users) ✅<br>• Route integration tests (contacts, groups, schedule, summary, users) ✅<br>• E2E tests (contacts, templates, schedules, groups, send-sms, users) ✅ |
 | **E2E auth** | Clerk sign-in tokens via Backend API (bypasses MFA), `@clerk/testing/playwright` for dev mode |
 | **Infrastructure** | `vitest.config.ts`, `playwright.config.ts`, MSW handlers, test data factories, custom render wrapper with QueryClient + ApiClientProvider |
 | **Config changes** | `tsconfig.app.json` excludes test files from build, `vite.config.ts` ignores `__tests__` in TanStack Router plugin |
@@ -627,8 +633,8 @@ To make v2 production-ready:
 - [x] **Request logging** — Implemented
 - [x] **API documentation** — OpenAPI schema + Swagger UI
 - [x] **File storage** — Provider abstraction complete (Mock + Azure Blob Storage)
-- [x] **Backend test suite** — 354 tests with 91% coverage
-- [x] **Frontend test suite** — 226 Vitest tests + 21 Playwright E2E tests
+- [x] **Backend test suite** — 354 tests with 89% coverage
+- [x] **Frontend test suite** — 243 Vitest tests + 28 Playwright E2E tests
 - [x] **SMS/MMS limit checking** — Refactored with capacity-based validation
 - [x] **User profile** — Read-only, Clerk-managed
 - [x] **Schedule update validation** — Validated in serializer (working correctly)
@@ -647,7 +653,7 @@ The Django v2 backend has successfully achieved **98% feature parity** with the 
 - ✅ Clerk authentication (replacing Azure AD)
 - ✅ Improved SMS/MMS provider abstraction
 - ✅ Better file storage abstraction
-- ✅ Comprehensive test suite (backend: 354 tests/91% coverage, frontend: 226 unit + 21 E2E tests)
+- ✅ Comprehensive test suite (backend: 354 tests/89% coverage, frontend: 243 unit + 28 E2E tests)
 - ✅ API documentation (OpenAPI/Swagger)
 - ✅ Proper soft delete patterns
 - ✅ Capacity-based limit checking
@@ -754,6 +760,7 @@ All new files with snake_case fields matching the v2 Django backend:
 | `sms.types.ts` | same | `contact_id` not `customerId`, `media_url` not `mediaUrl` |
 | `stats.types.ts` | same | `monthly_stats`, `sms_sent`, `sms_message_parts` |
 | `pagination.types.ts` | new | `PaginatedResponse<T>` with `results` key (was `data`) |
+| `user.types.ts` | new | `OrgUser` type with `role`, `organisation`, `is_active`, `clerk_id` |
 
 #### API Modules (`src/api/`)
 
@@ -768,6 +775,7 @@ All rewritten to use the `ApiClient` pattern and v2 endpoints:
 | `groupSchedulesApi.ts` | `groupSchedulesApi.ts` | `group_id` param, `client` first arg |
 | `smsApi.ts` | `smsApi.ts` | `contact_id`, `media_url`, `client` first arg |
 | `statsApi.ts` | extracted from `messagesApi.ts` | `/api/stats/monthly/`, snake_case response fields |
+| `usersApi.ts` | new | `/api/users/`, role/status/invite mutations with 2s delayed invalidation for Clerk webhook race condition |
 
 #### UI Components (`src/ui/`)
 
@@ -835,5 +843,30 @@ New dependencies added:
 Build: `vite build` completes successfully with no errors.
 
 Test commands:
-- `npm test` / `npm run test:run` — Vitest unit/integration tests (226 tests)
-- `npm run test:e2e` — Playwright E2E tests (21 tests, requires `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` env vars)
+- `npm test` / `npm run test:run` — Vitest unit/integration tests (243 tests)
+- `npm run test:e2e` — Playwright E2E tests (28 tests, requires `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` env vars)
+
+### Organisation User Management (New in v2)
+
+v2 adds a full org member management UI that has no v1 equivalent (v1 had no multi-tenancy):
+
+#### Backend
+
+- **`UserSerializer`** — extended with `role`, `organisation`, `is_active` fields annotated from `OrganisationMembership` via Django `Subquery`
+- **`UserViewSet.get_queryset()`** — filters to org members (including inactive), annotates `_membership_role`, `_org_name`, `_is_active`
+- **`PATCH /api/users/:id/role/`** — calls `clerk_client.organization_memberships.update()`, requires `IsOrgAdmin`, prevents self-demotion
+- **`PATCH /api/users/:id/status/`** — deactivate calls `clerk_client.organization_memberships.delete()`, reactivate sends a new Clerk invitation; prevents self-deactivation
+- **`POST /api/users/invite/`** — calls `clerk_client.organization_invitations.create()` with `inviter_user_id`
+- **Webhook cascade** — `_handle_membership_deleted` sets `User.is_active = False` when user has no remaining active memberships; `_handle_membership_created` sets `User.is_active = True` on reactivation
+- **Clerk as source of truth** — all membership changes go through Clerk API; webhooks sync state back to the local DB
+
+#### Frontend
+
+- **Users page** (`src/routes/app/_layout.users.tsx`) — table of org members with Name, Email, Organisation, Role badge, Status badge, and per-row admin actions
+- **Admin-gated nav item** — "Users" link only visible to `org:admin` members (checked via `useOrganization().membership.role`)
+- **Role display** — uses Clerk's prefixed format (`org:admin` → "Admin", `org:member` → "Member")
+- **Inactive rows** — dimmed with `opacity-50`; show "Re-invite" instead of "Deactivate"
+- **Self-protection** — action buttons hidden for the current user's own row
+- **Invite dialog** — email input dialog with validation, triggers `POST /api/users/invite/`
+- **Delayed query invalidation** — Clerk mutations (`role`, `status`) wait 2 seconds before refetching, covering the webhook processing race condition
+- **Spinner pattern** — all action buttons show a CSS spinner (`animate-spin`) while pending, applied consistently across all mutation buttons in the app
