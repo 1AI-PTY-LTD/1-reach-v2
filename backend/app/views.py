@@ -501,6 +501,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                     group=group,
                     parent=parent,
                     scheduled_time=data['scheduled_time'],
+                    max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
                     created_by=request.user,
                     updated_by=request.user,
                 )

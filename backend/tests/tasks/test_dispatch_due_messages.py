@@ -13,7 +13,7 @@ from unittest.mock import call, patch
 import pytest
 from django.utils import timezone
 
-from app.models import MessageFormat, Schedule, ScheduleStatus
+from app.models import ContactGroup, MessageFormat, Schedule, ScheduleStatus
 from app.celery import dispatch_due_messages
 
 
@@ -21,12 +21,29 @@ from app.celery import dispatch_due_messages
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_parent(organisation, user, scheduled_time=None):
-    """Create a group-parent schedule (no parent FK)."""
+def _make_group(organisation, user):
+    """Create a ContactGroup for use in group schedule tests."""
+    return ContactGroup.objects.create(
+        organisation=organisation,
+        name='Test group',
+        created_by=user,
+        updated_by=user,
+    )
+
+
+def _make_parent(organisation, user, group=None, scheduled_time=None):
+    """Create a group-parent schedule (group set, no parent FK).
+
+    A real group-parent always has `group` set — it's the container for the
+    campaign. Without `group`, the schedule looks like an individual schedule.
+    """
+    if group is None:
+        group = _make_group(organisation, user)
     return Schedule.objects.create(
         organisation=organisation,
         name='Group campaign',
         text='Group message',
+        group=group,
         scheduled_time=scheduled_time or timezone.now() - timedelta(minutes=5),
         status=ScheduleStatus.PENDING,
         format=MessageFormat.SMS,
@@ -36,7 +53,7 @@ def _make_parent(organisation, user, scheduled_time=None):
     )
 
 
-def _make_child(organisation, user, parent, scheduled_time=None, status=ScheduleStatus.PENDING):
+def _make_child(organisation, user, parent, group=None, scheduled_time=None, status=ScheduleStatus.PENDING):
     """Create a leaf child schedule (has parent FK)."""
     return Schedule.objects.create(
         organisation=organisation,
@@ -88,6 +105,30 @@ class TestDispatchDueMessages:
 
         assert result == {'dispatched': 0}
         mock_task.delay.assert_not_called()
+
+    def test_dispatches_individual_schedules(self, db, organisation, user):
+        """Individual schedules (parent=None, group=None) are dispatched by the beat task."""
+        individual = Schedule.objects.create(
+            organisation=organisation,
+            phone='0412345678',
+            text='Individual message',
+            scheduled_time=timezone.now() - timedelta(minutes=5),
+            status=ScheduleStatus.PENDING,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            max_retries=3,
+            created_by=user,
+            updated_by=user,
+        )
+
+        with patch('app.celery.send_message') as mock_task:
+            mock_task.delay.return_value = None
+            result = dispatch_due_messages()
+
+        assert result == {'dispatched': 1}
+        mock_task.delay.assert_called_once_with(individual.pk)
+        individual.refresh_from_db()
+        assert individual.status == ScheduleStatus.QUEUED
 
     def test_ignores_future_schedules(self, db, organisation, user):
         """Children scheduled in the future are left untouched."""

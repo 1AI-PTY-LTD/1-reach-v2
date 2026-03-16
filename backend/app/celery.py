@@ -33,7 +33,6 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
 app = Celery('reach')
 app.config_from_object('django.conf:settings', namespace='CELERY')
-app.autodiscover_tasks()
 
 logger = logging.getLogger(__name__)
 
@@ -232,12 +231,18 @@ def dispatch_due_messages() -> dict:
     batch_size = 500
 
     with transaction.atomic():
+        # Leaf schedules are either:
+        #   - group children (parent set, group set), or
+        #   - individual schedules (parent=None, group=None)
+        # Group parents (parent=None, group set) are containers only — never sent directly.
         due = list(
             Schedule.objects.select_for_update(skip_locked=True)
             .filter(
                 status=ScheduleStatus.PENDING,
                 scheduled_time__lte=now,
-                parent__isnull=False,   # only leaf schedules (children), not group parents
+            )
+            .exclude(
+                parent__isnull=True, group__isnull=False,  # exclude group-parent containers
             )
             .values_list('pk', flat=True)[:batch_size]
         )
