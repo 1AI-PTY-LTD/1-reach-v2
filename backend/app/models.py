@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
@@ -23,12 +25,21 @@ class User(AbstractUser):
 
 
 class Organisation(models.Model):
+    BILLING_TRIAL = 'trial'
+    BILLING_SUBSCRIBED = 'subscribed'
+    BILLING_MODE_CHOICES = [
+        (BILLING_TRIAL, 'Trial'),
+        (BILLING_SUBSCRIBED, 'Subscribed'),
+    ]
+
     clerk_org_id = models.CharField(max_length=255, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
+    credit_balance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    billing_mode = models.CharField(max_length=20, choices=BILLING_MODE_CHOICES, default=BILLING_TRIAL)
 
     class Meta:
         db_table = 'organisations'
@@ -181,3 +192,33 @@ class Config(TenantModel):
 
     def __str__(self):
         return f'{self.name}: {self.value[:50]}'
+
+
+class CreditTransaction(TenantModel, AuditMixin):
+    GRANT = 'grant'
+    DEDUCT = 'deduct'
+    USAGE = 'usage'
+    REFUND = 'refund'
+    TYPE_CHOICES = [
+        (GRANT, 'Grant'),
+        (DEDUCT, 'Deduct'),
+        (USAGE, 'Usage'),
+        (REFUND, 'Refund'),
+    ]
+
+    transaction_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    balance_after = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.CharField(max_length=255)
+    format = models.CharField(max_length=50, null=True, blank=True)
+    schedule = models.ForeignKey(
+        Schedule, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='credit_transactions'
+    )
+
+    class Meta:
+        db_table = 'credit_transactions'
+        indexes = [models.Index(fields=['organisation', '-created_at'])]
+
+    def __str__(self):
+        return f'{self.transaction_type} ${self.amount} for {self.organisation}'

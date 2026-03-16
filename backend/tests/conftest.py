@@ -341,25 +341,15 @@ def mock_storage_provider():
 
 @pytest.fixture
 def mock_check_sms_limit():
-    """Mock SMS limit info to allow unlimited sending."""
-    with patch('app.views.get_sms_limit_info') as mock:
-        mock.return_value = {
-            'current': 0,
-            'limit': None,  # No limit configured = unlimited
-            'remaining': None
-        }
+    """Mock billing check to allow sending."""
+    with patch('app.views.check_can_send', return_value=(True, None)) as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_check_mms_limit():
-    """Mock MMS limit info to allow unlimited sending."""
-    with patch('app.views.get_mms_limit_info') as mock:
-        mock.return_value = {
-            'current': 0,
-            'limit': None,  # No limit configured = unlimited
-            'remaining': None
-        }
+    """Mock billing check to allow sending."""
+    with patch('app.views.check_can_send', return_value=(True, None)) as mock:
         yield mock
 
 

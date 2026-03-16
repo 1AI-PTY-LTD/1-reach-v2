@@ -15,6 +15,7 @@ router.register(r'group-schedules', GroupScheduleViewSet, basename='group-schedu
 router.register(r'configs', ConfigViewSet)
 router.register(r'users', UserViewSet, basename='user')
 router.register(r'sms', SMSViewSet, basename='sms')
+router.register(r'billing', BillingViewSet, basename='billing')
 
 urlpatterns = [
     path('admin/', admin.site.urls),

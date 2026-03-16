@@ -14,6 +14,7 @@ from pathlib import Path
 import json
 import logging
 import os
+from decimal import Decimal as _Decimal
 
 import sentry_sdk
 
@@ -174,6 +175,12 @@ CLERK_FRONTEND_API = os.environ.get('CLERK_FRONTEND_API', '')
 CLERK_SECRET_KEY = os.environ.get('CLERK_SECRET_KEY', '')
 CLERK_WEBHOOK_SIGNING_SECRET = os.environ.get('CLERK_WEBHOOK_SIGNING_SECRET', '')
 CLERK_AUTHORIZED_PARTIES = os.environ.get('CLERK_AUTHORIZED_PARTIES', 'http://localhost:5173').split(',')
+
+
+# Billing
+FREE_CREDIT_AMOUNT = _Decimal(os.environ.get('FREE_CREDIT_AMOUNT', '10.00'))
+SMS_RATE = _Decimal(os.environ.get('SMS_RATE', '0.05'))
+MMS_RATE = _Decimal(os.environ.get('MMS_RATE', '0.20'))
 
 
 # SMS Provider

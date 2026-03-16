@@ -28,7 +28,7 @@ from app.models import *
 from app.permissions import IsOrgAdmin, IsOrgMember
 from app.serializers import *
 from app.utils import clerk
-from app.utils.limits import get_sms_limit_info, get_mms_limit_info
+from app.utils.billing import check_can_send, record_usage, get_monthly_limit_info, get_monthly_usage, get_rate
 from app.utils.sms import get_sms_provider
 from app.utils.storage import get_storage_provider
 
@@ -672,16 +672,12 @@ class StatsView(APIView):
             label = month_dt.astimezone(self.ADELAIDE_TZ).strftime('%B %Y')
             monthly_stats.append({'month': label, **counts})
 
-        # Fetch SMS/MMS limits from Config
-        limits = Config.objects.filter(
-            organisation=org, name__in=['sms_limit', 'mms_limit'],
-        ).values_list('name', 'value')
-        limit_map = {name: int(value) for name, value in limits}
+        limit_info = get_monthly_limit_info(org)
 
         return Response({
             'monthly_stats': monthly_stats,
-            'sms_limit': limit_map.get('sms_limit', 0),
-            'mms_limit': limit_map.get('mms_limit', 0),
+            'monthly_limit': str(limit_info['limit']) if limit_info['limit'] is not None else None,
+            'total_monthly_spend': str(limit_info['current']),
         })
 
 
@@ -721,15 +717,10 @@ class SMSViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Check if we have SMS capacity
-        limit_info = get_sms_limit_info(org)
-
-        if limit_info['limit'] is not None:
-            if limit_info['remaining'] < 1:
-                raise ValidationError(
-                    f'Monthly SMS limit reached. No remaining capacity '
-                    f'({limit_info["current"]}/{limit_info["limit"]} used this month).'
-                )
+        # Check billing capacity
+        can_send, error = check_can_send(org, units=1, format='sms')
+        if not can_send:
+            raise ValidationError(error)
 
         # Resolve contact if provided
         contact = self._resolve_contact(data.get('contact_id'), org)
@@ -739,7 +730,7 @@ class SMSViewSet(viewsets.ViewSet):
         result = provider.send_sms(to=data['recipient'], message=data['message'])
 
         # Create Schedule record
-        Schedule.objects.create(
+        schedule = Schedule.objects.create(
             organisation=org,
             contact=contact,
             phone=data['recipient'],
@@ -755,6 +746,11 @@ class SMSViewSet(viewsets.ViewSet):
         )
 
         if result['success']:
+            record_usage(
+                org, result['message_parts'], format='sms',
+                description=f"SMS to {data['recipient']}",
+                user=request.user, schedule=schedule,
+            )
             return Response({'success': True, 'message': f'SMS sent successfully to {data["recipient"]}'})
         else:
             logger.error('SMS send failed', extra={
@@ -783,16 +779,11 @@ class SMSViewSet(viewsets.ViewSet):
         if not members.exists():
             raise ValidationError('No eligible contacts found in group.')
 
-        # Check if we have enough SMS capacity for bulk send
+        # Check billing capacity for full group
         member_count = members.count()
-        limit_info = get_sms_limit_info(org)
-
-        if limit_info['limit'] is not None:
-            if limit_info['remaining'] < member_count:
-                raise ValidationError(
-                    f'Monthly SMS limit would be exceeded. Need {member_count} messages but only {limit_info["remaining"]} remaining '
-                    f'({limit_info["current"]}/{limit_info["limit"]} used this month).'
-                )
+        can_send, error = check_can_send(org, units=member_count, format='sms')
+        if not can_send:
+            raise ValidationError(error)
 
         # Prepare bulk SMS
         recipients = [{'to': m.phone, 'message': data['message']} for m in members]
@@ -825,8 +816,9 @@ class SMSViewSet(viewsets.ViewSet):
         for i, member in enumerate(members):
             result = bulk_result['results'][i] if i < len(bulk_result['results']) else {'success': False, 'message_parts': message_parts}
             is_success = result.get('success', False)
+            parts = result.get('message_parts', message_parts)
 
-            Schedule.objects.create(
+            child_schedule = Schedule.objects.create(
                 organisation=org,
                 contact=member,
                 phone=member.phone,
@@ -836,7 +828,7 @@ class SMSViewSet(viewsets.ViewSet):
                 scheduled_time=timezone.now(),
                 sent_time=timezone.now() if is_success else None,
                 status=ScheduleStatus.SENT if is_success else ScheduleStatus.FAILED,
-                message_parts=result.get('message_parts', message_parts),
+                message_parts=parts,
                 format=MessageFormat.SMS,
                 error=result.get('error'),
                 created_by=request.user,
@@ -844,6 +836,11 @@ class SMSViewSet(viewsets.ViewSet):
             )
 
             if is_success:
+                record_usage(
+                    org, parts, format='sms',
+                    description=f"SMS to group '{group.name}'",
+                    user=request.user, schedule=child_schedule,
+                )
                 successful += 1
             else:
                 failed += 1
@@ -895,15 +892,10 @@ class SMSViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        # Check if we have MMS capacity
-        limit_info = get_mms_limit_info(org)
-
-        if limit_info['limit'] is not None:
-            if limit_info['remaining'] < 1:
-                raise ValidationError(
-                    f'Monthly MMS limit reached. No remaining capacity '
-                    f'({limit_info["current"]}/{limit_info["limit"]} used this month).'
-                )
+        # Check billing capacity
+        can_send, error = check_can_send(org, units=1, format='mms')
+        if not can_send:
+            raise ValidationError(error)
 
         # Resolve contact if provided
         contact = self._resolve_contact(data.get('contact_id'), org)
@@ -918,7 +910,7 @@ class SMSViewSet(viewsets.ViewSet):
         )
 
         # Create Schedule record
-        Schedule.objects.create(
+        schedule = Schedule.objects.create(
             organisation=org,
             contact=contact,
             phone=data['recipient'],
@@ -936,6 +928,11 @@ class SMSViewSet(viewsets.ViewSet):
         )
 
         if result['success']:
+            record_usage(
+                org, 1, format='mms',
+                description=f"MMS to {data['recipient']}",
+                user=request.user, schedule=schedule,
+            )
             return Response({
                 'success': True,
                 'message': f'MMS sent successfully to {data["recipient"]}',
@@ -980,3 +977,41 @@ class SMSViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': result['error']
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BillingViewSet(viewsets.GenericViewSet):
+    """GET /api/billing/summary/ — billing summary and transaction history (admin only)."""
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+    serializer_class = CreditTransactionSerializer
+
+    def get_queryset(self):
+        return CreditTransaction.objects.filter(
+            organisation=self.request.org
+        ).order_by('-created_at')
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        org = request.org
+        limit_info = get_monthly_limit_info(org)
+
+        known_formats = (
+            CreditTransaction.objects.filter(organisation=org, format__isnull=False)
+            .values_list('format', flat=True)
+            .distinct()
+        )
+        monthly_usage_by_format = {
+            fmt: {'spend': str(get_monthly_usage(org, fmt)), 'rate': str(get_rate(fmt))}
+            for fmt in known_formats
+        }
+
+        page = self.paginate_queryset(self.get_queryset())
+        tx_data = self.get_serializer(page, many=True).data
+        response = self.get_paginated_response(tx_data)
+        response.data.update({
+            'billing_mode': org.billing_mode,
+            'balance': str(org.credit_balance),
+            'monthly_limit': str(limit_info['limit']) if limit_info['limit'] is not None else None,
+            'total_monthly_spend': str(limit_info['current']),
+            'monthly_usage_by_format': monthly_usage_by_format,
+        })
+        return response

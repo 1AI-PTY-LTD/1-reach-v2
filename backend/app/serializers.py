@@ -270,3 +270,13 @@ class SendMMSSerializer(serializers.Serializer):
         if value:
             return value.strip()
         return value
+
+
+class CreditTransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CreditTransaction
+        fields = [
+            'id', 'transaction_type', 'amount', 'balance_after',
+            'description', 'format', 'created_by', 'created_at', 'schedule',
+        ]
+        read_only_fields = fields

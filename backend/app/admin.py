@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from app.models import (
     User, Organisation, OrganisationMembership,
     Contact, ContactGroup, ContactGroupMember,
-    Template, Schedule, Config,
+    Template, Schedule, Config, CreditTransaction,
 )
 
 
@@ -75,3 +75,10 @@ class ConfigAdmin(admin.ModelAdmin):
     list_display = ('name', 'value', 'organisation')
     search_fields = ('name',)
     list_filter = ('organisation',)
+
+
+@admin.register(CreditTransaction)
+class CreditTransactionAdmin(admin.ModelAdmin):
+    list_display = ('organisation', 'transaction_type', 'amount', 'balance_after', 'description', 'format', 'created_at')
+    list_filter = ('transaction_type', 'format', 'organisation')
+    search_fields = ('description', 'organisation__name')

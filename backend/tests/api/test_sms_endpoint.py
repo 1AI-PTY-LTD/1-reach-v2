@@ -15,6 +15,7 @@ These are CRITICAL tests as they verify:
 """
 
 import pytest
+from decimal import Decimal
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework import status
@@ -78,22 +79,13 @@ class TestSendSMS:
         assert schedule.contact == contact
 
     def test_send_sms_checks_monthly_limit(
-        self, authenticated_client, organisation, config_sms_limit
+        self, authenticated_client, organisation
     ):
-        """Send SMS enforces monthly SMS limit."""
-        # Set limit to 5
-        config_sms_limit.value = '5'
-        config_sms_limit.save()
+        """Send SMS is blocked when monthly spending limit is reached."""
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        ConfigFactory(organisation=organisation, name='monthly_limit', value='0.01')
 
-        # Create 5 existing SMS schedules this month
-        ScheduleFactory.create_batch(
-            5,
-            organisation=organisation,
-            format=MessageFormat.SMS,
-            scheduled_time=timezone.now()
-        )
-
-        # Attempt to send 6th SMS
         data = {'message': 'Test', 'recipient': '0412345678'}
         response = authenticated_client.post('/api/sms/send/', data)
 
@@ -219,14 +211,13 @@ class TestSendToGroup:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_send_to_group_checks_bulk_limit(
-        self, authenticated_client, organisation, user, config_sms_limit
+        self, authenticated_client, organisation, user
     ):
-        """Bulk send respects SMS limit."""
-        group, contacts = create_contact_group_with_members(organisation, num_members=10, user=user)
-
-        # Set limit to 5
-        config_sms_limit.value = '5'
-        config_sms_limit.save()
+        """Bulk send is blocked when monthly spending limit is reached."""
+        group, _ = create_contact_group_with_members(organisation, num_members=10, user=user)
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        ConfigFactory(organisation=organisation, name='monthly_limit', value='0.01')
 
         data = {'message': 'Bulk', 'group_id': group.id}
         response = authenticated_client.post('/api/sms/send-to-group/', data)
@@ -266,19 +257,12 @@ class TestSendMMS:
         assert schedule.message_parts == 1  # MMS always 1 part
 
     def test_send_mms_checks_monthly_limit(
-        self, authenticated_client, organisation, config_mms_limit
+        self, authenticated_client, organisation
     ):
-        """Send MMS enforces monthly MMS limit."""
-        config_mms_limit.value = '3'
-        config_mms_limit.save()
-
-        # Create 3 existing MMS schedules
-        ScheduleFactory.create_batch(
-            3,
-            organisation=organisation,
-            format=MessageFormat.MMS,
-            scheduled_time=timezone.now()
-        )
+        """Send MMS is blocked when monthly spending limit is reached."""
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        ConfigFactory(organisation=organisation, name='monthly_limit', value='0.01')
 
         data = {
             'message': 'Test',

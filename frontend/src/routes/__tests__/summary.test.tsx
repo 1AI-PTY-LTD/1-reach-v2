@@ -22,7 +22,8 @@ function SummaryContentTest() {
   return (
     <div>
       <div data-testid="limits-info">
-        Monthly SMS limit: {data.sms_limit.toLocaleString()}; MMS limit: {data.mms_limit.toLocaleString()}
+        Monthly spend: ${data.total_monthly_spend}
+        {data.monthly_limit ? ` / $${data.monthly_limit} limit` : ' (no limit set)'}
       </div>
       <table>
         <thead>
@@ -84,13 +85,13 @@ describe('SummaryLayout', () => {
     expect(screen.getByText('February 2026')).toBeInTheDocument()
   })
 
-  it('displays SMS and MMS limits', async () => {
+  it('displays monthly spend info', async () => {
     renderWithProviders(<SummaryWithSuspense />)
 
     await waitFor(() => {
       const limitsInfo = screen.getByTestId('limits-info')
-      expect(limitsInfo).toHaveTextContent('Monthly SMS limit: 1,000')
-      expect(limitsInfo).toHaveTextContent('MMS limit: 100')
+      expect(limitsInfo).toHaveTextContent('Monthly spend: $12.50')
+      expect(limitsInfo).toHaveTextContent('/ $50.00 limit')
     })
   })
 
@@ -148,10 +149,10 @@ describe('SummaryLayout', () => {
     expect(screen.getAllByTestId(/^stats-row-/)).toHaveLength(3)
   })
 
-  it('displays custom limits correctly', async () => {
+  it('shows no limit set when monthly_limit is null', async () => {
     server.use(
       http.get('http://localhost:8000/api/stats/monthly/', () => {
-        return HttpResponse.json(createSummaryData({ sms_limit: 5000, mms_limit: 500 }))
+        return HttpResponse.json(createSummaryData({ monthly_limit: null, total_monthly_spend: '7.50' }))
       })
     )
 
@@ -159,8 +160,8 @@ describe('SummaryLayout', () => {
 
     await waitFor(() => {
       const limitsInfo = screen.getByTestId('limits-info')
-      expect(limitsInfo).toHaveTextContent('Monthly SMS limit: 5,000')
-      expect(limitsInfo).toHaveTextContent('MMS limit: 500')
+      expect(limitsInfo).toHaveTextContent('Monthly spend: $7.50')
+      expect(limitsInfo).toHaveTextContent('(no limit set)')
     })
   })
 })

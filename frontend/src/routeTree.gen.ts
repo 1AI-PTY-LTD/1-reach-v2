@@ -19,6 +19,7 @@ import { Route as AppLayoutScheduleRouteImport } from './routes/app/_layout.sche
 import { Route as AppLayoutImportRouteImport } from './routes/app/_layout.import'
 import { Route as AppLayoutGroupsRouteImport } from './routes/app/_layout.groups'
 import { Route as AppLayoutContactsRouteImport } from './routes/app/_layout.contacts'
+import { Route as AppLayoutBillingRouteImport } from './routes/app/_layout.billing'
 import { Route as AppLayoutTemplatesIndexRouteImport } from './routes/app/_layout.templates.index'
 import { Route as AppLayoutSendIndexRouteImport } from './routes/app/_layout.send.index'
 import { Route as AppLayoutScheduleIndexRouteImport } from './routes/app/_layout.schedule.index'
@@ -79,6 +80,11 @@ const AppLayoutContactsRoute = AppLayoutContactsRouteImport.update({
   path: '/contacts',
   getParentRoute: () => AppLayoutRoute,
 } as any)
+const AppLayoutBillingRoute = AppLayoutBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
 const AppLayoutTemplatesIndexRoute = AppLayoutTemplatesIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -130,6 +136,7 @@ const AppLayoutContactsContactIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppLayoutRouteWithChildren
+  '/app/billing': typeof AppLayoutBillingRoute
   '/app/contacts': typeof AppLayoutContactsRouteWithChildren
   '/app/groups': typeof AppLayoutGroupsRouteWithChildren
   '/app/import': typeof AppLayoutImportRouteWithChildren
@@ -151,6 +158,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppLayoutRouteWithChildren
+  '/app/billing': typeof AppLayoutBillingRoute
   '/app/groups': typeof AppLayoutGroupsRouteWithChildren
   '/app/summary': typeof AppLayoutSummaryRoute
   '/app/users': typeof AppLayoutUsersRoute
@@ -168,6 +176,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app/_layout': typeof AppLayoutRouteWithChildren
+  '/app/_layout/billing': typeof AppLayoutBillingRoute
   '/app/_layout/contacts': typeof AppLayoutContactsRouteWithChildren
   '/app/_layout/groups': typeof AppLayoutGroupsRouteWithChildren
   '/app/_layout/import': typeof AppLayoutImportRouteWithChildren
@@ -191,6 +200,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/app'
+    | '/app/billing'
     | '/app/contacts'
     | '/app/groups'
     | '/app/import'
@@ -212,6 +222,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/app'
+    | '/app/billing'
     | '/app/groups'
     | '/app/summary'
     | '/app/users'
@@ -228,6 +239,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/app/_layout'
+    | '/app/_layout/billing'
     | '/app/_layout/contacts'
     | '/app/_layout/groups'
     | '/app/_layout/import'
@@ -322,6 +334,13 @@ declare module '@tanstack/react-router' {
       path: '/contacts'
       fullPath: '/app/contacts'
       preLoaderRoute: typeof AppLayoutContactsRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
+    '/app/_layout/billing': {
+      id: '/app/_layout/billing'
+      path: '/billing'
+      fullPath: '/app/billing'
+      preLoaderRoute: typeof AppLayoutBillingRouteImport
       parentRoute: typeof AppLayoutRoute
     }
     '/app/_layout/templates/': {
@@ -466,6 +485,7 @@ const AppLayoutTemplatesRouteWithChildren =
   AppLayoutTemplatesRoute._addFileChildren(AppLayoutTemplatesRouteChildren)
 
 interface AppLayoutRouteChildren {
+  AppLayoutBillingRoute: typeof AppLayoutBillingRoute
   AppLayoutContactsRoute: typeof AppLayoutContactsRouteWithChildren
   AppLayoutGroupsRoute: typeof AppLayoutGroupsRouteWithChildren
   AppLayoutImportRoute: typeof AppLayoutImportRouteWithChildren
@@ -477,6 +497,7 @@ interface AppLayoutRouteChildren {
 }
 
 const AppLayoutRouteChildren: AppLayoutRouteChildren = {
+  AppLayoutBillingRoute: AppLayoutBillingRoute,
   AppLayoutContactsRoute: AppLayoutContactsRouteWithChildren,
   AppLayoutGroupsRoute: AppLayoutGroupsRouteWithChildren,
   AppLayoutImportRoute: AppLayoutImportRouteWithChildren,

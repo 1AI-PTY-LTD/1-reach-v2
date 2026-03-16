@@ -11,7 +11,7 @@ export function getSummaryQueryOptions(client: ApiClient) {
       const data = await client.get<SummaryData>('/api/stats/monthly/')
       Logger.debug('Successfully fetched monthly stats', {
         component: 'statsApi.getSummary',
-        data: { monthCount: data.monthly_stats.length, smsLimit: data.sms_limit },
+        data: { monthCount: data.monthly_stats.length },
       })
       return data
     },

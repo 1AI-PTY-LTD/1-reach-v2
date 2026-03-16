@@ -5,6 +5,7 @@ import type { Schedule, ScheduleStatus } from '../types/schedule.types'
 import type { ContactGroup } from '../types/group.types'
 import type { GroupSchedule } from '../types/groupSchedule.types'
 import type { MonthlyStats, SummaryData } from '../types/stats.types'
+import type { BillingSummaryResponse, CreditTransaction } from '../types/billing.types'
 import type { Pagination } from '../types/pagination.types'
 
 let _id = 1
@@ -130,8 +131,47 @@ export function createSummaryData(overrides: Partial<SummaryData> = {}): Summary
       createMonthlyStats({ month: 'January 2026' }),
       createMonthlyStats({ month: 'February 2026', sms_sent: 180 }),
     ],
-    sms_limit: 1000,
-    mms_limit: 100,
+    monthly_limit: '50.00',
+    total_monthly_spend: '12.50',
+    ...overrides,
+  }
+}
+
+export function createCreditTransaction(overrides: Partial<CreditTransaction> = {}): CreditTransaction {
+  const id = overrides.id ?? nextId()
+  return {
+    id,
+    transaction_type: 'grant',
+    amount: '5.00',
+    balance_after: '5.00',
+    description: 'Test grant',
+    format: null,
+    schedule: null,
+    created_by: null,
+    created_at: now,
+    ...overrides,
+  }
+}
+
+export function createBillingSummary(overrides: Partial<BillingSummaryResponse> = {}): BillingSummaryResponse {
+  return {
+    billing_mode: 'trial',
+    balance: '8.50',
+    monthly_limit: '50.00',
+    total_monthly_spend: '1.50',
+    monthly_usage_by_format: {
+      sms: { spend: '1.00', rate: '0.05' },
+      mms: { spend: '0.50', rate: '0.20' },
+    },
+    results: [createCreditTransaction()],
+    pagination: {
+      total: 1,
+      page: 1,
+      limit: 50,
+      totalPages: 1,
+      hasNext: false,
+      hasPrev: false,
+    },
     ...overrides,
   }
 }

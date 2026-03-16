@@ -8,6 +8,7 @@ import {
   createGroupSchedule,
   createSummaryData,
   createUser,
+  createBillingSummary,
   paginate,
 } from './factories'
 
@@ -247,6 +248,11 @@ export const handlers = [
   // Stats
   http.get(`${BASE_URL}/api/stats/monthly/`, () => {
     return HttpResponse.json(createSummaryData())
+  }),
+
+  // Billing
+  http.get(`${BASE_URL}/api/billing/summary/`, () => {
+    return HttpResponse.json(createBillingSummary())
   }),
 
   // Users

@@ -39,7 +39,8 @@ function SummaryContent() {
     <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-4">
       <div className="mb-4 p-3 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg">
         <h3 className="text-sm font-semibold text-green-800 dark:text-green-200">
-          Monthly SMS limit: {data.sms_limit.toLocaleString()}; MMS limit: {data.mms_limit.toLocaleString()}
+          Monthly spend: ${data.total_monthly_spend}
+          {data.monthly_limit ? ` / $${data.monthly_limit} limit` : ' (no limit set)'}
         </h3>
       </div>
       <Table className="max-h-[80vh]">
