@@ -8,7 +8,7 @@ states are all handled correctly.
 """
 
 from datetime import timedelta
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -237,3 +237,81 @@ class TestDispatchBatchSize:
         assert Schedule.objects.filter(
             parent=parent, status=ScheduleStatus.PENDING
         ).count() == 10
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: overdue RETRYING schedules
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestDispatchRetrying:
+    def test_dispatches_overdue_retrying_schedules(self, db, organisation, user):
+        """RETRYING children with next_retry_at <= now are re-dispatched."""
+        parent = _make_parent(organisation, user)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.RETRYING)
+        child.next_retry_at = timezone.now() - timedelta(minutes=1)
+        child.save(update_fields=['next_retry_at', 'updated_at'])
+
+        with patch('app.celery.send_message') as mock_task:
+            mock_task.delay.return_value = None
+            result = dispatch_due_messages()
+
+        assert result == {'dispatched': 1}
+        mock_task.delay.assert_called_once_with(child.pk)
+        child.refresh_from_db()
+        assert child.status == ScheduleStatus.QUEUED
+
+    def test_ignores_future_retrying_schedules(self, db, organisation, user):
+        """RETRYING children whose next_retry_at is in the future are left alone."""
+        parent = _make_parent(organisation, user)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.RETRYING)
+        child.next_retry_at = timezone.now() + timedelta(hours=1)
+        child.save(update_fields=['next_retry_at', 'updated_at'])
+
+        with patch('app.celery.send_message') as mock_task:
+            result = dispatch_due_messages()
+
+        assert result == {'dispatched': 0}
+        mock_task.delay.assert_not_called()
+        child.refresh_from_db()
+        assert child.status == ScheduleStatus.RETRYING
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: stale PROCESSING recovery
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestStaleProcessingRecovery:
+    def test_resets_and_dispatches_stale_processing_schedule(self, db, organisation, user):
+        """A schedule stuck in PROCESSING for > timeout minutes is reset to QUEUED and dispatched."""
+        parent = _make_parent(organisation, user)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.PROCESSING)
+        # Force updated_at into the past (beyond the 10-min timeout)
+        Schedule.objects.filter(pk=child.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=15)
+        )
+
+        with patch('app.celery.send_message') as mock_task:
+            mock_task.delay.return_value = None
+            dispatch_due_messages()
+
+        mock_task.delay.assert_called_once_with(child.pk)
+        child.refresh_from_db()
+        assert child.status == ScheduleStatus.QUEUED
+
+    def test_leaves_fresh_processing_schedule_alone(self, db, organisation, user):
+        """A schedule in PROCESSING updated recently is NOT touched."""
+        parent = _make_parent(organisation, user)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.PROCESSING)
+        # updated_at is set to now() by default — well within the timeout
+
+        with patch('app.celery.send_message') as mock_task:
+            dispatch_due_messages()
+
+        # send_message should not be called for the fresh PROCESSING schedule
+        # (it may be called for other due schedules, but not this one)
+        dispatched_pks = {c[0][0] for c in mock_task.delay.call_args_list}
+        assert child.pk not in dispatched_pks
+        child.refresh_from_db()
+        assert child.status == ScheduleStatus.PROCESSING

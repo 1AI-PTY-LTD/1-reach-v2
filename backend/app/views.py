@@ -480,6 +480,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
             return Response({'detail': 'Group has no members.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Create parent + one child per member atomically
+        message_parts = _estimate_parts(text, MessageFormat.SMS)
         with transaction.atomic():
             parent = Schedule.objects.create(
                 organisation=org,
@@ -488,6 +489,8 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 text=text,
                 group=group,
                 scheduled_time=data['scheduled_time'],
+                format=MessageFormat.SMS,
+                message_parts=message_parts,
                 created_by=request.user,
                 updated_by=request.user,
             )
@@ -501,6 +504,8 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                     group=group,
                     parent=parent,
                     scheduled_time=data['scheduled_time'],
+                    format=MessageFormat.SMS,
+                    message_parts=message_parts,
                     max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
                     created_by=request.user,
                     updated_by=request.user,

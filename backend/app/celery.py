@@ -22,6 +22,7 @@ from datetime import timedelta
 from celery import Celery, shared_task
 from django.conf import settings
 from django.db import OperationalError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from app.models import MessageFormat, Schedule, ScheduleStatus
@@ -222,24 +223,45 @@ def send_message(self, schedule_id: int) -> dict:
 
 @shared_task(name='app.celery.dispatch_due_messages')
 def dispatch_due_messages() -> dict:
-    """Find PENDING leaf schedules whose scheduled_time <= now() and dispatch them.
+    """Find PENDING/RETRYING leaf schedules that are due and dispatch them.
 
+    Also recovers stale PROCESSING schedules (worker crashed mid-task).
     Uses select_for_update(skip_locked=True) to prevent double-dispatch in clustered
     deployments. Processes in batches of 500 per tick.
     """
     now = timezone.now()
     batch_size = 500
+    processing_timeout = getattr(settings, 'MESSAGE_PROCESSING_TIMEOUT_MINUTES', 10)
+    stale_cutoff = now - timedelta(minutes=processing_timeout)
+
+    # Gap 3: Recover stale PROCESSING schedules (worker crashed between PROCESSING and completion).
+    # acks_late + reject_on_worker_lost re-queues the Celery message, but send_message rejects
+    # PROCESSING status → schedule stuck. Reset to QUEUED so the re-queued task can proceed.
+    stale_pks = list(
+        Schedule.objects
+        .filter(status=ScheduleStatus.PROCESSING, updated_at__lte=stale_cutoff)
+        .values_list('pk', flat=True)
+    )
+    if stale_pks:
+        Schedule.objects.filter(pk__in=stale_pks).update(status=ScheduleStatus.QUEUED)
+        for pk in stale_pks:
+            send_message.delay(pk)
+        logger.warning('dispatch_due_messages: reset %d stale PROCESSING schedules', len(stale_pks))
 
     with transaction.atomic():
         # Leaf schedules are either:
         #   - group children (parent set, group set), or
         #   - individual schedules (parent=None, group=None)
         # Group parents (parent=None, group set) are containers only — never sent directly.
+        #
+        # Gap 2: Also pick up overdue RETRYING schedules. Worker may crash after marking a
+        # schedule RETRYING + setting next_retry_at but before calling apply_async (which is
+        # outside the transaction). The beat task is the safety net that recovers these.
         due = list(
             Schedule.objects.select_for_update(skip_locked=True)
             .filter(
-                status=ScheduleStatus.PENDING,
-                scheduled_time__lte=now,
+                Q(status=ScheduleStatus.PENDING, scheduled_time__lte=now) |
+                Q(status=ScheduleStatus.RETRYING, next_retry_at__lte=now),
             )
             .exclude(
                 parent__isnull=True, group__isnull=False,  # exclude group-parent containers

@@ -199,6 +199,7 @@ MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
 MESSAGE_RETRY_BASE_DELAY = int(os.environ.get('MESSAGE_RETRY_BASE_DELAY', '60'))   # seconds
 MESSAGE_RETRY_MAX_DELAY = int(os.environ.get('MESSAGE_RETRY_MAX_DELAY', '3600'))   # seconds
 MESSAGE_RETRY_JITTER = float(os.environ.get('MESSAGE_RETRY_JITTER', '0.25'))       # ±25%
+MESSAGE_PROCESSING_TIMEOUT_MINUTES = int(os.environ.get('MESSAGE_PROCESSING_TIMEOUT_MINUTES', '10'))
 
 CELERY_BEAT_SCHEDULE = {
     'dispatch-due-messages': {
