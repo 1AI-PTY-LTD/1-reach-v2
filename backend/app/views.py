@@ -28,9 +28,9 @@ from app.models import *
 from app.permissions import IsOrgAdmin, IsOrgMember
 from app.serializers import *
 from app.utils import clerk
-from app.utils.billing import check_can_send, record_usage, get_monthly_limit_info, get_monthly_usage, get_rate
-from app.utils.sms import get_sms_provider
+from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate
 from app.utils.storage import get_storage_provider
+from app.celery import _estimate_parts, send_message as send_message_task
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +479,13 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
         if not members.exists():
             return Response({'detail': 'Group has no members.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Gate on billing capacity (both modes) and reserve credits (trial only)
+        message_parts = _estimate_parts(text, MessageFormat.SMS)
+        member_count = members.count()
+        can_send, error = check_can_send(org, units=member_count * message_parts, format='sms')
+        if not can_send:
+            return Response({'detail': error}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
         # Create parent + one child per member atomically
         with transaction.atomic():
             parent = Schedule.objects.create(
@@ -488,6 +495,8 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 text=text,
                 group=group,
                 scheduled_time=data['scheduled_time'],
+                format=MessageFormat.SMS,
+                message_parts=message_parts,
                 created_by=request.user,
                 updated_by=request.user,
             )
@@ -501,11 +510,27 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                     group=group,
                     parent=parent,
                     scheduled_time=data['scheduled_time'],
+                    format=MessageFormat.SMS,
+                    message_parts=message_parts,
+                    max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
                     created_by=request.user,
                     updated_by=request.user,
                 )
                 for member in members
             ])
+
+            # Trial: reserve credits per child now so subsequent requests see the updated balance.
+            # Subscribed: record_usage is called by the Celery task on successful send.
+            if org.billing_mode == org.BILLING_TRIAL:
+                for child in children:
+                    record_usage(
+                        org,
+                        message_parts,
+                        format='sms',
+                        description=f"SMS to group '{group.name}'",
+                        user=request.user,
+                        schedule=child,
+                    )
 
         resp = ScheduleSerializer(parent).data
         resp['schedules'] = ScheduleSerializer(children, many=True).data
@@ -608,14 +633,21 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cancel the parent and all pending children atomically
+        # Cancel the parent and all pending children atomically, then refund credits
+        org = getattr(request, 'org', None)
         with transaction.atomic():
+            pending_children = list(
+                Schedule.objects.filter(parent=parent, status=ScheduleStatus.PENDING)
+            )
             Schedule.objects.filter(
                 parent=parent, status=ScheduleStatus.PENDING,
             ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
             parent.status = ScheduleStatus.CANCELLED
             parent.updated_by = request.user
             parent.save()
+
+            for child in pending_children:
+                refund_usage(org, child)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -711,7 +743,7 @@ class SMSViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=['post'], url_path='send', throttle_classes=[SMSThrottle])
     def send_sms(self, request):
-        """POST /api/sms/send/ — send SMS to single recipient."""
+        """POST /api/sms/send/ — queue SMS to single recipient for async delivery."""
         org = self._get_org(request)
 
         serializer = SendSMSSerializer(data=request.data)
@@ -726,44 +758,41 @@ class SMSViewSet(viewsets.ViewSet):
         # Resolve contact if provided
         contact = self._resolve_contact(data.get('contact_id'), org)
 
-        # Send via provider
-        provider = get_sms_provider()
-        result = provider.send_sms(to=data['recipient'], message=data['message'])
+        message_parts = _estimate_parts(data['message'], 'sms')
 
-        # Create Schedule record
-        schedule = Schedule.objects.create(
-            organisation=org,
-            contact=contact,
-            phone=data['recipient'],
-            text=data['message'],
-            scheduled_time=timezone.now(),
-            sent_time=timezone.now() if result['success'] else None,
-            status=ScheduleStatus.SENT if result['success'] else ScheduleStatus.FAILED,
-            message_parts=result['message_parts'],
-            format=MessageFormat.SMS,
-            error=result.get('error'),
-            created_by=request.user,
-            updated_by=request.user,
-        )
-
-        if result['success']:
-            record_usage(
-                org, result['message_parts'], format='sms',
-                description=f"SMS to {data['recipient']}",
-                user=request.user, schedule=schedule,
+        with transaction.atomic():
+            schedule = Schedule.objects.create(
+                organisation=org,
+                contact=contact,
+                phone=data['recipient'],
+                text=data['message'],
+                scheduled_time=timezone.now(),
+                status=ScheduleStatus.QUEUED,
+                message_parts=message_parts,
+                max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
+                format=MessageFormat.SMS,
+                created_by=request.user,
+                updated_by=request.user,
             )
-            return Response({'success': True, 'message': f'SMS sent successfully to {data["recipient"]}'})
-        else:
-            logger.error('SMS send failed', extra={
-                'org_id': getattr(request, 'org_id', None),
-                'recipient': data['recipient'],
-                'error': result.get('error'),
-            })
-            return Response({'success': False, 'message': 'Failed to send SMS', 'error': result.get('error')}, status=500)
+            # Trial: reserve credits now so subsequent requests see the updated balance.
+            # Subscribed: record_usage is called by the Celery task on successful send.
+            if org.billing_mode == org.BILLING_TRIAL:
+                record_usage(
+                    org, message_parts, format='sms',
+                    description=f"SMS to {data['recipient']}",
+                    user=request.user, schedule=schedule,
+                )
+
+        send_message_task.delay(schedule.pk)  # type: ignore[union-attr]
+
+        return Response(
+            {'success': True, 'schedule_id': schedule.pk, 'message': 'Message queued for delivery'},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=False, methods=['post'], url_path='send-to-group', throttle_classes=[SMSThrottle])
     def send_to_group(self, request):
-        """POST /api/sms/send-to-group/ — send SMS to group members."""
+        """POST /api/sms/send-to-group/ — queue SMS to all eligible group members."""
         org = self._get_org(request)
 
         serializer = SendGroupSMSSerializer(data=request.data)
@@ -776,117 +805,84 @@ class SMSViewSet(viewsets.ViewSet):
             raise NotFound('Group not found.')
 
         # Get eligible members (active and not opted out)
-        members = Contact.objects.filter(contactgroupmember__group=group, is_active=True, opt_out=False)
-        if not members.exists():
+        members = list(Contact.objects.filter(
+            contactgroupmember__group=group, is_active=True, opt_out=False
+        ))
+        if not members:
             raise ValidationError('No eligible contacts found in group.')
 
         # Check billing capacity for full group
-        member_count = members.count()
+        member_count = len(members)
         can_send, error = check_can_send(org, units=member_count, format='sms')
         if not can_send:
             raise ValidationError(error)
 
-        # Prepare bulk SMS
-        recipients = [{'to': m.phone, 'message': data['message']} for m in members]
-
-        # Send via provider (calculates message_parts for each recipient)
-        provider = get_sms_provider()
-        bulk_result = provider.send_bulk_sms(recipients)
-
-        # Get message_parts from first result (all same message, so same parts)
-        message_parts = bulk_result['results'][0]['message_parts'] if bulk_result['results'] else 1
-
-        # Create parent schedule (group schedule)
+        message_parts = _estimate_parts(data['message'], 'sms')
         parent_name = data['message'][:20] + ('...' if len(data['message']) > 20 else '')
-        parent = Schedule.objects.create(
-            organisation=org,
-            name=parent_name,
-            text=data['message'],
-            message_parts=message_parts,
-            group=group,
-            scheduled_time=timezone.now(),
-            status=ScheduleStatus.PROCESSING,
-            created_by=request.user,
-            updated_by=request.user,
-        )
 
-        # Create individual schedule records
-        successful = 0
-        failed = 0
-
-        for i, member in enumerate(members):
-            result = bulk_result['results'][i] if i < len(bulk_result['results']) else {'success': False, 'message_parts': message_parts}
-            is_success = result.get('success', False)
-            parts = result.get('message_parts', message_parts)
-
-            child_schedule = Schedule.objects.create(
+        with transaction.atomic():
+            # Create parent schedule
+            parent = Schedule.objects.create(
                 organisation=org,
-                contact=member,
-                phone=member.phone,
+                name=parent_name,
                 text=data['message'],
+                message_parts=message_parts,
                 group=group,
-                parent=parent,
                 scheduled_time=timezone.now(),
-                sent_time=timezone.now() if is_success else None,
-                status=ScheduleStatus.SENT if is_success else ScheduleStatus.FAILED,
-                message_parts=parts,
-                format=MessageFormat.SMS,
-                error=result.get('error'),
+                status=ScheduleStatus.QUEUED,
                 created_by=request.user,
                 updated_by=request.user,
             )
 
-            if is_success:
-                record_usage(
-                    org, parts, format='sms',
-                    description=f"SMS to group '{group.name}'",
-                    user=request.user, schedule=child_schedule,
+            # Create one child schedule per eligible member
+            child_ids = []
+            for member in members:
+                child = Schedule.objects.create(
+                    organisation=org,
+                    contact=member,
+                    phone=member.phone,
+                    text=data['message'],
+                    group=group,
+                    parent=parent,
+                    scheduled_time=timezone.now(),
+                    status=ScheduleStatus.QUEUED,
+                    message_parts=message_parts,
+                    max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
+                    format=MessageFormat.SMS,
+                    created_by=request.user,
+                    updated_by=request.user,
                 )
-                successful += 1
-            else:
-                failed += 1
+                child_ids.append(child.pk)
 
-        # Update parent schedule
-        if failed == 0:
-            parent.status = ScheduleStatus.SENT
-        elif successful == 0:
-            parent.status = ScheduleStatus.FAILED
-            parent.error = f'All {failed} messages failed'
-        else:
-            parent.status = ScheduleStatus.SENT
-            parent.error = f'{failed} out of {successful + failed} messages failed'
-        parent.save()
+                # Trial: reserve credits per child
+                if org.billing_mode == org.BILLING_TRIAL:
+                    record_usage(
+                        org, message_parts, format='sms',
+                        description=f"SMS to group '{group.name}'",
+                        user=request.user, schedule=child,
+                    )
 
-        total = successful + failed
-        http_status = 200 if failed == 0 else (207 if successful > 0 else 500)
+        # Dispatch each child to Celery
+        for child_id in child_ids:
+            send_message_task.delay(child_id)  # type: ignore[union-attr]
 
-        if failed > 0:
-            logger.error('Bulk SMS partial failure: %d/%d failed', failed, total, extra={
-                'org_id': getattr(request, 'org_id', None),
-                'group_id': str(data['group_id']),
-                'successful': successful,
-                'failed': failed,
-            })
-        else:
-            logger.info('Bulk SMS sent: %d messages to group %s', total, group.name, extra={
-                'org_id': getattr(request, 'org_id', None),
-            })
+        logger.info('Queued %d group SMS messages for group %s', member_count, group.name)
 
         return Response({
-            'success': failed == 0,
-            'message': f'SMS sent to group: {successful} successful, {failed} failed',
+            'success': True,
+            'message': f'SMS queued for {member_count} recipients',
             'results': {
-                'successful': successful,
-                'failed': failed,
-                'total': total,
+                'successful': 0,
+                'failed': 0,
+                'total': member_count,
             },
             'group_name': group.name,
-            'group_schedule_id': parent.id,
-        }, status=http_status)
+            'group_schedule_id': parent.pk,
+        }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='send-mms', throttle_classes=[SMSThrottle])
     def send_mms(self, request):
-        """POST /api/sms/send-mms/ — send MMS with media."""
+        """POST /api/sms/send-mms/ — queue MMS with media for async delivery."""
         org = self._get_org(request)
 
         serializer = SendMMSSerializer(data=request.data)
@@ -901,54 +897,35 @@ class SMSViewSet(viewsets.ViewSet):
         # Resolve contact if provided
         contact = self._resolve_contact(data.get('contact_id'), org)
 
-        # Send via provider
-        provider = get_sms_provider()
-        result = provider.send_mms(
-            to=data['recipient'],
-            message=data['message'],
-            media_url=data['media_url'],
-            subject=data.get('subject'),
-        )
-
-        # Create Schedule record
-        schedule = Schedule.objects.create(
-            organisation=org,
-            contact=contact,
-            phone=data['recipient'],
-            text=data['message'],
-            scheduled_time=timezone.now(),
-            sent_time=timezone.now() if result['success'] else None,
-            status=ScheduleStatus.SENT if result['success'] else ScheduleStatus.FAILED,
-            message_parts=result['message_parts'],
-            format=MessageFormat.MMS,
-            media_url=data['media_url'],
-            subject=data.get('subject'),
-            error=result.get('error'),
-            created_by=request.user,
-            updated_by=request.user,
-        )
-
-        if result['success']:
-            record_usage(
-                org, 1, format='mms',
-                description=f"MMS to {data['recipient']}",
-                user=request.user, schedule=schedule,
+        with transaction.atomic():
+            schedule = Schedule.objects.create(
+                organisation=org,
+                contact=contact,
+                phone=data['recipient'],
+                text=data['message'],
+                scheduled_time=timezone.now(),
+                status=ScheduleStatus.QUEUED,
+                message_parts=1,  # MMS is always 1 part
+                max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
+                format=MessageFormat.MMS,
+                media_url=data['media_url'],
+                subject=data.get('subject'),
+                created_by=request.user,
+                updated_by=request.user,
             )
-            return Response({
-                'success': True,
-                'message': f'MMS sent successfully to {data["recipient"]}',
-            })
-        else:
-            logger.error('MMS send failed', extra={
-                'org_id': getattr(request, 'org_id', None),
-                'recipient': data['recipient'],
-                'error': result.get('error'),
-            })
-            return Response({
-                'success': False,
-                'message': 'Failed to send MMS',
-                'error': result.get('error'),
-            }, status=500)
+            if org.billing_mode == org.BILLING_TRIAL:
+                record_usage(
+                    org, 1, format='mms',
+                    description=f"MMS to {data['recipient']}",
+                    user=request.user, schedule=schedule,
+                )
+
+        send_message_task.delay(schedule.pk)  # type: ignore[union-attr]
+
+        return Response(
+            {'success': True, 'schedule_id': schedule.pk, 'message': 'Message queued for delivery'},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @action(detail=False, methods=['post'], url_path='upload-file')
     def upload_file(self, request):

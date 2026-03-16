@@ -219,21 +219,30 @@ export const handlers = [
 
   // SMS
   http.post(`${BASE_URL}/api/sms/send/`, () => {
-    return HttpResponse.json({ success: true, message: 'SMS sent successfully' })
+    return HttpResponse.json(
+      { success: true, message: 'Message queued for delivery', schedule_id: 1 },
+      { status: 202 }
+    )
   }),
 
   http.post(`${BASE_URL}/api/sms/send-to-group/`, () => {
-    return HttpResponse.json({
-      success: true,
-      message: 'SMS sent to group',
-      results: { successful: 3, failed: 0, total: 3 },
-      group_name: 'VIP Customers',
-      group_schedule_id: 1,
-    })
+    return HttpResponse.json(
+      {
+        success: true,
+        message: 'SMS queued for 3 recipients',
+        results: { successful: 0, failed: 0, total: 3 },
+        group_name: 'VIP Customers',
+        group_schedule_id: 1,
+      },
+      { status: 202 }
+    )
   }),
 
   http.post(`${BASE_URL}/api/sms/send-mms/`, () => {
-    return HttpResponse.json({ success: true, message: 'MMS sent successfully' })
+    return HttpResponse.json(
+      { success: true, message: 'Message queued for delivery', schedule_id: 2 },
+      { status: 202 }
+    )
   }),
 
   http.post(`${BASE_URL}/api/sms/upload-file/`, () => {

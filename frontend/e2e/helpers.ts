@@ -12,15 +12,17 @@ import { setupClerkTestingToken } from '@clerk/testing/playwright'
  * - E2E_CLERK_USER_ID: Test user ID (user_...)
  */
 export async function authenticatePage(page: Page) {
-  // Set up Clerk testing token (disables CAPTCHAs and rate limits)
-  await setupClerkTestingToken({ page })
-
   const secretKey = process.env.CLERK_SECRET_KEY
   const userId = process.env.E2E_CLERK_USER_ID
 
+  // Without Clerk credentials (e.g. local dev), skip auth entirely.
+  // Tests still exercise UI behaviour via mocked API routes.
   if (!secretKey || !userId) {
     return
   }
+
+  // Set up Clerk testing token (disables CAPTCHAs and rate limits)
+  await setupClerkTestingToken({ page })
 
   // Create a sign-in token via the Clerk Backend API
   const response = await fetch('https://api.clerk.com/v1/sign_in_tokens', {
@@ -179,7 +181,7 @@ export async function mockApiEndpoints(page: Page) {
     })
   })
 
-  // Schedules
+  // Schedules — includes all statuses introduced by the async send pipeline
   await page.route(`${BASE}/api/schedules/**`, (route) => {
     if (route.request().method() !== 'GET') return route.continue()
     return route.fulfill({
@@ -188,17 +190,45 @@ export async function mockApiEndpoints(page: Page) {
       body: JSON.stringify({
         results: [
           {
-            id: 1, text: 'Hello Alice', phone: '0412111111', status: 'pending', format: 'SMS',
+            id: 1, text: 'Hello Alice', phone: '0412111111', status: 'pending', format: 'sms',
             message_parts: 1, scheduled_time: new Date(Date.now() + 3600000).toISOString(),
             contact: 1, contact_detail: { id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' },
+            retry_count: 0, max_retries: 3, failure_category: null, next_retry_at: null, delivered_time: null,
           },
           {
-            id: 2, text: 'Hello Bob', phone: '0412222222', status: 'sent', format: 'SMS',
+            id: 2, text: 'Hello Bob', phone: '0412222222', status: 'sent', format: 'sms',
             message_parts: 1, scheduled_time: new Date(Date.now() - 3600000).toISOString(),
             contact: 2, contact_detail: { id: 2, first_name: 'Bob', last_name: 'Jones', phone: '0412222222' },
+            retry_count: 0, max_retries: 3, failure_category: null, next_retry_at: null, delivered_time: null,
+          },
+          {
+            id: 3, text: 'Hello Charlie', phone: '0412333333', status: 'queued', format: 'sms',
+            message_parts: 1, scheduled_time: new Date(Date.now() - 60000).toISOString(),
+            contact: 3, contact_detail: { id: 3, first_name: 'Charlie', last_name: 'Brown', phone: '0412333333' },
+            retry_count: 0, max_retries: 3, failure_category: null, next_retry_at: null, delivered_time: null,
+          },
+          {
+            id: 4, text: 'Hello Diana', phone: '0412444444', status: 'retrying', format: 'sms',
+            message_parts: 1, scheduled_time: new Date(Date.now() - 120000).toISOString(),
+            contact: 4, contact_detail: { id: 4, first_name: 'Diana', last_name: 'Prince', phone: '0412444444' },
+            retry_count: 1, max_retries: 3, failure_category: 'server_error',
+            next_retry_at: new Date(Date.now() + 60000).toISOString(), delivered_time: null,
+          },
+          {
+            id: 5, text: 'Hello Eve', phone: '0412555555', status: 'delivered', format: 'sms',
+            message_parts: 1, scheduled_time: new Date(Date.now() - 7200000).toISOString(),
+            contact: 5, contact_detail: { id: 5, first_name: 'Eve', last_name: 'Adams', phone: '0412555555' },
+            retry_count: 0, max_retries: 3, failure_category: null, next_retry_at: null,
+            delivered_time: new Date(Date.now() - 3600000).toISOString(),
+          },
+          {
+            id: 6, text: 'Hello Frank', phone: '0412666666', status: 'failed', format: 'sms',
+            message_parts: 1, scheduled_time: new Date(Date.now() - 3600000).toISOString(),
+            contact: 6, contact_detail: { id: 6, first_name: 'Frank', last_name: 'Castle', phone: '0412666666' },
+            retry_count: 3, max_retries: 3, failure_category: 'invalid_number', next_retry_at: null, delivered_time: null,
           },
         ],
-        pagination: { total: 2, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
+        pagination: { total: 6, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
       }),
     })
   })
@@ -254,25 +284,25 @@ export async function mockApiEndpoints(page: Page) {
     })
   })
 
-  // SMS
+  // SMS — returns 202 Accepted with schedule_id (async dispatch pipeline)
   await page.route(`${BASE}/api/sms/**`, (route) => {
     const url = route.request().url()
     if (url.includes('send-to-group')) {
       return route.fulfill({
-        status: 200,
+        status: 202,
         contentType: 'application/json',
         body: JSON.stringify({
-          success: true, message: 'SMS sent to group',
-          results: { successful: 3, failed: 0, total: 3 },
+          success: true, message: 'SMS queued for 3 recipients',
+          results: { successful: 0, failed: 0, total: 3 },
           group_name: 'VIP Customers', group_schedule_id: 1,
         }),
       })
     }
     if (url.includes('send-mms')) {
       return route.fulfill({
-        status: 200,
+        status: 202,
         contentType: 'application/json',
-        body: JSON.stringify({ success: true, message: 'MMS sent successfully' }),
+        body: JSON.stringify({ success: true, message: 'Message queued for delivery', schedule_id: 2 }),
       })
     }
     if (url.includes('upload-file')) {
@@ -282,10 +312,28 @@ export async function mockApiEndpoints(page: Page) {
         body: JSON.stringify({ success: true, url: 'https://storage.example.com/image.jpg', file_id: 'file_123', size: 12345 }),
       })
     }
+    // /api/sms/send/
+    return route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, message: 'Message queued for delivery', schedule_id: 1 }),
+    })
+  })
+
+  // Billing summary
+  await page.route(`${BASE}/api/billing/**`, (route) => {
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, message: 'SMS sent successfully' }),
+      body: JSON.stringify({
+        billing_mode: 'trial',
+        balance: '10.00',
+        monthly_spend: '0.25',
+        monthly_limit: null,
+        sms_usage: '0.05',
+        mms_usage: '0.20',
+        transactions: { results: [], pagination: { total: 0, page: 1, limit: 20, totalPages: 0, hasNext: false, hasPrev: false } },
+      }),
     })
   })
 

@@ -140,10 +140,30 @@ class Template(TenantModel, AuditMixin):
 
 class ScheduleStatus(models.TextChoices):
     PENDING = 'pending', 'Pending'
+    QUEUED = 'queued', 'Queued'
     PROCESSING = 'processing', 'Processing'
     SENT = 'sent', 'Sent'
+    RETRYING = 'retrying', 'Retrying'
+    DELIVERED = 'delivered', 'Delivered'
     FAILED = 'failed', 'Failed'
     CANCELLED = 'cancelled', 'Cancelled'
+
+
+class FailureCategory(models.TextChoices):
+    # Transient — worth retrying
+    NETWORK_ERROR = 'network_error', 'Network Error'
+    PROVIDER_TIMEOUT = 'provider_timeout', 'Provider Timeout'
+    RATE_LIMITED = 'rate_limited', 'Rate Limited'
+    SERVER_ERROR = 'server_error', 'Server Error'
+    UNKNOWN_TRANSIENT = 'unknown_transient', 'Unknown Transient'
+    # Permanent — terminal, always refund
+    INVALID_NUMBER = 'invalid_number', 'Invalid Number'
+    OPT_OUT = 'opt_out', 'Recipient Opted Out'
+    BLACKLISTED = 'blacklisted', 'Number Blacklisted'
+    UNROUTABLE = 'unroutable', 'Unroutable Number'
+    CONTENT_REJECTED = 'content_rejected', 'Content Rejected'
+    ACCOUNT_ERROR = 'account_error', 'Provider Account Error'
+    UNKNOWN_PERMANENT = 'unknown_permanent', 'Unknown Permanent'
 
 
 class MessageFormat(models.TextChoices):
@@ -167,6 +187,15 @@ class Schedule(TenantModel, AuditMixin):
     format = models.CharField(max_length=10, choices=MessageFormat.choices, blank=True, null=True)
     media_url = models.URLField(blank=True, null=True)
     subject = models.CharField(max_length=64, blank=True, null=True)
+    # Retry / delivery tracking fields
+    provider_message_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    retry_count = models.PositiveSmallIntegerField(default=0)
+    max_retries = models.PositiveSmallIntegerField(default=3)
+    next_retry_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    failure_category = models.CharField(
+        max_length=40, choices=FailureCategory.choices, blank=True, null=True
+    )
+    delivered_time = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         db_table = 'schedules'
@@ -174,7 +203,8 @@ class Schedule(TenantModel, AuditMixin):
             models.Index(fields=['scheduled_time']),
             models.Index(fields=['contact']),
             models.Index(fields=['scheduled_time', 'status']),
-            models.Index(fields=['contact', 'status', '-scheduled_time'], name='schedule_contact_status_desc',),
+            models.Index(fields=['contact', 'status', '-scheduled_time'], name='schedule_contact_status_desc'),
+            models.Index(fields=['status', 'scheduled_time'], name='schedule_status_time_idx'),
         ]
 
     def __str__(self):

@@ -198,3 +198,73 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
         'Recorded %s usage: %s units × $%s = $%s for org %s',
         format, units, get_rate(format), cost, org.clerk_org_id,
     )
+
+
+def refund_usage(org, schedule) -> None:
+    """Reverse the credit charge for a failed or undelivered send.
+
+    Idempotent: if a REFUND transaction already exists for this schedule,
+    this function is a no-op.
+
+    trial mode:      SELECT FOR UPDATE → credit_balance += amount → INSERT type=refund
+    subscribed mode: INSERT type=refund only (balance unchanged, corrects usage reporting)
+    """
+    if CreditTransaction.objects.filter(
+        organisation=org,
+        schedule=schedule,
+        transaction_type=CreditTransaction.REFUND,
+    ).exists():
+        logger.debug('refund_usage: refund already exists for schedule %d, skipping', schedule.pk)
+        return
+
+    # Find the original charge for this schedule
+    original_tx = CreditTransaction.objects.filter(
+        organisation=org,
+        schedule=schedule,
+        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
+    ).order_by('-created_at').first()
+
+    if not original_tx:
+        logger.warning(
+            'refund_usage: no original charge found for schedule %d — nothing to refund',
+            schedule.pk,
+        )
+        return
+
+    amount = original_tx.amount
+    failure_category = getattr(schedule, 'failure_category', None) or 'unknown'
+    description = f'Refund: send failed ({failure_category})'
+
+    if org.billing_mode == org.BILLING_TRIAL:
+        with db_transaction.atomic():
+            org.__class__.objects.filter(pk=org.pk).update(
+                credit_balance=F('credit_balance') + amount
+            )
+            new_balance = org.__class__.objects.values_list('credit_balance', flat=True).get(pk=org.pk)
+            CreditTransaction.objects.create(
+                organisation=org,
+                transaction_type=CreditTransaction.REFUND,
+                amount=amount,
+                balance_after=new_balance,
+                description=description,
+                format=getattr(schedule, 'format', None),
+                schedule=schedule,
+                created_by=None,
+            )
+    else:
+        current_balance = get_balance(org)
+        CreditTransaction.objects.create(
+            organisation=org,
+            transaction_type=CreditTransaction.REFUND,
+            amount=amount,
+            balance_after=current_balance,
+            description=description,
+            format=getattr(schedule, 'format', None),
+            schedule=schedule,
+            created_by=None,
+        )
+
+    logger.info(
+        'Refunded $%s to org %s for failed schedule %d (%s)',
+        amount, org.clerk_org_id, schedule.pk, failure_category,
+    )

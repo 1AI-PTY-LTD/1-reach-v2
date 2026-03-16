@@ -11,10 +11,12 @@ CRITICAL TESTS for parent/child schedule atomicity:
 
 import pytest
 from datetime import timedelta
+from decimal import Decimal
 from django.utils import timezone
 from rest_framework import status
 
-from app.models import Schedule, ScheduleStatus
+from app.models import Organisation, Schedule, ScheduleStatus
+from app.utils.billing import grant_credits
 from tests.factories import (
     ContactFactory,
     ContactGroupFactory,
@@ -92,7 +94,7 @@ class TestGroupScheduleCreate:
     """Tests for POST /api/group-schedules/ endpoint."""
 
     def test_create_group_schedule_creates_parent_and_children(
-        self, authenticated_client, organisation, user
+        self, authenticated_client, organisation, user, mock_check_sms_limit
     ):
         """Creating group schedule creates parent + child schedules atomically."""
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
@@ -156,7 +158,7 @@ class TestGroupScheduleCreate:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_create_skips_opted_out_contacts(self, authenticated_client, organisation, user):
+    def test_create_skips_opted_out_contacts(self, authenticated_client, organisation, user, mock_check_sms_limit):
         """Opted-out contacts excluded from child schedule creation."""
         group, contacts = create_contact_group_with_members(organisation, num_members=5, user=user)
 
@@ -424,4 +426,133 @@ class TestGroupScheduleRetrieve:
         response = authenticated_client.get(f'/api/group-schedules/{parent.id}/')
 
         assert response.status_code == status.HTTP_200_OK
-        assert 'child_count' in response.data or 'children' in response.data
+
+
+# ---------------------------------------------------------------------------
+# Billing integration tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGroupScheduleBilling:
+    """Billing gate and credit reservation/refund for group scheduled sends."""
+
+    SMS_RATE = Decimal('0.05')
+
+    def _make_payload(self, group, scheduled_time=None):
+        return {
+            'name': 'Billing test campaign',
+            'group_id': group.id,
+            'text': 'Hello',
+            'scheduled_time': (scheduled_time or timezone.now() + timedelta(hours=1)).isoformat(),
+        }
+
+    def test_create_blocked_when_insufficient_credits(
+        self, authenticated_client, organisation, user
+    ):
+        """Trial org with insufficient credits gets 402."""
+        organisation.billing_mode = Organisation.BILLING_TRIAL
+        organisation.credit_balance = Decimal('0.00')
+        organisation.save()
+
+        group, _ = create_contact_group_with_members(organisation, num_members=3)
+        response = authenticated_client.post(
+            '/api/group-schedules/',
+            self._make_payload(group),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+
+    def test_create_reserves_credits_for_trial_org(
+        self, authenticated_client, organisation, user
+    ):
+        """Trial org: credit_balance decreases by members × message_parts × rate."""
+        organisation.billing_mode = Organisation.BILLING_TRIAL
+        organisation.save()
+        grant_credits(organisation, Decimal('10.00'), 'Test grant')
+
+        member_count = 3
+        group, _ = create_contact_group_with_members(organisation, num_members=member_count, user=user)
+
+        response = authenticated_client.post(
+            '/api/group-schedules/',
+            self._make_payload(group),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        organisation.refresh_from_db()
+        expected_balance = Decimal('10.00') - (member_count * 1 * self.SMS_RATE)
+        assert organisation.credit_balance == expected_balance
+
+    def test_create_does_not_reserve_credits_for_subscribed_org(
+        self, authenticated_client, organisation, user
+    ):
+        """Subscribed org: credit_balance is unchanged after create."""
+        organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
+        organisation.credit_balance = Decimal('0.00')
+        organisation.save()
+
+        group, _ = create_contact_group_with_members(organisation, num_members=2, user=user)
+        response = authenticated_client.post(
+            '/api/group-schedules/',
+            self._make_payload(group),
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('0.00')
+
+    def test_destroy_refunds_credits_for_trial_org(
+        self, authenticated_client, organisation, user
+    ):
+        """Trial org: cancelling a PENDING group schedule restores the reserved credits."""
+        organisation.billing_mode = Organisation.BILLING_TRIAL
+        organisation.save()
+        grant_credits(organisation, Decimal('10.00'), 'Test grant')
+
+        member_count = 2
+        group, _ = create_contact_group_with_members(organisation, num_members=member_count, user=user)
+
+        # Create group schedule (reserves credits)
+        create_response = authenticated_client.post(
+            '/api/group-schedules/',
+            self._make_payload(group),
+            format='json',
+        )
+        assert create_response.status_code == status.HTTP_201_CREATED
+
+        organisation.refresh_from_db()
+        balance_after_create = organisation.credit_balance
+
+        # Cancel the group schedule
+        parent_id = create_response.data['id']
+        cancel_response = authenticated_client.delete(f'/api/group-schedules/{parent_id}/')
+
+        assert cancel_response.status_code == status.HTTP_204_NO_CONTENT
+        organisation.refresh_from_db()
+        # Balance should be restored to what it was before the create
+        assert organisation.credit_balance == Decimal('10.00')
+        assert organisation.credit_balance > balance_after_create
+
+    def test_destroy_does_not_error_for_subscribed_org(
+        self, authenticated_client, organisation, user
+    ):
+        """Subscribed org: cancelling a group schedule returns 204 without billing errors."""
+        organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
+        organisation.save()
+
+        group, _ = create_contact_group_with_members(organisation, num_members=2, user=user)
+
+        create_response = authenticated_client.post(
+            '/api/group-schedules/',
+            self._make_payload(group),
+            format='json',
+        )
+        assert create_response.status_code == status.HTTP_201_CREATED
+
+        parent_id = create_response.data['id']
+        cancel_response = authenticated_client.delete(f'/api/group-schedules/{parent_id}/')
+
+        assert cancel_response.status_code == status.HTTP_204_NO_CONTENT

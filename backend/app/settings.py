@@ -183,6 +183,32 @@ SMS_RATE = _Decimal(os.environ.get('SMS_RATE', '0.05'))
 MMS_RATE = _Decimal(os.environ.get('MMS_RATE', '0.20'))
 
 
+# Celery (local dev: redis in docker-compose; production: Azure Cache for Redis)
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_ACKS_LATE = True          # Never lose tasks on worker crash
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Fair dispatch
+
+# Message retry policy
+MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
+MESSAGE_RETRY_BASE_DELAY = int(os.environ.get('MESSAGE_RETRY_BASE_DELAY', '60'))   # seconds
+MESSAGE_RETRY_MAX_DELAY = int(os.environ.get('MESSAGE_RETRY_MAX_DELAY', '3600'))   # seconds
+MESSAGE_RETRY_JITTER = float(os.environ.get('MESSAGE_RETRY_JITTER', '0.25'))       # ±25%
+MESSAGE_PROCESSING_TIMEOUT_MINUTES = int(os.environ.get('MESSAGE_PROCESSING_TIMEOUT_MINUTES', '10'))
+
+CELERY_BEAT_SCHEDULE = {
+    'dispatch-due-messages': {
+        'task': 'app.celery.dispatch_due_messages',
+        'schedule': 60.0,  # every 60 seconds
+    },
+}
+
+
 # SMS Provider
 SMS_PROVIDER_CLASS = 'app.utils.sms.MockSMSProvider'
 

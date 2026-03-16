@@ -6,7 +6,7 @@ describe('smsApi', () => {
   const client = createMockApiClient()
 
   describe('sendSms', () => {
-    it('sends SMS and returns success response', async () => {
+    it('queues SMS and returns 202 with schedule_id', async () => {
       const result = await sendSms(client, {
         message: 'Hello world',
         recipient: '0412345678',
@@ -15,11 +15,12 @@ describe('smsApi', () => {
 
       expect(result).toHaveProperty('success', true)
       expect(result).toHaveProperty('message')
+      expect(result).toHaveProperty('schedule_id', 1)
     })
   })
 
   describe('sendMms', () => {
-    it('sends MMS and returns success response', async () => {
+    it('queues MMS and returns 202 with schedule_id', async () => {
       const result = await sendMms(client, {
         message: 'Hello with image',
         recipient: '0412345678',
@@ -29,11 +30,12 @@ describe('smsApi', () => {
 
       expect(result).toHaveProperty('success', true)
       expect(result).toHaveProperty('message')
+      expect(result).toHaveProperty('schedule_id', 2)
     })
   })
 
   describe('sendSmsToGroup', () => {
-    it('sends SMS to group and returns results', async () => {
+    it('queues group SMS and returns 202 with total count', async () => {
       const result = await sendSmsToGroup(client, {
         message: 'Hello group',
         group_id: 1,
@@ -41,9 +43,7 @@ describe('smsApi', () => {
 
       expect(result).toHaveProperty('success', true)
       expect(result).toHaveProperty('results')
-      expect(result.results).toHaveProperty('successful')
-      expect(result.results).toHaveProperty('failed')
-      expect(result.results).toHaveProperty('total')
+      expect(result.results).toHaveProperty('total', 3)
       expect(result).toHaveProperty('group_name')
     })
   })

@@ -12,6 +12,8 @@ svix
 requests
 clerk-backend-api
 azure-storage-blob==12.19.0
+celery[redis]>=5.3
+redis>=5.0
 
 # Test dependencies
 pytest==7.4.3

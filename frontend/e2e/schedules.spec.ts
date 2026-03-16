@@ -64,4 +64,22 @@ test.describe('Schedule Page', () => {
     await expect(page.getByText(/pending/i).first()).toBeVisible()
     await expect(page.getByText(/sent/i).first()).toBeVisible()
   })
+
+  test('shows async pipeline status badges — queued, retrying, delivered, failed', async ({ page }) => {
+    await page.goto('/app/schedule')
+
+    await expect(page.getByText('Hello Charlie').first()).toBeVisible({ timeout: 10000 })
+
+    // queued — dispatched to Celery, not yet processed
+    await expect(page.getByText(/queued/i).first()).toBeVisible()
+
+    // retrying — transient failure, pending retry
+    await expect(page.getByText(/retrying/i).first()).toBeVisible()
+
+    // delivered — carrier-confirmed delivery
+    await expect(page.getByText(/delivered/i).first()).toBeVisible()
+
+    // failed — terminal failure after retries exhausted
+    await expect(page.getByText(/failed/i).first()).toBeVisible()
+  })
 })

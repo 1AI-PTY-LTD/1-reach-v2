@@ -20,6 +20,7 @@ export type SendMmsRequest = {
 export type SendSmsResponse = {
   success: boolean
   message: string
+  schedule_id?: number
 }
 
 export type SendGroupSmsResponse = {

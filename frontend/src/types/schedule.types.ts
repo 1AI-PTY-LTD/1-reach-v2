@@ -1,6 +1,14 @@
 import type { Contact } from './contact.types'
 
-export type ScheduleStatus = 'pending' | 'processing' | 'sent' | 'failed' | 'cancelled'
+export type ScheduleStatus =
+  | 'pending'
+  | 'queued'
+  | 'processing'
+  | 'sent'
+  | 'retrying'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled'
 
 export type Schedule = {
   id: number
@@ -20,6 +28,12 @@ export type Schedule = {
   format?: string | null
   media_url?: string | null
   subject?: string | null
+  provider_message_id?: string | null
+  retry_count?: number
+  max_retries?: number
+  next_retry_at?: string | null
+  failure_category?: string | null
+  delivered_time?: string | null
   created_at: string
   updated_at: string
 }
