@@ -1,4 +1,11 @@
+import logging
+
+from django.conf import settings
+
+from app.utils.billing import grant_credits
 from ..models import *
+
+logger = logging.getLogger(__name__)
 
 
 # Webhooks
@@ -30,7 +37,7 @@ def _handle_user_deleted(data):
 
 
 def _handle_organisation_created(data):
-    Organisation.objects.update_or_create(
+    org, created = Organisation.objects.update_or_create(
         clerk_org_id=data['id'],
         defaults={
             'name': data.get('name', ''),
@@ -38,6 +45,15 @@ def _handle_organisation_created(data):
             'is_active': True
         },
     )
+
+    if created:
+        free_amount = getattr(settings, 'FREE_CREDIT_AMOUNT', 10)
+        grant_credits(
+            org,
+            amount=free_amount,
+            description=f'Free trial credits on signup',
+        )
+        logger.info('Granted $%s free credits to new org %s', free_amount, org.clerk_org_id)
 
 
 def _handle_organisation_updated(data):
@@ -103,6 +119,48 @@ def _handle_membership_deleted(data):
         ).update(is_active=False)
 
 
+# ---------------------------------------------------------------------------
+# Clerk Billing webhook stubs
+# The exact event type strings must be confirmed from Clerk docs when the
+# corporate Clerk account with Billing enabled is set up.
+# ---------------------------------------------------------------------------
+
+def _handle_billing_subscription_created(data):
+    """Transition org to subscribed mode when a Clerk Billing subscription is created."""
+    org_id = data.get('organization_id') or data.get('organization', {}).get('id')
+    if not org_id:
+        logger.warning('billing.subscription.created: no org id in payload %s', data)
+        return
+    updated = Organisation.objects.filter(clerk_org_id=org_id).update(
+        billing_mode=Organisation.BILLING_SUBSCRIBED
+    )
+    if updated:
+        logger.info('Org %s transitioned to subscribed billing mode', org_id)
+    else:
+        logger.warning('billing.subscription.created: org %s not found', org_id)
+
+
+def _handle_billing_subscription_deleted(data):
+    """Revert org to trial mode when a Clerk Billing subscription is cancelled."""
+    org_id = data.get('organization_id') or data.get('organization', {}).get('id')
+    if not org_id:
+        logger.warning('billing.subscription.deleted: no org id in payload %s', data)
+        return
+    updated = Organisation.objects.filter(clerk_org_id=org_id).update(
+        billing_mode=Organisation.BILLING_TRIAL
+    )
+    if updated:
+        logger.info('Org %s reverted to trial billing mode (subscription cancelled)', org_id)
+    else:
+        logger.warning('billing.subscription.deleted: org %s not found', org_id)
+
+
+def _handle_billing_payment_failed(data):
+    """Log a failed payment. TODO: decide policy (notify admin, suspend, etc.)."""
+    # TODO: implement notification or suspension when Clerk Billing is configured
+    logger.warning('billing.payment.failed received: %s', data.get('id'))
+
+
 # Clerk API event type strings must use US spelling (Clerk's API convention)
 WEBHOOK_HANDLERS = {
     'user.created': _handle_user_created,
@@ -114,4 +172,8 @@ WEBHOOK_HANDLERS = {
     'organizationMembership.created': _handle_membership_created,
     'organizationMembership.updated': _handle_membership_updated,
     'organizationMembership.deleted': _handle_membership_deleted,
+    # Clerk Billing events (stubs — event type strings to be confirmed when Clerk Billing is configured)
+    'billing.subscription.created': _handle_billing_subscription_created,
+    'billing.subscription.deleted': _handle_billing_subscription_deleted,
+    'billing.payment.failed': _handle_billing_payment_failed,
 }

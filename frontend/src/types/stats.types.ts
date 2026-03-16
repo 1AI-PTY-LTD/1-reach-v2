@@ -9,6 +9,6 @@ export type MonthlyStats = {
 
 export type SummaryData = {
   monthly_stats: MonthlyStats[]
-  sms_limit: number
-  mms_limit: number
+  monthly_limit: string | null
+  total_monthly_spend: string
 }

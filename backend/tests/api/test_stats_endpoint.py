@@ -25,7 +25,7 @@ class TestStatsEndpoint:
     """Tests for GET /api/stats/monthly/ endpoint."""
 
     def test_stats_returns_monthly_data(self, authenticated_client, organisation, user):
-        """Stats returns monthly stats array with sms/mms limits."""
+        """Stats returns monthly stats array with billing info."""
         # Create test data
         ScheduleFactory.create_batch(
             10,
@@ -39,8 +39,8 @@ class TestStatsEndpoint:
 
         assert response.status_code == status.HTTP_200_OK
         assert 'monthly_stats' in response.data
-        assert 'sms_limit' in response.data
-        assert 'mms_limit' in response.data
+        assert 'monthly_limit' in response.data
+        assert 'total_monthly_spend' in response.data
         assert isinstance(response.data['monthly_stats'], list)
 
     def test_stats_counts_by_status(self, authenticated_client, organisation, user):
@@ -147,8 +147,8 @@ class TestStatsEndpoint:
 
         assert response.status_code == status.HTTP_200_OK
         assert 'monthly_stats' in response.data
-        assert 'sms_limit' in response.data
-        assert 'mms_limit' in response.data
+        assert 'monthly_limit' in response.data
+        assert 'total_monthly_spend' in response.data
 
         # Verify current month has SMS/MMS breakdown
         if response.data['monthly_stats']:

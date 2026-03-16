@@ -52,6 +52,7 @@ const allNavItems = [
   },
   { label: 'Summary', to: '/app/summary', match: '/app/_layout/summary', adminOnly: false },
   { label: 'Users', to: '/app/users', match: '/app/_layout/users/', adminOnly: true },
+  { label: 'Billing', to: '/app/billing', match: '/app/_layout/billing/', adminOnly: true },
 ]
 
 function AppLayout() {

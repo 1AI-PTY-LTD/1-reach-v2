@@ -30,10 +30,9 @@ class TestSMSThrottling:
     """Test SMS endpoint throttling."""
 
     @patch('app.views.get_sms_provider')
-    @patch('app.views.get_sms_limit_info')
+    @patch('app.views.check_can_send', return_value=(True, None))
     def test_sms_send_has_throttle(self, mock_limit, mock_provider, authenticated_client, organisation):
         """SMS send endpoint applies throttle (won't hit limit in single test)."""
-        mock_limit.return_value = {'current': 0, 'limit': 1000, 'remaining': 1000}
         provider = Mock()
         provider.send_sms.return_value = {
             'success': True,

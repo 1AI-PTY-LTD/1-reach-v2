@@ -13,10 +13,12 @@ Tests:
 """
 
 import pytest
+from decimal import Decimal
 
 from app.models import (
     Contact,
     ContactGroup,
+    CreditTransaction,
     Organisation,
     OrganisationMembership,
     Schedule,
@@ -31,6 +33,9 @@ from app.utils.clerk import (
     _handle_user_created as handle_user_created,
     _handle_user_deleted as handle_user_deleted,
     _handle_user_updated as handle_user_updated,
+    _handle_billing_subscription_created as handle_billing_subscription_created,
+    _handle_billing_subscription_deleted as handle_billing_subscription_deleted,
+    _handle_billing_payment_failed as handle_billing_payment_failed,
 )
 from tests.factories import (
     ContactFactory,
@@ -301,3 +306,141 @@ class TestHandleOrganizationMembershipDeleted:
 
         membership.refresh_from_db()
         assert membership.is_active is False
+
+
+# ============================================================================
+# Organisation Created — Free Credits
+# ============================================================================
+
+@pytest.mark.django_db
+class TestHandleOrganizationCreatedGrantsCredits:
+    """Tests that organization.created grants free trial credits."""
+
+    def test_grants_credits_on_create(self):
+        """New org receives free trial credits."""
+        data = {'id': 'org_new_billing', 'name': 'Billing Test Org', 'slug': 'billing-test'}
+
+        handle_organization_created(data)
+
+        org = Organisation.objects.get(clerk_org_id='org_new_billing')
+        assert org.credit_balance > Decimal('0.00')
+
+    def test_creates_grant_transaction(self):
+        """A CreditTransaction(type=grant) is created for new org."""
+        data = {'id': 'org_grant_tx', 'name': 'Grant Tx Org', 'slug': 'grant-tx'}
+
+        handle_organization_created(data)
+
+        org = Organisation.objects.get(clerk_org_id='org_grant_tx')
+        tx = CreditTransaction.objects.filter(organisation=org, transaction_type='grant').first()
+        assert tx is not None
+        assert tx.amount > Decimal('0.00')
+
+    def test_does_not_grant_credits_on_update(self):
+        """Updating an existing org does not grant additional credits."""
+        org = OrganisationFactory(clerk_org_id='org_existing', credit_balance=Decimal('5.00'))
+        initial_balance = org.credit_balance
+
+        data = {'id': 'org_existing', 'name': 'Updated Name', 'slug': 'updated'}
+        handle_organization_created(data)
+
+        org.refresh_from_db()
+        # update_or_create with created=False should not add credits
+        assert org.credit_balance == initial_balance
+
+
+# ============================================================================
+# Clerk Billing Webhook Handler Tests
+# ============================================================================
+
+@pytest.mark.django_db
+class TestHandleBillingSubscriptionCreated:
+    """Tests for billing.subscription.created webhook handler."""
+
+    def test_transitions_org_to_subscribed(self):
+        """Org billing_mode is set to 'subscribed' when subscription created."""
+        org = OrganisationFactory(
+            clerk_org_id='org_sub_123',
+            billing_mode=Organisation.BILLING_TRIAL,
+        )
+
+        handle_billing_subscription_created({'organization_id': 'org_sub_123'})
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    def test_handles_nested_org_id(self):
+        """Handles payload with organization.id instead of organization_id."""
+        org = OrganisationFactory(
+            clerk_org_id='org_sub_nested',
+            billing_mode=Organisation.BILLING_TRIAL,
+        )
+
+        handle_billing_subscription_created({'organization': {'id': 'org_sub_nested'}})
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    def test_noop_when_org_not_found(self):
+        """No error raised when org does not exist."""
+        # Should not raise
+        handle_billing_subscription_created({'organization_id': 'org_nonexistent'})
+
+    def test_noop_when_no_org_id(self):
+        """No error raised when payload has no org id."""
+        handle_billing_subscription_created({})
+
+
+@pytest.mark.django_db
+class TestHandleBillingSubscriptionDeleted:
+    """Tests for billing.subscription.deleted webhook handler."""
+
+    def test_reverts_org_to_trial(self):
+        """Org billing_mode is reverted to 'trial' when subscription cancelled."""
+        org = OrganisationFactory(
+            clerk_org_id='org_cancel_123',
+            billing_mode=Organisation.BILLING_SUBSCRIBED,
+        )
+
+        handle_billing_subscription_deleted({'organization_id': 'org_cancel_123'})
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
+
+    def test_credit_balance_unchanged_on_cancellation(self):
+        """Cancelling subscription does not touch credit_balance."""
+        org = OrganisationFactory(
+            clerk_org_id='org_cancel_balance',
+            billing_mode=Organisation.BILLING_SUBSCRIBED,
+            credit_balance=Decimal('3.50'),
+        )
+
+        handle_billing_subscription_deleted({'organization_id': 'org_cancel_balance'})
+
+        org.refresh_from_db()
+        assert org.credit_balance == Decimal('3.50')
+
+    def test_noop_when_org_not_found(self):
+        """No error raised when org does not exist."""
+        handle_billing_subscription_deleted({'organization_id': 'org_nonexistent'})
+
+
+@pytest.mark.django_db
+class TestHandleBillingPaymentFailed:
+    """Tests for billing.payment.failed webhook handler."""
+
+    def test_does_not_raise(self):
+        """payment.failed stub completes without error."""
+        handle_billing_payment_failed({'id': 'payment_123', 'organization_id': 'org_123'})
+
+    def test_does_not_change_billing_mode(self):
+        """payment.failed does not change org billing_mode (stub behaviour)."""
+        org = OrganisationFactory(
+            clerk_org_id='org_pay_fail',
+            billing_mode=Organisation.BILLING_SUBSCRIBED,
+        )
+
+        handle_billing_payment_failed({'id': 'payment_fail', 'organization_id': 'org_pay_fail'})
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED

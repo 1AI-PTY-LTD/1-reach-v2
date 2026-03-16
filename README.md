@@ -15,6 +15,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 - SMS/MMS sending (immediate or scheduled)
 - Org user management — invite, deactivate, grant/revoke admin
 - Usage stats dashboard
+- Billing system — trial credits on signup, subscribed mode with metered tracking, monthly spending limits, transaction history
 
 ---
 
@@ -84,6 +85,9 @@ cp frontend/.envexample frontend/.env
 | `SENTRY_DSN` | No | Sentry DSN for error tracking |
 | `LOG_LEVEL` | No | `INFO` or `DEBUG` (default: `INFO`) |
 | `LOG_FORMAT` | No | `json` or `text` (default: `json`) |
+| `FREE_CREDIT_AMOUNT` | No | Dollar credits granted to new orgs on signup (default: `10.00`) |
+| `SMS_RATE` | No | Cost per SMS message part in dollars (default: `0.05`) |
+| `MMS_RATE` | No | Cost per MMS send in dollars (default: `0.20`) |
 
 **`frontend/.env`** — Vite + Clerk:
 
@@ -116,25 +120,27 @@ This starts three services:
 ```
 backend/
 ├── app/
-│   ├── models.py          # Contact, Group, Template, Schedule, Organisation, User, Config
-│   ├── views.py           # ViewSets for all API endpoints
-│   ├── serializers.py     # DRF serializers
+│   ├── models.py          # Contact, Group, Template, Schedule, Organisation, User, Config, CreditTransaction
+│   ├── views.py           # ViewSets for all API endpoints + BillingViewSet
+│   ├── serializers.py     # DRF serializers + CreditTransactionSerializer
 │   ├── authentication.py  # ClerkJWTAuthentication — extracts org context from JWT
 │   ├── permissions.py     # IsOrgMember, IsOrgAdmin
 │   ├── filters.py         # django-filter (search, date, group)
 │   ├── middleware/        # RequestLoggingMiddleware, ClerkTenantMiddleware
 │   ├── utils/
-│   │   ├── clerk.py       # Webhook handlers (user/org sync)
+│   │   ├── billing.py     # grant_credits, check_can_send, record_usage, get_monthly_usage, etc.
+│   │   ├── clerk.py       # Webhook handlers (user/org sync + billing subscription stubs)
 │   │   ├── sms.py         # Pluggable SMS provider (MockSMSProvider)
-│   │   ├── storage.py     # Pluggable storage provider (Mock + Azure Blob)
-│   │   └── limits.py      # SMS/MMS capacity checking
+│   │   └── storage.py     # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 354 tests, 89% coverage
+└── tests/                 # 390 tests, 88% coverage
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
 
 **Clerk integration:** Users and organisations are created in Clerk and synced to the local DB via webhooks (`POST /api/webhooks/clerk/`). Membership changes (role updates, deactivation, invitations) go through Clerk's API and sync back via webhooks — Clerk is the source of truth.
+
+**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send(org, units, format)` and `record_usage(org, units, format, ...)`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. A single `monthly_limit` Config key caps spending for both modes. Trial orgs are blocked when balance reaches $0; subscribed orgs are never balance-blocked. Clerk Billing webhook stubs are registered and ready for wiring once the corporate Clerk account has Billing enabled.
 
 **SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). Implement the abstract base class to add real providers.
 
@@ -171,10 +177,11 @@ frontend/
 | Users | `GET /api/users/`, `GET /api/users/me/`, `PATCH /api/users/:id/role/`, `PATCH /api/users/:id/status/`, `POST /api/users/invite/` |
 | SMS/MMS | `POST /api/sms/send/`, `POST /api/sms/send-to-group/`, `POST /api/sms/send-mms/`, `POST /api/sms/upload-file/` |
 | Stats | `GET /api/stats/monthly/` |
+| Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history (admin only) |
 | Configs | `GET/POST/PUT/PATCH /api/configs/` |
 | Webhooks | `POST /api/webhooks/clerk/` |
 
-All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user management endpoints require `IsOrgAdmin`.
+All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
 
 ---
 
@@ -186,7 +193,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-354 tests, 89% coverage. Run with `-v` for verbose output or `--cov` for coverage report.
+390 tests, 88% coverage. Run with `-v` for verbose output or `--cov` for coverage report.
 
 ### Frontend (unit + integration)
 
@@ -194,7 +201,7 @@ docker compose exec backend python -m pytest tests/ -x -q
 docker compose exec frontend npx vitest run
 ```
 
-260 tests across API modules, components, and route integration tests. Uses MSW for API mocking.
+259 tests across API modules, components, and route integration tests. Uses MSW for API mocking.
 
 ### Frontend (E2E)
 
@@ -212,7 +219,7 @@ docker compose exec frontend npx playwright test
 1. Create an application in the [Clerk Dashboard](https://dashboard.clerk.com)
 2. Enable **Organizations** in the Clerk Dashboard
 3. Enable **Organization Invitations** (Organizations → Settings)
-4. Configure your **Webhook** endpoint to point to `https://your-domain/api/webhooks/clerk/` and subscribe to all 9 events the backend handles: `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`
+4. Configure your **Webhook** endpoint to point to `https://your-domain/api/webhooks/clerk/` and subscribe to all 9 core events: `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`. When Clerk Billing is enabled on the corporate account, also subscribe to: `billing.subscription.created`, `billing.subscription.deleted`, `billing.payment.failed`
 5. Set the **Application name** in Settings → General (appears in invitation emails)
 
 For E2E tests, set `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` (a test user ID in your Clerk instance).
@@ -249,17 +256,11 @@ The app currently runs with Django's development server. For production:
 - Serve static files via Whitenoise or a CDN
 - Set up a CI/CD pipeline and migration strategy
 
-### 4. Clerk Billing & Free Credit System
+### 4. Clerk Billing Integration (active Clerk Billing account required)
 
-New organisations should receive a free SMS credit allocation on signup (amount TBD) to trial the platform — no payment details required upfront. Later, admins need a way to register a payment method and top up credits.
+The billing system is implemented. New orgs receive `FREE_CREDIT_AMOUNT` (default $10) trial credits on signup. Trial orgs are blocked when balance reaches $0. Subscribed orgs have usage tracked for metered Clerk Billing reporting. Transaction history and per-format spend are available at `GET /api/billing/summary/`.
 
-What needs to be implemented:
-
-- Credit balance tracked per organisation — either via the existing `Config` model or a new `CreditBalance` model
-- Credit deducted when messages are sent (hook into the SMS provider layer in `backend/app/utils/sms.py`)
-- Frontend page for admins to view current credit balance and add a payment method via Clerk Billing
-- Backend integration with Clerk Billing API (`clerk_client.billing.*`) to attach payment methods to organisations
-- Webhook handlers for Clerk billing events (payment confirmed, payment failed, subscription updated) — add to `backend/app/utils/clerk.py` alongside the existing handlers
+**Remaining step:** The Clerk Billing webhook handlers (`billing.subscription.created`, `billing.subscription.deleted`, `billing.payment.failed`) are registered as stubs in `backend/app/utils/clerk.py`. The exact Clerk event type strings and payload schema must be confirmed once the corporate Clerk account has Billing enabled. Subscribe to these webhook events and verify the payload shapes match the handlers.
 
 ### 5. Migrate to Corporate Clerk Account
 
@@ -282,6 +283,7 @@ From codebase inspection, these items need to be addressed before production:
 
 - Set `CLERK_AUTHORIZED_PARTIES`, `CORS_ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` in `backend/.env` to include the production frontend URL (all three are now env-var driven; defaults are `localhost`)
 - Confirm Clerk email templates (invitation, sign-up, magic link) are correctly branded for the corporate account before sending to real users
+- Configure Clerk to require verified email addresses before allowing users to be created or organisations to be joined — this prevents unverified or disposable addresses from accessing the platform (Clerk Dashboard → User & Authentication → Email, Phone, Username → enable "Require verified email address")
 
 ---
 
