@@ -20,7 +20,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework import status
 
-from app.models import MessageFormat, Schedule, ScheduleStatus
+from app.models import MessageFormat, Organisation, Schedule, ScheduleStatus
+from app.utils.billing import get_balance, grant_credits
 from tests.factories import (
     ConfigFactory,
     ContactFactory,
@@ -35,9 +36,9 @@ class TestSendSMS:
     """Tests for POST /api/sms/send/ endpoint."""
 
     def test_send_sms_creates_schedule(
-        self, authenticated_client, organisation, user, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
     ):
-        """Sending SMS creates a Schedule record."""
+        """Sending SMS creates a QUEUED Schedule record and returns 202."""
         data = {
             'message': 'Test message',
             'recipient': '0412345678'
@@ -45,10 +46,11 @@ class TestSendSMS:
 
         response = authenticated_client.post('/api/sms/send/', data)
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['success'] is True
+        assert 'schedule_id' in response.data
 
-        # Verify Schedule created
+        # Verify Schedule created with QUEUED status
         schedule = Schedule.objects.filter(
             organisation=organisation,
             phone='0412345678',
@@ -57,11 +59,14 @@ class TestSendSMS:
 
         assert schedule is not None
         assert schedule.text == 'Test message'
-        assert schedule.status == ScheduleStatus.SENT
+        assert schedule.status == ScheduleStatus.QUEUED
         assert schedule.message_parts == 1
 
+        # Verify Celery task was dispatched
+        mock_send_message_task.delay.assert_called_once_with(schedule.pk)
+
     def test_send_sms_with_contact_id(
-        self, authenticated_client, contact, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, contact, mock_check_sms_limit, mock_send_message_task
     ):
         """Sending SMS with contact_id links to contact."""
         data = {
@@ -72,7 +77,7 @@ class TestSendSMS:
 
         response = authenticated_client.post('/api/sms/send/', data)
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
 
         schedule = Schedule.objects.filter(contact=contact).first()
         assert schedule is not None
@@ -93,7 +98,7 @@ class TestSendSMS:
         assert 'limit' in str(response.data).lower()
 
     def test_send_sms_validates_phone_number(
-        self, authenticated_client, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
     ):
         """Invalid phone numbers rejected."""
         data = {
@@ -106,7 +111,7 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_send_sms_validates_message(
-        self, authenticated_client, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
     ):
         """Empty/invalid messages rejected."""
         data = {
@@ -118,10 +123,10 @@ class TestSendSMS:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_send_sms_calls_provider(
-        self, authenticated_client, organisation, mock_sms_provider, mock_check_sms_limit
+    def test_send_sms_dispatches_celery_task(
+        self, authenticated_client, organisation, mock_check_sms_limit, mock_send_message_task
     ):
-        """send_sms calls SMS provider with correct params."""
+        """send_sms dispatches a Celery task (not the provider directly)."""
         data = {
             'message': 'Test message',
             'recipient': '0412345678'
@@ -129,13 +134,9 @@ class TestSendSMS:
 
         response = authenticated_client.post('/api/sms/send/', data)
 
-        assert response.status_code == status.HTTP_200_OK
-
-        # Verify provider was called
-        mock_sms_provider.send_sms.assert_called_once()
-        call_args = mock_sms_provider.send_sms.call_args
-        assert call_args[1]['to'] == '0412345678'
-        assert call_args[1]['message'] == 'Test message'
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Provider is NOT called in the view — it's called inside the Celery task
+        mock_send_message_task.delay.assert_called_once()
 
     def test_send_sms_requires_authentication(self, api_client):
         """Unauthenticated requests rejected."""
@@ -150,9 +151,9 @@ class TestSendToGroup:
     """Tests for POST /api/sms/send-to-group/ endpoint."""
 
     def test_send_to_group_creates_parent_and_children(
-        self, authenticated_client, organisation, user, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
     ):
-        """Sending to group creates parent + child schedules."""
+        """Sending to group creates parent + QUEUED child schedules."""
         # Create group with 3 members
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
 
@@ -163,11 +164,9 @@ class TestSendToGroup:
 
         response = authenticated_client.post('/api/sms/send-to-group/', data)
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['success'] is True
         assert response.data['results']['total'] == 3
-        assert response.data['results']['successful'] == 3
-        assert response.data['results']['failed'] == 0
 
         # Verify parent schedule
         parent_id = response.data['group_schedule_id']
@@ -175,18 +174,21 @@ class TestSendToGroup:
         assert parent.group == group
         assert parent.text == 'Bulk message'
 
-        # Verify children
+        # Verify children are QUEUED (not yet sent)
         children = Schedule.objects.filter(parent=parent)
         assert children.count() == 3
 
         for child in children:
             assert child.parent == parent
             assert child.text == 'Bulk message'
-            assert child.status == ScheduleStatus.SENT
+            assert child.status == ScheduleStatus.QUEUED
             assert child.contact in contacts
 
+        # One Celery task per child
+        assert mock_send_message_task.delay.call_count == 3
+
     def test_send_to_group_skips_opted_out_contacts(
-        self, authenticated_client, organisation, user, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
     ):
         """Opted-out contacts excluded from bulk send."""
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
@@ -198,11 +200,11 @@ class TestSendToGroup:
         data = {'message': 'Bulk', 'group_id': group.id}
         response = authenticated_client.post('/api/sms/send-to-group/', data)
 
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data['results']['total'] == 2  # Only 2 sent
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert response.data['results']['total'] == 2  # Only 2 queued
 
     def test_send_to_group_validates_group_exists(
-        self, authenticated_client, mock_sms_provider, mock_check_sms_limit
+        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
     ):
         """Non-existent group ID rejected."""
         data = {'message': 'Test', 'group_id': 99999}
@@ -231,9 +233,9 @@ class TestSendMMS:
     """Tests for POST /api/sms/send-mms/ endpoint."""
 
     def test_send_mms_creates_schedule(
-        self, authenticated_client, organisation, mock_sms_provider, mock_check_mms_limit
+        self, authenticated_client, organisation, mock_check_mms_limit, mock_send_message_task
     ):
-        """Sending MMS creates Schedule with format=MMS."""
+        """Sending MMS creates a QUEUED Schedule with format=MMS."""
         data = {
             'message': 'Check this out!',
             'media_url': 'https://example.com/image.jpg',
@@ -243,8 +245,9 @@ class TestSendMMS:
 
         response = authenticated_client.post('/api/sms/send-mms/', data)
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['success'] is True
+        assert 'schedule_id' in response.data
 
         schedule = Schedule.objects.filter(
             organisation=organisation,
@@ -255,6 +258,7 @@ class TestSendMMS:
         assert schedule.media_url == 'https://example.com/image.jpg'
         assert schedule.subject == 'Photo'
         assert schedule.message_parts == 1  # MMS always 1 part
+        assert schedule.status == ScheduleStatus.QUEUED
 
     def test_send_mms_checks_monthly_limit(
         self, authenticated_client, organisation
@@ -276,7 +280,7 @@ class TestSendMMS:
         assert 'limit' in str(response.data).lower()
 
     def test_send_mms_accepts_empty_message(
-        self, authenticated_client, mock_sms_provider, mock_check_mms_limit
+        self, authenticated_client, mock_check_mms_limit, mock_send_message_task
     ):
         """MMS with empty text (image-only) accepted."""
         data = {
@@ -287,7 +291,7 @@ class TestSendMMS:
 
         response = authenticated_client.post('/api/sms/send-mms/', data)
 
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_202_ACCEPTED
 
 
 @pytest.mark.django_db
@@ -381,3 +385,122 @@ class TestUploadFile:
         )
 
         assert response.status_code == status.HTTP_200_OK
+
+
+# ---------------------------------------------------------------------------
+# Trial credit reservation at dispatch time
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestTrialCreditReservation:
+    """Credits are reserved in the HTTP request for trial orgs, not in the Celery task."""
+
+    def test_send_sms_trial_reserves_credits(
+        self, authenticated_client, organisation, mock_send_message_task
+    ):
+        """Trial org balance decreases at 202 time (before Celery task runs)."""
+        organisation.billing_mode = Organisation.BILLING_TRIAL
+        organisation.save()
+        grant_credits(organisation, Decimal('1.00'), 'test grant')
+        balance_before = get_balance(organisation)
+
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello',
+            'recipient': '0412345678',
+        })
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # $0.05 SMS rate deducted immediately
+        assert get_balance(organisation) == balance_before - Decimal('0.05')
+
+    def test_send_sms_subscribed_does_not_reserve_credits(
+        self, authenticated_client, organisation, mock_send_message_task
+    ):
+        """Subscribed org balance is unchanged at dispatch — usage recorded on SENT by task."""
+        organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
+        organisation.save()
+        balance_before = get_balance(organisation)
+
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello',
+            'recipient': '0412345678',
+        })
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert get_balance(organisation) == balance_before
+
+    def test_send_mms_trial_reserves_credits(
+        self, authenticated_client, organisation, mock_send_message_task
+    ):
+        """Trial org MMS send deducts $0.20 immediately."""
+        organisation.billing_mode = Organisation.BILLING_TRIAL
+        organisation.save()
+        grant_credits(organisation, Decimal('1.00'), 'test grant')
+        balance_before = get_balance(organisation)
+
+        response = authenticated_client.post('/api/sms/send-mms/', {
+            'message': 'Check this',
+            'media_url': 'https://example.com/image.jpg',
+            'recipient': '0412345678',
+        })
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert get_balance(organisation) == balance_before - Decimal('0.20')
+
+    def test_send_to_group_trial_reserves_credits_per_member(
+        self, authenticated_client, organisation, user, mock_send_message_task
+    ):
+        """Group send deducts 1 SMS rate per eligible member at dispatch time."""
+        organisation.billing_mode = Organisation.BILLING_TRIAL
+        organisation.save()
+        grant_credits(organisation, Decimal('10.00'), 'test grant')
+        balance_before = get_balance(organisation)
+
+        group, _ = create_contact_group_with_members(organisation, num_members=3, user=user)
+
+        response = authenticated_client.post('/api/sms/send-to-group/', {
+            'message': 'Hello group',
+            'group_id': group.id,
+        })
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # 3 members × $0.05 = $0.15
+        assert get_balance(organisation) == balance_before - Decimal('0.15')
+
+
+# ---------------------------------------------------------------------------
+# Contact isolation and empty-group edge cases
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestSendEdgeCases:
+    def test_send_sms_with_unknown_contact_id_returns_404(
+        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
+    ):
+        """contact_id belonging to a different org (or non-existent) returns 404."""
+        other_contact = ContactFactory()  # different org — not visible to request.org
+
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello',
+            'recipient': '0412345678',
+            'contact_id': other_contact.id,
+        })
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_send_to_group_with_all_opted_out_returns_400(
+        self, authenticated_client, organisation, user, mock_send_message_task
+    ):
+        """Group where all members are opted out raises 400 'No eligible contacts'."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+        for c in contacts:
+            c.opt_out = True
+            c.save()
+
+        response = authenticated_client.post('/api/sms/send-to-group/', {
+            'message': 'Hello',
+            'group_id': group.id,
+        })
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'eligible' in str(response.data).lower()

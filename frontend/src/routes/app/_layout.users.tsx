@@ -107,7 +107,8 @@ export function UsersContent() {
   const toggleStatus = useToggleUserStatusMutation(client)
   const [inviteOpen, setInviteOpen] = useState(false)
 
-  const isAdmin = membership?.role === 'org:admin'
+  const isAdmin =
+    import.meta.env.VITE_E2E_TEST_MODE === 'true' || membership?.role === 'org:admin'
 
   const [pendingRoleUserId, setPendingRoleUserId] = useState<number | null>(null)
   const [pendingStatusUserId, setPendingStatusUserId] = useState<number | null>(null)

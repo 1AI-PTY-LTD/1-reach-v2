@@ -12,10 +12,11 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 - Contact management with CSV import
 - Group messaging with scheduling
 - Template library
-- SMS/MMS sending (immediate or scheduled)
+- SMS/MMS sending — async dispatch via Celery with automatic retry and credit refund on failure
+- Scheduled sends — Celery beat dispatches due messages every 60 s
 - Org user management — invite, deactivate, grant/revoke admin
 - Usage stats dashboard
-- Billing system — trial credits on signup, subscribed mode with metered tracking, monthly spending limits, transaction history
+- Billing system — trial credits on signup, subscribed mode with metered tracking, monthly spending limits, transaction history, credit refunds on failed sends
 
 ---
 
@@ -28,6 +29,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 | Frontend | React 19 + Vite 7 + TanStack Router + TanStack Query |
 | Styling | Tailwind CSS 3 + HeadlessUI |
 | SMS/Storage | Pluggable provider interface (Mock by default, Azure Blob for storage) |
+| Task queue | Celery 5 + Redis 7 (async send pipeline, retry logic, beat scheduler) |
 | Monitoring | Sentry + structured JSON logging |
 | Testing | pytest (backend), Vitest + Playwright (frontend) |
 
@@ -88,6 +90,12 @@ cp frontend/.envexample frontend/.env
 | `FREE_CREDIT_AMOUNT` | No | Dollar credits granted to new orgs on signup (default: `10.00`) |
 | `SMS_RATE` | No | Cost per SMS message part in dollars (default: `0.05`) |
 | `MMS_RATE` | No | Cost per MMS send in dollars (default: `0.20`) |
+| `CELERY_BROKER_URL` | No | Redis URL for Celery broker (default: `redis://redis:6379/0`) |
+| `CELERY_RESULT_BACKEND` | No | Redis URL for task results (default: `redis://redis:6379/0`) |
+| `MESSAGE_MAX_RETRIES` | No | Max retry attempts per message (default: `3`) |
+| `MESSAGE_RETRY_BASE_DELAY` | No | Base backoff delay in seconds (default: `60`) |
+| `MESSAGE_RETRY_MAX_DELAY` | No | Max backoff delay in seconds (default: `3600`) |
+| `MESSAGE_RETRY_JITTER` | No | Jitter fraction for backoff (default: `0.25` = ±25%) |
 
 **`frontend/.env`** — Vite + Clerk:
 
@@ -95,6 +103,7 @@ cp frontend/.envexample frontend/.env
 |---|---|---|
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key (`pk_...`) |
 | `VITE_API_BASE_URL` | No | Backend URL (default: `http://localhost:8000`) |
+| `VITE_E2E_TEST_MODE` | No | Set to `true` to bypass Clerk auth gate in E2E tests. **Never set in production.** |
 
 ### Running Locally
 
@@ -102,7 +111,7 @@ cp frontend/.envexample frontend/.env
 docker compose up
 ```
 
-This starts three services:
+This starts six services:
 
 | Service | URL | Description |
 |---|---|---|
@@ -110,6 +119,9 @@ This starts three services:
 | Frontend | http://localhost:5173 | React dev server |
 | Swagger UI | http://localhost:8000/api/docs/ | Interactive API docs |
 | ReDoc | http://localhost:8000/api/redoc/ | API reference |
+| Redis | localhost:6379 | Celery broker + result backend |
+| Celery worker | — | Processes `send_message` tasks (async SMS/MMS dispatch) |
+| Celery beat | — | Runs `dispatch_due_messages` every 60 s (scheduled send) |
 
 ---
 
@@ -126,21 +138,38 @@ backend/
 │   ├── authentication.py  # ClerkJWTAuthentication — extracts org context from JWT
 │   ├── permissions.py     # IsOrgMember, IsOrgAdmin
 │   ├── filters.py         # django-filter (search, date, group)
+│   ├── celery.py          # Celery app instance + send_message + dispatch_due_messages tasks
 │   ├── middleware/        # RequestLoggingMiddleware, ClerkTenantMiddleware
 │   ├── utils/
-│   │   ├── billing.py     # grant_credits, check_can_send, record_usage, get_monthly_usage, etc.
-│   │   ├── clerk.py       # Webhook handlers (user/org sync + billing subscription stubs)
-│   │   ├── sms.py         # Pluggable SMS provider (MockSMSProvider)
-│   │   └── storage.py     # Pluggable storage provider (Mock + Azure Blob)
+│   │   ├── billing.py          # grant_credits, check_can_send, record_usage, refund_usage, etc.
+│   │   ├── failure_classifier.py  # classify_failure() — maps provider errors to FailureCategory
+│   │   ├── clerk.py            # Webhook handlers (user/org sync + billing subscription stubs)
+│   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
+│   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 390 tests, 88% coverage
+└── tests/                 # 451 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
 
 **Clerk integration:** Users and organisations are created in Clerk and synced to the local DB via webhooks (`POST /api/webhooks/clerk/`). Membership changes (role updates, deactivation, invitations) go through Clerk's API and sync back via webhooks — Clerk is the source of truth.
 
-**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send(org, units, format)` and `record_usage(org, units, format, ...)`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. A single `monthly_limit` Config key caps spending for both modes. Trial orgs are blocked when balance reaches $0; subscribed orgs are never balance-blocked. Clerk Billing webhook stubs are registered and ready for wiring once the corporate Clerk account has Billing enabled.
+**Async send pipeline:** Send endpoints (`POST /api/sms/send/`, `send-mms/`, `send-to-group/`) return `202 Accepted` immediately. A Celery task (`send_message`) handles actual dispatch with full retry logic:
+
+```
+HTTP POST → validate + billing gate → Schedule(status=QUEUED) → send_message.delay() → 202
+                                                                        │
+                                                          Celery worker ▼
+                                           QUEUED → PROCESSING → SENT → DELIVERED (receipt)
+                                                               ↓ transient fail → RETRYING (backoff)
+                                                               ↓ permanent fail → FAILED + refund
+```
+
+Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults to ~1m → 2m → 4m → 8m, capped at 1h. A `dispatch_due_messages` beat task runs every 60 s to pick up scheduled sends.
+
+**Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
+
+**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. Clerk Billing webhook stubs are registered and ready for wiring once the corporate Clerk account has Billing enabled.
 
 **SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). Implement the abstract base class to add real providers.
 
@@ -175,7 +204,7 @@ frontend/
 | Schedules | `GET/POST /api/schedules/`, `GET/PUT/PATCH /api/schedules/:id/` |
 | Group Schedules | `GET/POST /api/group-schedules/`, `GET/PUT/DELETE /api/group-schedules/:id/` |
 | Users | `GET /api/users/`, `GET /api/users/me/`, `PATCH /api/users/:id/role/`, `PATCH /api/users/:id/status/`, `POST /api/users/invite/` |
-| SMS/MMS | `POST /api/sms/send/`, `POST /api/sms/send-to-group/`, `POST /api/sms/send-mms/`, `POST /api/sms/upload-file/` |
+| SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/` |
 | Stats | `GET /api/stats/monthly/` |
 | Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history (admin only) |
 | Configs | `GET/POST/PUT/PATCH /api/configs/` |
@@ -193,7 +222,11 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-390 tests, 88% coverage. Run with `-v` for verbose output or `--cov` for coverage report.
+451 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+
+```bash
+docker compose exec backend python -m pytest --create-db tests/ -q
+```
 
 ### Frontend (unit + integration)
 
@@ -201,16 +234,19 @@ docker compose exec backend python -m pytest tests/ -x -q
 docker compose exec frontend npx vitest run
 ```
 
-259 tests across API modules, components, and route integration tests. Uses MSW for API mocking.
+Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 
 ```bash
-# Requires env vars: CLERK_SECRET_KEY, E2E_CLERK_USER_ID
-docker compose exec frontend npx playwright test
+docker compose exec -e PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser frontend npx playwright test
 ```
 
-36 E2E tests across contacts, groups, templates, schedules, send-sms, and users pages. Uses Clerk sign-in tokens for programmatic authentication and `page.route()` to mock the backend API.
+41 Playwright tests across contacts, groups, templates, schedules, send SMS/MMS pipeline, and users pages. Backend API is mocked via `page.route()` — no real backend required.
+
+**Local dev (no Clerk credentials):** `VITE_E2E_TEST_MODE=true` in `frontend/.env` bypasses the Clerk auth gate so tests run without Clerk credentials. This value is never used in production builds.
+
+**CI with real Clerk:** Set `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` in the CI environment. The `global-setup.ts` and `authenticatePage()` helper detect these and perform real Clerk sign-in instead.
 
 ---
 
@@ -230,39 +266,37 @@ For E2E tests, set `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` (a test user ID in
 
 These features are not yet implemented and are required before production use:
 
-### 1. Real SMS/MMS Provider
+### 1. Real SMS/MMS Provider + Delivery Receipts
 
-The app currently uses `MockSMSProvider`, which logs operations but does not send real messages. To add a real provider:
+The app uses `MockSMSProvider`, which logs operations but does not send real messages. To add a real provider:
 
 - Subclass `SMSProvider` in `backend/app/utils/sms.py`
-- Implement `_send_sms_impl()`, `_send_bulk_sms_impl()`, `_send_mms_impl()`
+- Implement `_send_sms_impl()`, `_send_bulk_sms_impl()`, `_send_mms_impl()` — return the enriched dict including `error_code`, `http_status`, `retryable`, `failure_category`
 - Set `settings.SMS_PROVIDER_CLASS` to the new provider class path
 
-### 2. Background Job Processing
+Delivery receipt tracking (`DELIVERED` status, carrier-confirmed delivery time) is deferred until a real provider is chosen. The schema is ready (`provider_message_id`, `delivered_time` fields on `Schedule`). When a provider is selected, add:
 
-Scheduled messages are saved to the `Schedule` table with a `scheduled_time`, but there is no worker to process them. Messages must currently be sent immediately via the SMS endpoints.
+- `POST /api/webhooks/delivery/?provider=<name>` with HMAC signature verification
+- `process_delivery_event` Celery task: marks `DELIVERED` or triggers `refund_usage()` on delivery failure
 
-To implement scheduled sending, add a background task queue (Celery, Django-Q, or Huey) with a periodic task that:
-- Queries pending schedules where `scheduled_time <= now`
-- Sends via the SMS provider
-- Updates status to `sent` or `failed`
+### 2. Production Deployment
 
-### 3. Production Deployment
-
-The app currently runs with Django's development server. For production:
+The app currently runs with Django's development server and Docker Compose (local dev only). For production:
 
 - Add a production settings file (`production.py`) with `DEBUG=False`, secure `ALLOWED_HOSTS`, etc.
 - Serve with Gunicorn or Uvicorn behind a reverse proxy
 - Serve static files via Whitenoise or a CDN
+- Provision Redis separately (e.g. Azure Cache for Redis) and set `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`
+- Deploy Celery worker and beat as separate processes/containers (e.g. Azure Container Instances)
 - Set up a CI/CD pipeline and migration strategy
 
-### 4. Clerk Billing Integration (active Clerk Billing account required)
+### 3. Clerk Billing Integration (active Clerk Billing account required)
 
 The billing system is implemented. New orgs receive `FREE_CREDIT_AMOUNT` (default $10) trial credits on signup. Trial orgs are blocked when balance reaches $0. Subscribed orgs have usage tracked for metered Clerk Billing reporting. Transaction history and per-format spend are available at `GET /api/billing/summary/`.
 
 **Remaining step:** The Clerk Billing webhook handlers (`billing.subscription.created`, `billing.subscription.deleted`, `billing.payment.failed`) are registered as stubs in `backend/app/utils/clerk.py`. The exact Clerk event type strings and payload schema must be confirmed once the corporate Clerk account has Billing enabled. Subscribe to these webhook events and verify the payload shapes match the handlers.
 
-### 5. Migrate to Corporate Clerk Account
+### 4. Migrate to Corporate Clerk Account
 
 The current setup uses a personal/dev Clerk account. Before going to production this needs to move to the corporate account.
 
@@ -277,7 +311,7 @@ Steps:
 - Set the **Application name** in Clerk Settings → General (used in invitation and sign-up emails)
 - Update email templates in Clerk to match corporate branding
 
-### 6. Remaining Clerk Production Configuration
+### 5. Remaining Clerk Production Configuration
 
 From codebase inspection, these items need to be addressed before production:
 

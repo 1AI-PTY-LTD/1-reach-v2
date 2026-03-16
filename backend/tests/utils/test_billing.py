@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from django.utils import timezone
 
-from app.models import Organisation
+from app.models import CreditTransaction, Organisation, Schedule, ScheduleStatus, MessageFormat
 from app.utils.billing import (
     check_can_send,
     get_balance,
@@ -23,6 +23,7 @@ from app.utils.billing import (
     get_total_monthly_spend,
     grant_credits,
     record_usage,
+    refund_usage,
 )
 from tests.factories import ConfigFactory, OrganisationFactory, UserFactory
 
@@ -226,3 +227,144 @@ class TestGetTotalMonthlySpend:
     def test_returns_zero_when_no_usage(self):
         org = OrganisationFactory()
         assert get_total_monthly_spend(org) == Decimal('0.00')
+
+
+
+@pytest.mark.django_db
+class TestRefundUsage:
+    """Tests for refund_usage() — credit refund on failed sends."""
+
+    def _make_schedule(self, org, user):
+        from django.utils import timezone
+        return Schedule.objects.create(
+            organisation=org,
+            phone='0412345678',
+            text='Test',
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.FAILED,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            failure_category='invalid_number',
+            created_by=user,
+            updated_by=user,
+        )
+
+    def test_trial_refund_restores_balance(self):
+        org = OrganisationFactory(billing_mode='trial', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+        balance_after_deduct = get_balance(org)
+
+        refund_usage(org, schedule)
+
+        assert get_balance(org) == balance_after_deduct + Decimal('0.05')
+
+    def test_trial_refund_creates_refund_transaction(self):
+        org = OrganisationFactory(billing_mode='trial', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+
+        refund_usage(org, schedule)
+
+        assert CreditTransaction.objects.filter(
+            organisation=org,
+            schedule=schedule,
+            transaction_type=CreditTransaction.REFUND,
+        ).exists()
+
+    def test_subscribed_refund_does_not_change_balance(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+        balance = get_balance(org)
+
+        refund_usage(org, schedule)
+
+        assert get_balance(org) == balance  # balance unchanged
+
+    def test_subscribed_refund_creates_refund_transaction(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+
+        refund_usage(org, schedule)
+
+        assert CreditTransaction.objects.filter(
+            organisation=org,
+            schedule=schedule,
+            transaction_type=CreditTransaction.REFUND,
+        ).exists()
+
+    def test_refund_is_idempotent(self):
+        org = OrganisationFactory(billing_mode='trial', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+
+        refund_usage(org, schedule)
+        refund_usage(org, schedule)  # second call is no-op
+
+        assert CreditTransaction.objects.filter(
+            organisation=org,
+            schedule=schedule,
+            transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
+
+    def test_refund_with_no_original_charge_is_noop(self):
+        org = OrganisationFactory(billing_mode='trial', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        # No record_usage call
+        balance_before = get_balance(org)
+
+        refund_usage(org, schedule)  # Should not raise
+
+        assert get_balance(org) == balance_before
+
+    def test_refund_multi_part_sms(self):
+        """A 2-part SMS ($0.10) is fully refunded — amount scales with message_parts."""
+        org = OrganisationFactory(billing_mode='trial', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = Schedule.objects.create(
+            organisation=org,
+            phone='0412345678',
+            text='x' * 161,  # 161 chars → 2 parts
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.FAILED,
+            format=MessageFormat.SMS,
+            message_parts=2,
+            failure_category='invalid_number',
+            created_by=user,
+            updated_by=user,
+        )
+        record_usage(org, 2, 'sms', 'dispatch', user, schedule)
+        balance_after_deduct = get_balance(org)
+
+        refund_usage(org, schedule)
+
+        assert get_balance(org) == balance_after_deduct + Decimal('0.10')
+        refund_tx = CreditTransaction.objects.get(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND
+        )
+        assert refund_tx.amount == Decimal('0.10')
+
+    def test_refund_amount_matches_original_charge(self):
+        org = OrganisationFactory(billing_mode='trial', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+        balance_before_refund = get_balance(org)
+
+        refund_usage(org, schedule)
+
+        refund_tx = CreditTransaction.objects.get(
+            organisation=org,
+            schedule=schedule,
+            transaction_type=CreditTransaction.REFUND,
+        )
+        assert refund_tx.amount == Decimal('0.05')
+        assert get_balance(org) == balance_before_refund + Decimal('0.05')

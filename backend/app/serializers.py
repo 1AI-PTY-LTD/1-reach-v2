@@ -169,9 +169,15 @@ class ScheduleSerializer(serializers.ModelSerializer):
             'scheduled_time', 'sent_time',
             'status', 'error',
             'format', 'media_url', 'subject',
+            'provider_message_id', 'retry_count', 'max_retries',
+            'next_retry_at', 'failure_category', 'delivered_time',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['sent_time', 'created_at', 'updated_at']
+        read_only_fields = [
+            'sent_time', 'provider_message_id', 'retry_count',
+            'next_retry_at', 'failure_category', 'delivered_time',
+            'created_at', 'updated_at',
+        ]
 
     def validate_text(self, value):
         if value:

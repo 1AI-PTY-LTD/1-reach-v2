@@ -39,7 +39,7 @@ test.describe('Users Page', () => {
 
     // Status badges
     await expect(page.getByText('Active').first()).toBeVisible()
-    await expect(page.getByText('Inactive')).toBeVisible()
+    await expect(page.getByText('Inactive').first()).toBeVisible()
   })
 
   test('shows Invite User button', async ({ page }) => {
@@ -58,7 +58,7 @@ test.describe('Users Page', () => {
     await expect(page.getByRole('button', { name: 'Make Admin' }).first()).toBeVisible()
 
     // Should have Deactivate for active member
-    await expect(page.getByRole('button', { name: 'Deactivate' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Deactivate' }).first()).toBeVisible()
 
     // Should have Re-invite for inactive user
     await expect(page.getByRole('button', { name: 'Re-invite' })).toBeVisible()

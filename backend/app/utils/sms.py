@@ -57,7 +57,8 @@ class SMSProvider(ABC):
             message: Message body (1-306 characters)
 
         Returns:
-            dict with keys: success (bool), message_id (str), error (str), message_parts (int)
+            dict with keys: success, message_id, error, message_parts,
+                            error_code, http_status, retryable, failure_category
         """
         if not self._validate_phone(to):
             return {
@@ -65,12 +66,20 @@ class SMSProvider(ABC):
                 'message_id': None,
                 'error': 'Invalid phone number format',
                 'message_parts': 0,
+                'error_code': None,
+                'http_status': None,
+                'retryable': False,
+                'failure_category': 'invalid_number',
             }
 
         normalised = self._normalise_phone(to)
         message_parts = self._calculate_sms_parts(message)
         result = self._send_sms_impl(normalised, message)
         result['message_parts'] = message_parts
+        result.setdefault('error_code', None)
+        result.setdefault('http_status', None)
+        result.setdefault('retryable', False)
+        result.setdefault('failure_category', None)
         return result
 
     def send_bulk_sms(self, recipients: list[dict]) -> dict:
@@ -110,7 +119,8 @@ class SMSProvider(ABC):
             subject: Optional subject line (max 64 characters)
 
         Returns:
-            dict with keys: success (bool), message_id (str), error (str), message_parts (int)
+            dict with keys: success, message_id, error, message_parts,
+                            error_code, http_status, retryable, failure_category
         """
         if not self._validate_phone(to):
             return {
@@ -118,11 +128,19 @@ class SMSProvider(ABC):
                 'message_id': None,
                 'error': 'Invalid phone number format',
                 'message_parts': 0,
+                'error_code': None,
+                'http_status': None,
+                'retryable': False,
+                'failure_category': 'invalid_number',
             }
 
         normalised = self._normalise_phone(to)
         result = self._send_mms_impl(normalised, message, media_url, subject)
         result['message_parts'] = 1  # MMS is always 1 part
+        result.setdefault('error_code', None)
+        result.setdefault('http_status', None)
+        result.setdefault('retryable', False)
+        result.setdefault('failure_category', None)
         return result
 
     @abstractmethod
@@ -195,6 +213,10 @@ class MockSMSProvider(SMSProvider):
             'success': True,
             'message_id': message_id,
             'error': None,
+            'error_code': None,
+            'http_status': None,
+            'retryable': False,
+            'failure_category': None,
         }
 
     def _send_bulk_sms_impl(self, recipients: list[dict]) -> dict:
@@ -243,6 +265,10 @@ class MockSMSProvider(SMSProvider):
             'success': True,
             'message_id': message_id,
             'error': None,
+            'error_code': None,
+            'http_status': None,
+            'retryable': False,
+            'failure_category': None,
         }
 
 

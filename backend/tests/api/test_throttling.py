@@ -29,21 +29,15 @@ class TestGlobalThrottling:
 class TestSMSThrottling:
     """Test SMS endpoint throttling."""
 
-    @patch('app.views.get_sms_provider')
+    @patch('app.views.send_message_task')
     @patch('app.views.check_can_send', return_value=(True, None))
-    def test_sms_send_has_throttle(self, mock_limit, mock_provider, authenticated_client, organisation):
+    def test_sms_send_has_throttle(self, mock_limit, mock_task, authenticated_client, organisation):
         """SMS send endpoint applies throttle (won't hit limit in single test)."""
-        provider = Mock()
-        provider.send_sms.return_value = {
-            'success': True,
-            'message_id': 'test-123',
-            'message_parts': 1
-        }
-        mock_provider.return_value = provider
+        mock_task.delay.return_value = None
 
         response = authenticated_client.post('/api/sms/send/', {
-            'phone': '0412345678',
-            'text': 'Test message'
+            'message': 'Test message',
+            'recipient': '0412345678',
         })
         # Should not be throttled on first request (may fail validation with 400)
         assert response.status_code != status.HTTP_429_TOO_MANY_REQUESTS

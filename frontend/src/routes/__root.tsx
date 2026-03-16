@@ -2,6 +2,10 @@ import { createRootRouteWithContext, Outlet } from '@tanstack/react-router'
 import { SignedIn, SignedOut, SignInButton, SignUpButton } from '@clerk/clerk-react'
 import type { QueryClient } from '@tanstack/react-query'
 
+// Bypass Clerk auth in local E2E test mode. This variable is set in frontend/.env
+// (local dev only) and is never present in production builds.
+const E2E_TEST_MODE = import.meta.env.VITE_E2E_TEST_MODE === 'true'
+
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
 }>()({
@@ -21,6 +25,14 @@ export const Route = createRootRouteWithContext<{
 })
 
 function Root() {
+  if (E2E_TEST_MODE) {
+    return (
+      <div className="md:max-h-screen overflow-hidden">
+        <Outlet />
+      </div>
+    )
+  }
+
   return (
     <div className="md:max-h-screen overflow-hidden">
       <SignedIn>
