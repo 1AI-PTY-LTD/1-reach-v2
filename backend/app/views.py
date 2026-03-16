@@ -28,7 +28,7 @@ from app.models import *
 from app.permissions import IsOrgAdmin, IsOrgMember
 from app.serializers import *
 from app.utils import clerk
-from app.utils.billing import check_can_send, record_usage, get_monthly_limit_info, get_monthly_usage, get_rate
+from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate
 from app.utils.storage import get_storage_provider
 from app.celery import _estimate_parts, send_message as send_message_task
 
@@ -479,8 +479,14 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
         if not members.exists():
             return Response({'detail': 'Group has no members.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create parent + one child per member atomically
+        # Gate on billing capacity (both modes) and reserve credits (trial only)
         message_parts = _estimate_parts(text, MessageFormat.SMS)
+        member_count = members.count()
+        can_send, error = check_can_send(org, units=member_count * message_parts, format='sms')
+        if not can_send:
+            return Response({'detail': error}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
+        # Create parent + one child per member atomically
         with transaction.atomic():
             parent = Schedule.objects.create(
                 organisation=org,
@@ -512,6 +518,19 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 )
                 for member in members
             ])
+
+            # Trial: reserve credits per child now so subsequent requests see the updated balance.
+            # Subscribed: record_usage is called by the Celery task on successful send.
+            if org.billing_mode == org.BILLING_TRIAL:
+                for child in children:
+                    record_usage(
+                        org,
+                        message_parts,
+                        format='sms',
+                        description=f"SMS to group '{group.name}'",
+                        user=request.user,
+                        schedule=child,
+                    )
 
         resp = ScheduleSerializer(parent).data
         resp['schedules'] = ScheduleSerializer(children, many=True).data
@@ -614,14 +633,21 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cancel the parent and all pending children atomically
+        # Cancel the parent and all pending children atomically, then refund credits
+        org = getattr(request, 'org', None)
         with transaction.atomic():
+            pending_children = list(
+                Schedule.objects.filter(parent=parent, status=ScheduleStatus.PENDING)
+            )
             Schedule.objects.filter(
                 parent=parent, status=ScheduleStatus.PENDING,
             ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
             parent.status = ScheduleStatus.CANCELLED
             parent.updated_by = request.user
             parent.save()
+
+            for child in pending_children:
+                refund_usage(org, child)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
