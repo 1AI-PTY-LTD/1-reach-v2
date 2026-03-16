@@ -93,7 +93,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             )
             return Response({'status': 'updated', 'role': result.role})
         except Exception as e:
-            logger.error('Failed to update role via Clerk: %s', e)
+            logger.error('Failed to update role via Clerk: %s', e, exc_info=True)
             return Response({'detail': f'Failed to update role: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
     @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated, IsOrgAdmin])
@@ -127,7 +127,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
                 )
                 return Response({'status': 'invitation_sent', 'is_active': False})
         except Exception as e:
-            logger.error('Failed to update member status via Clerk: %s', e)
+            logger.error('Failed to update member status via Clerk: %s', e, exc_info=True)
             return Response({'detail': f'Failed to update status: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsOrgAdmin])
@@ -151,7 +151,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             )
             return Response({'status': 'invitation_sent', 'email': email}, status=status.HTTP_201_CREATED)
         except Exception as e:
-            logger.error('Failed to invite user via Clerk: %s', e)
+            logger.error('Failed to invite user via Clerk: %s', e, exc_info=True)
             return Response({'detail': f'Failed to send invitation: {str(e)}'}, status=status.HTTP_502_BAD_GATEWAY)
 
 
@@ -234,6 +234,7 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
             text = io.TextIOWrapper(uploaded, encoding='utf-8')
             reader = csv.DictReader(text)
         except Exception:
+            logger.warning('Failed to parse CSV file', exc_info=True)
             return Response({'detail': 'Failed to parse CSV file.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Fetch existing phones for this org to detect duplicates
