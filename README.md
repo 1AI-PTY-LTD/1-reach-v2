@@ -147,7 +147,7 @@ backend/
 │   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 473 tests
+└── tests/                 # 484 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
@@ -224,7 +224,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-473 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+484 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -236,7 +236,7 @@ docker compose exec backend python -m pytest --create-db tests/ -q
 docker compose exec frontend npx vitest run
 ```
 
-Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+264 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 
@@ -300,16 +300,16 @@ Docker is used for local development only. The production target is Azure:
 | Celery worker | Azure App Service (separate instance, custom startup command) |
 | Celery beat | Azure App Service (separate instance, `django-celery-beat` DB scheduler) |
 
-**Changes required before first deploy (can be done in local dev):**
+**Changes required before first deploy — all completed:**
 
-- `backend/requirements.txt` — add `gunicorn`, `uvicorn[standard]`, `whitenoise[brotli]`, `django-celery-beat`
-- `backend/app/settings.py` — fix `DEBUG` parsing, add `STATIC_ROOT`, `WhiteNoiseMiddleware`, security headers (`SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `SECURE_HSTS_SECONDS`, `X_FRAME_OPTIONS`, `SECURE_CONTENT_TYPE_NOSNIFF`), switch Celery beat to `DatabaseScheduler`
-- `backend/app/urls.py` — gate Swagger/OpenAPI behind `DEBUG=True`; add `GET /api/health/` (DB + Redis liveness check for App Service health probe)
-- `backend/startup.sh`, `startup-worker.sh`, `startup-beat.sh` — Azure App Service startup commands
-- `frontend/staticwebapp.config.json` — SPA fallback routing for Azure Static Web Apps
-- `frontend/vite.config.ts` — explicit `build.outDir` and `sourcemap: false`
-- Frontend UX fixes: `_layout.send.index.tsx` (blank page), `__root.tsx` (raw JSON error boundary), missing `errorComponent` on billing/users routes
-- `.github/workflows/` — CI (pytest + vitest on PRs) and CD (deploy to Azure on `main`)
+- ~~`backend/requirements.txt` — add `gunicorn`, `uvicorn[standard]`, `whitenoise[brotli]`, `django-celery-beat`~~ ✓
+- ~~`backend/app/settings.py` — fix `DEBUG` parsing, add `STATIC_ROOT`, `WhiteNoiseMiddleware`, security headers (`SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `SECURE_HSTS_SECONDS`, `X_FRAME_OPTIONS`, `SECURE_CONTENT_TYPE_NOSNIFF`), switch Celery beat to `DatabaseScheduler`~~ ✓
+- ~~`backend/app/urls.py` — gate Swagger/OpenAPI behind `DEBUG=True`; add `GET /api/health/` (DB + Redis liveness check for App Service health probe)~~ ✓
+- ~~`backend/startup.sh`, `startup-worker.sh`, `startup-beat.sh` — Azure App Service startup commands~~ ✓
+- ~~`frontend/staticwebapp.config.json` — SPA fallback routing for Azure Static Web Apps~~ ✓
+- ~~`frontend/vite.config.ts` — explicit `build.outDir` and `sourcemap: false`~~ ✓
+- ~~Frontend UX fixes: `_layout.send.index.tsx` (blank page), `__root.tsx` (raw JSON error boundary), missing `errorComponent` on billing/users routes~~ ✓
+- ~~`.github/workflows/` — CI (pytest + vitest on PRs) and CD (deploy to Azure on `main`)~~ ✓
 
 **Changes required at Azure provisioning time:**
 

@@ -5,9 +5,16 @@ import { server } from '../../test/handlers'
 import { createBillingSummary, createCreditTransaction } from '../../test/factories'
 import { Suspense } from 'react'
 
-// Mock TanStack Router
+// Mock TanStack Router — capture route options so errorComponent can be tested
+// Use vi.hoisted so capturedBillingRouteOptions is available inside the hoisted vi.mock factory
+const { capturedBillingRouteOptions } = vi.hoisted(() => ({
+  capturedBillingRouteOptions: {} as Record<string, unknown>,
+}))
 vi.mock('@tanstack/react-router', () => ({
-  createFileRoute: () => () => ({ component: undefined }),
+  createFileRoute: () => (options: Record<string, unknown>) => {
+    Object.assign(capturedBillingRouteOptions, options)
+    return options
+  },
 }))
 
 // Use vi.hoisted so mockUseOrganization is available inside vi.mock (which is hoisted)
@@ -45,6 +52,8 @@ import { useSuspenseQuery } from '@tanstack/react-query'
 import { getBillingSummaryQueryOptions } from '../../api/billingApi'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import { useOrganization } from '@clerk/clerk-react'
+// Import billing route so createFileRoute is called and capturedBillingRouteOptions is populated
+import '../app/_layout.billing'
 
 function BillingContentTest() {
   const client = useApiClient()
@@ -213,5 +222,23 @@ describe('BillingLayout', () => {
     await waitFor(() => {
       expect(screen.getByTestId('access-denied')).toBeInTheDocument()
     })
+  })
+
+  it('renders error component with message and retry button', () => {
+    // capturedBillingRouteOptions is populated when _layout.billing is imported above
+    const ErrorComponent = capturedBillingRouteOptions.errorComponent as React.ComponentType<{
+      error: Error
+      info: { componentStack: string }
+      reset: () => void
+    }>
+    renderWithProviders(
+      <ErrorComponent
+        error={new Error('Failed to load billing.')}
+        info={{ componentStack: '' }}
+        reset={() => {}}
+      />
+    )
+    expect(screen.getByText('Failed to load billing.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 })

@@ -156,9 +156,21 @@ def _handle_subscription_canceled(data):
 
 
 def _handle_subscription_past_due(data):
-    """Log a past-due subscription. TODO: decide policy (notify admin, suspend, etc.)."""
-    # TODO: implement notification or suspension when policy is decided
-    logger.warning('subscription.past_due received: %s', data.get('id'))
+    """Log a past-due subscription with org context so Sentry captures it for manual follow-up."""
+    subscription_id = data.get('id')
+    org_id = data.get('organizationId') or data.get('organization', {}).get('id')
+    org_info = {}
+    if org_id:
+        try:
+            org = Organisation.objects.filter(clerk_org_id=org_id).first()
+            if org:
+                org_info = {'org_id': org.pk, 'org_name': org.name}
+        except Exception:
+            pass
+    logger.warning(
+        'subscription.past_due: manual follow-up required',
+        extra={'subscription_id': subscription_id, **org_info},
+    )
 
 
 # Clerk API event type strings must use US spelling (Clerk's API convention)

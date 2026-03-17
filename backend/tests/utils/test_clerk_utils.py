@@ -429,18 +429,50 @@ class TestHandleSubscriptionCanceled:
 class TestHandleSubscriptionPastDue:
     """Tests for subscription.past_due webhook handler."""
 
-    def test_does_not_raise(self):
-        """payment.failed stub completes without error."""
-        handle_billing_payment_failed({'id': 'payment_123', 'organization_id': 'org_123'})
+    def test_does_not_raise_with_no_org_id(self):
+        """Completes without error when payload has no org identifier."""
+        handle_billing_payment_failed({'id': 'sub_123'})
+
+    def test_does_not_raise_when_org_not_found(self):
+        """Completes without error when org not found in DB."""
+        handle_billing_payment_failed({'id': 'sub_123', 'organizationId': 'org_nonexistent'})
 
     def test_does_not_change_billing_mode(self):
-        """payment.failed does not change org billing_mode (stub behaviour)."""
+        """Never changes billing_mode — follow-up is manual."""
         org = OrganisationFactory(
-            clerk_org_id='org_pay_fail',
+            clerk_org_id='org_pastdue',
             billing_mode=Organisation.BILLING_SUBSCRIBED,
         )
-
-        handle_billing_payment_failed({'id': 'payment_fail', 'organization_id': 'org_pay_fail'})
-
+        handle_billing_payment_failed({'id': 'sub_123', 'organizationId': 'org_pastdue'})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    def test_logs_warning_with_org_context(self):
+        """Logs org name and pk when org is found, for Sentry capture."""
+        from unittest.mock import patch
+        OrganisationFactory(clerk_org_id='org_pastdue2', name='ACME Corp')
+        with patch('app.utils.clerk.logger') as mock_logger:
+            handle_billing_payment_failed({'id': 'sub_456', 'organizationId': 'org_pastdue2'})
+        mock_logger.warning.assert_called_once()
+        assert 'subscription.past_due: manual follow-up required' in mock_logger.warning.call_args[0][0]
+
+    def test_handles_nested_organization_id_format(self):
+        """Accepts Clerk's alternate payload format: organization.id nested object."""
+        org = OrganisationFactory(clerk_org_id='org_nested')
+        handle_billing_payment_failed({
+            'id': 'sub_789',
+            'organization': {'id': 'org_nested'},
+        })
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL  # unchanged
+
+    def test_organizationId_takes_precedence_over_nested(self):
+        """organizationId field takes precedence over organization.id when both present."""
+        org = OrganisationFactory(clerk_org_id='org_top_level')
+        handle_billing_payment_failed({
+            'id': 'sub_abc',
+            'organizationId': 'org_top_level',
+            'organization': {'id': 'org_other'},
+        })
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL  # unchanged

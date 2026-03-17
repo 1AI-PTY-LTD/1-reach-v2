@@ -5,9 +5,16 @@ import { server } from '../../test/handlers'
 import { paginate } from '../../test/factories'
 import { Suspense } from 'react'
 
-// Mock TanStack Router
+// Mock TanStack Router — capture route options so errorComponent can be tested
+// Use vi.hoisted so capturedUsersRouteOptions is available inside the hoisted vi.mock factory
+const { capturedUsersRouteOptions } = vi.hoisted(() => ({
+  capturedUsersRouteOptions: {} as Record<string, unknown>,
+}))
 vi.mock('@tanstack/react-router', () => ({
-  createFileRoute: () => () => ({ component: undefined }),
+  createFileRoute: () => (options: Record<string, unknown>) => {
+    Object.assign(capturedUsersRouteOptions, options)
+    return options
+  },
   useNavigate: () => vi.fn(),
 }))
 
@@ -180,5 +187,23 @@ describe('UsersPage', () => {
     await waitFor(() => {
       expect(screen.getAllByText('Test Org')).toHaveLength(3)
     })
+  })
+
+  it('renders error component with message and retry button', () => {
+    // capturedUsersRouteOptions is populated when _layout.users.tsx is imported above
+    const ErrorComponent = capturedUsersRouteOptions.errorComponent as React.ComponentType<{
+      error: Error
+      info: { componentStack: string }
+      reset: () => void
+    }>
+    renderWithProviders(
+      <ErrorComponent
+        error={new Error('Failed to load users.')}
+        info={{ componentStack: '' }}
+        reset={() => {}}
+      />
+    )
+    expect(screen.getByText('Failed to load users.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
   })
 })

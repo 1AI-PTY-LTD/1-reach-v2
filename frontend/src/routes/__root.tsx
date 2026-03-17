@@ -10,18 +10,20 @@ export const Route = createRootRouteWithContext<{
   queryClient: QueryClient
 }>()({
   component: Root,
-  errorComponent: (props) => {
-    return (
-      <div>
-        <div className="p-4 dark:text-white">
-          <h1 className="text-2xl font-bold mb-2">Error</h1>
-          <pre className="whitespace-pre-wrap">
-            {JSON.stringify(props.error, null, 2)}
-          </pre>
-        </div>
-      </div>
-    )
-  },
+  errorComponent: ({ error }) => (
+    <div className="flex flex-col items-center justify-center min-h-screen gap-4 dark:text-white p-8">
+      <h1 className="text-2xl font-bold">Something went wrong</h1>
+      <p className="text-gray-500 dark:text-gray-400 text-center max-w-md">
+        {error instanceof Error ? error.message : 'An unexpected error occurred.'}
+      </p>
+      <button
+        onClick={() => window.location.reload()}
+        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+      >
+        Reload page
+      </button>
+    </div>
+  ),
 })
 
 function Root() {

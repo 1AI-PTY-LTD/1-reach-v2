@@ -6,10 +6,19 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiClientProvider } from '../../lib/ApiClientProvider'
 import { Suspense } from 'react'
 
+// Use vi.hoisted so mockNavigate is available inside the hoisted vi.mock factory
+const { mockNavigate } = vi.hoisted(() => ({
+  mockNavigate: vi.fn(() => null),
+}))
+
 // We need to test SendContent directly since it uses useSuspenseQuery
-// Mock the route export
+// Mock the route export — pass options through so Route.component is the real component
 vi.mock('@tanstack/react-router', () => ({
-  createFileRoute: () => () => ({ component: () => null }),
+  createFileRoute: () => (options: Record<string, unknown>) => options,
+  Navigate: (props: { to: string }) => {
+    mockNavigate(props)
+    return null
+  },
 }))
 
 // Import after mocking
@@ -216,5 +225,14 @@ describe('Send Page - Component Rendering', () => {
     }
 
     expect(messageText).toBe('My custom message here')
+  })
+})
+
+describe('Send Index Route', () => {
+  it('renders a redirect to /app/send', async () => {
+    const { Route } = await import('../app/_layout.send.index')
+    const IndexComponent = Route.component as React.ComponentType
+    renderWithProviders(<IndexComponent />)
+    expect(mockNavigate).toHaveBeenCalledWith(expect.objectContaining({ to: '/app/send' }))
   })
 })

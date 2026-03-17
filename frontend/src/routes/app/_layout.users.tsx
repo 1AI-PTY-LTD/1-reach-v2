@@ -27,6 +27,19 @@ import {
 export const Route = createFileRoute('/app/_layout/users')({
   component: RouteComponent,
   pendingComponent: () => <LoadingSpinner />,
+  errorComponent: ({ error }) => (
+    <div className="flex flex-col items-center justify-center h-full gap-4 dark:text-white p-8">
+      <p className="text-gray-500 dark:text-gray-400">
+        {error instanceof Error ? error.message : 'Failed to load users.'}
+      </p>
+      <button
+        onClick={() => window.location.reload()}
+        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+      >
+        Retry
+      </button>
+    </div>
+  ),
 })
 
 function InviteUserDialog({

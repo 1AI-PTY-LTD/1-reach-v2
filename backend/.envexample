@@ -37,3 +37,22 @@ LOG_FORMAT=json
 FREE_CREDIT_AMOUNT=10.00
 SMS_RATE=0.05
 MMS_RATE=0.20
+
+# Celery (set to Azure Cache for Redis connection string in production)
+CELERY_BROKER_URL=redis://redis:6379/0
+CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+# Database connection pooling (set to 0 to disable; 600 recommended for production)
+DB_CONN_MAX_AGE=600
+
+# Security (set to True in production; False locally)
+SESSION_COOKIE_SECURE=False
+CSRF_COOKIE_SECURE=False
+SECURE_HSTS_SECONDS=0
+
+# Message retry config (optional — these are the defaults)
+MESSAGE_MAX_RETRIES=3
+MESSAGE_RETRY_BASE_DELAY=60
+MESSAGE_RETRY_MAX_DELAY=3600
+MESSAGE_RETRY_JITTER=0.25
+MESSAGE_PROCESSING_TIMEOUT_MINUTES=30

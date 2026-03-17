@@ -1,0 +1,41 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Deploy to Azure App Service — backend
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_BACKEND_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_BACKEND_PUBLISH_PROFILE }}
+          package: backend
+
+      - name: Deploy to Azure App Service — celery-worker
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WORKER_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}
+          package: backend
+
+      - name: Deploy to Azure App Service — celery-beat
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_BEAT_APP_NAME }}
+          publish-profile: ${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}
+          package: backend
