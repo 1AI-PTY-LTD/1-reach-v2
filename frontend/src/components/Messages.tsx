@@ -6,8 +6,6 @@ import { MagnifyingGlassIcon } from "@heroicons/react/16/solid";
 import type { Schedule } from "../types/schedule.types";
 import Logger from "../utils/logger";
 
-// TODO check if this component is neccesary
-
 export default function MessagesWidget({
     messages,
 }: {

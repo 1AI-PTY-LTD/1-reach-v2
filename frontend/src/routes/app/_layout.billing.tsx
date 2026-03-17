@@ -56,6 +56,7 @@ function BillingContent() {
     )
   }
 
+  const isPastDue = data.billing_mode === 'past_due'
   const isSubscribed = data.billing_mode === 'subscribed'
   const balance = parseFloat(data.balance)
   const spend = parseFloat(data.total_monthly_spend)
@@ -69,12 +70,21 @@ function BillingContent() {
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Billing</h2>
-          <Badge color={isSubscribed ? 'green' : 'zinc'}>
-            {isSubscribed ? 'Subscribed' : 'Trial'}
+          <Badge color={isPastDue ? 'red' : isSubscribed ? 'green' : 'zinc'}>
+            {isPastDue ? 'Past Due' : isSubscribed ? 'Subscribed' : 'Trial'}
           </Badge>
         </div>
 
-        {!isSubscribed && (
+        {isPastDue && (
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <p className="text-sm text-red-700 dark:text-red-400 font-medium">
+              Subscription payment is past due. All message sending is currently blocked.
+              Please update your billing details in the Clerk dashboard to restore service.
+            </p>
+          </div>
+        )}
+
+        {!isSubscribed && !isPastDue && (
           <div className="mb-4">
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1">Trial balance</p>
             <p className="text-3xl font-bold">

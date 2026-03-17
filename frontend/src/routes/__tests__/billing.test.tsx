@@ -224,6 +224,18 @@ describe('BillingLayout', () => {
     })
   })
 
+  it('renders past_due billing_mode in data layer', async () => {
+    server.use(
+      http.get('http://localhost:8000/api/billing/summary/', () =>
+        HttpResponse.json(createBillingSummary({ billing_mode: 'past_due' }))
+      )
+    )
+    renderWithProviders(<BillingWithSuspense />)
+    await waitFor(() => {
+      expect(screen.getByTestId('billing-mode')).toHaveTextContent('past_due')
+    })
+  })
+
   it('renders error component with message and retry button', () => {
     // capturedBillingRouteOptions is populated when _layout.billing is imported above
     const ErrorComponent = capturedBillingRouteOptions.errorComponent as React.ComponentType<{
@@ -240,5 +252,35 @@ describe('BillingLayout', () => {
     )
     expect(screen.getByText('Failed to load billing.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+  })
+})
+
+describe('past_due billing mode', () => {
+  beforeEach(() => {
+    mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
+    server.use(
+      http.get('http://localhost:8000/api/billing/summary/', () =>
+        HttpResponse.json(createBillingSummary({ billing_mode: 'past_due' }))
+      )
+    )
+  })
+
+  it('shows Past Due badge in the UI', async () => {
+    const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
+    renderWithProviders(<RouteComp />)
+    await screen.findByText('Past Due')
+  })
+
+  it('shows past due warning banner', async () => {
+    const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
+    renderWithProviders(<RouteComp />)
+    await screen.findByText(/All message sending is currently blocked/i)
+  })
+
+  it('does not show trial balance when past due', async () => {
+    const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
+    renderWithProviders(<RouteComp />)
+    await screen.findByText('Past Due')
+    expect(screen.queryByText(/Trial balance/i)).not.toBeInTheDocument()
   })
 })

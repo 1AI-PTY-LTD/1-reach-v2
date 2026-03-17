@@ -154,8 +154,6 @@ export function ContactModal({
         },
     });
 
-    // TODO need to improve validation
-
     const handlePhoneChange = (
         e: React.ChangeEvent<HTMLInputElement>,
         field: any
@@ -328,7 +326,6 @@ export function ContactModal({
                                 const australianPhoneNumberPattern =
                                     /^0[45]\d{2} \d{3} \d{3}$/;
                                 if (!australianPhoneNumberPattern.test(value)) {
-                                    // TODO verify error message
                                     return "Please enter a valid Australian mobile number (format: 04xx xxx xxx)";
                                 }
                             },

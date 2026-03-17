@@ -1,4 +1,4 @@
-export type BillingMode = 'trial' | 'subscribed'
+export type BillingMode = 'trial' | 'subscribed' | 'past_due'
 export type TransactionType = 'grant' | 'deduct' | 'usage' | 'refund'
 
 export type CreditTransaction = {

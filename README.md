@@ -236,7 +236,7 @@ docker compose exec backend python -m pytest --create-db tests/ -q
 docker compose exec frontend npx vitest run
 ```
 
-264 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+268 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 
