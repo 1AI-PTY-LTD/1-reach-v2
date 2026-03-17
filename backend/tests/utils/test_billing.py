@@ -125,6 +125,18 @@ class TestCheckCanSend:
         assert allowed is False
         assert 'past due' in error.lower()
 
+    def test_monthly_limit_zero_blocks_all_sends(self):
+        """monthly_limit=0.00 blocks every send regardless of balance or mode."""
+        for mode in [Organisation.BILLING_TRIAL, Organisation.BILLING_SUBSCRIBED]:
+            org = OrganisationFactory(
+                credit_balance=Decimal('100.00'),
+                billing_mode=mode,
+            )
+            ConfigFactory(organisation=org, name='monthly_limit', value='0.00')
+            allowed, error = check_can_send(org, units=1, format='sms')
+            assert allowed is False, f'Expected False for billing_mode={mode}'
+            assert 'Monthly spending limit' in error
+
 
 @pytest.mark.django_db
 class TestRecordUsage:

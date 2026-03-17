@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import {
   getAllContactsQueryOptions,
   getSearchContactsQueryOptions,
@@ -7,6 +8,7 @@ import {
   searchContactsExcludingGroupQueryOptions,
 } from '../contactsApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('contactsApi', () => {
   const client = createMockApiClient()
@@ -86,6 +88,28 @@ describe('contactsApi', () => {
     it('is disabled when search string is less than 2 chars', () => {
       const options = searchContactsExcludingGroupQueryOptions(client, 'A', 5)
       expect(options.enabled).toBe(false)
+    })
+  })
+
+  describe('error handling', () => {
+    it('getAllContactsQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/contacts/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getAllContactsQueryOptions(client)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('getContactByIdQueryOptions rejects when API returns 401', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/contacts/1/', () =>
+          HttpResponse.json({ detail: 'Unauthorized' }, { status: 401 })
+        )
+      )
+      const options = getContactByIdQueryOptions(client, 1)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
     })
   })
 })

@@ -40,4 +40,34 @@ test.describe('Templates Page', () => {
       await expect(page.getByText(/template name|create template/i).first()).toBeVisible({ timeout: 5000 })
     }
   })
+
+  test('can fill and submit the create template form', async ({ page }) => {
+    await page.goto('/app/templates')
+
+    await expect(page.getByText('Welcome').first()).toBeVisible({ timeout: 10000 })
+
+    const addButton = page.getByRole('button', { name: /add|create|new/i }).first()
+    if (await addButton.isVisible()) {
+      await addButton.click()
+
+      await expect(page.getByText(/template name|create template/i).first()).toBeVisible({ timeout: 5000 })
+
+      // Fill the form
+      await page.getByLabel(/template name/i).fill('My New Template')
+      await page.getByRole('textbox', { name: /message|text|content/i }).fill('Hello, this is a test template.')
+
+      // Submit
+      await page.getByRole('button', { name: /create|save/i }).last().click()
+
+      // Dialog should close after successful submission
+      await expect(page.getByText(/create new template/i)).not.toBeVisible({ timeout: 5000 })
+    }
+  })
+
+  test('shows Edit button on template detail page', async ({ page }) => {
+    await page.goto('/app/templates/1')
+
+    await expect(page.getByText('Welcome to our service!').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('button', { name: /edit/i })).toBeVisible()
+  })
 })

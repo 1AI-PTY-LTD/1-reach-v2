@@ -293,6 +293,79 @@ class TestSendMMS:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
+    def test_send_mms_missing_media_url_rejected(
+        self, authenticated_client, mock_check_mms_limit, mock_send_message_task
+    ):
+        """MMS without a media_url is rejected with 400."""
+        data = {
+            'message': 'Check this out',
+            'recipient': '0412345678'
+            # media_url intentionally omitted
+        }
+
+        response = authenticated_client.post('/api/sms/send-mms/', data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_send_mms_invalid_media_url_rejected(
+        self, authenticated_client, mock_check_mms_limit, mock_send_message_task
+    ):
+        """MMS with a non-URL media_url is rejected with 400."""
+        data = {
+            'message': 'Hello',
+            'media_url': 'not-a-url',
+            'recipient': '0412345678'
+        }
+
+        response = authenticated_client.post('/api/sms/send-mms/', data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+class TestSendToGroupInactiveMembers:
+    """Additional coverage for send_to_group inactive member filtering."""
+
+    def test_send_to_group_skips_inactive_members(
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
+    ):
+        """Members with is_active=False are excluded from group sends."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
+
+        # Deactivate one member
+        contacts[0].is_active = False
+        contacts[0].save()
+
+        data = {
+            'message': 'Hello group',
+            'group_id': group.id
+        }
+
+        response = authenticated_client.post('/api/sms/send-to-group/', data)
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Only 2 active members should be queued
+        assert response.data['results']['total'] == 2
+
+    def test_send_to_group_all_inactive_returns_400(
+        self, authenticated_client, organisation, user, mock_send_message_task
+    ):
+        """Group with all inactive members returns 400."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+
+        for contact in contacts:
+            contact.is_active = False
+            contact.save()
+
+        data = {
+            'message': 'Hello',
+            'group_id': group.id
+        }
+
+        response = authenticated_client.post('/api/sms/send-to-group/', data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.django_db
 class TestUploadFile:

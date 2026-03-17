@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import { getBillingSummaryQueryOptions } from '../billingApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('billingApi', () => {
   const client = createMockApiClient()
@@ -67,6 +69,18 @@ describe('billingApi', () => {
       await options.queryFn({} as never)
 
       expect(capturedUrl).toBe('/api/billing/summary/?page=3&page_size=10')
+    })
+  })
+
+  describe('error handling', () => {
+    it('getBillingSummaryQueryOptions rejects when API returns 403', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/billing/summary/', () =>
+          HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })
+        )
+      )
+      const options = getBillingSummaryQueryOptions(client)
+      await expect(options.queryFn({} as never)).rejects.toThrow()
     })
   })
 })

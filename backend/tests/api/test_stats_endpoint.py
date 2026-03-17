@@ -8,6 +8,7 @@ Tests:
 """
 
 import pytest
+from datetime import timedelta
 from django.utils import timezone
 from rest_framework import status
 
@@ -157,3 +158,46 @@ class TestStatsEndpoint:
             assert 'mms_sent' in current_month
             assert current_month['sms_sent'] >= 7
             assert current_month['mms_sent'] >= 3
+
+    def test_stats_excludes_schedules_older_than_12_months(
+        self, authenticated_client, organisation, user
+    ):
+        """Stats only returns data within the last ~12 months (330-day cutoff).
+
+        A schedule with scheduled_time 13 months in the past must not appear in
+        monthly_stats, while a schedule from 6 months ago must appear.
+        """
+        # Schedule 13 months ago — outside the window
+        old_time = timezone.now() - timedelta(days=395)
+        ScheduleFactory(
+            organisation=organisation,
+            status=ScheduleStatus.SENT,
+            format=MessageFormat.SMS,
+            scheduled_time=old_time,
+            for_contact=True,
+            sent=True,
+            created_by=user,
+        )
+
+        # Schedule 6 months ago — within the window
+        recent_time = timezone.now() - timedelta(days=180)
+        ScheduleFactory(
+            organisation=organisation,
+            status=ScheduleStatus.SENT,
+            format=MessageFormat.SMS,
+            scheduled_time=recent_time,
+            for_contact=True,
+            sent=True,
+            created_by=user,
+        )
+
+        response = authenticated_client.get('/api/stats/monthly/')
+
+        assert response.status_code == status.HTTP_200_OK
+
+        # Count total sms_sent across all months returned
+        total_sms = sum(
+            m.get('sms_sent', 0) for m in response.data['monthly_stats']
+        )
+        # Only the recent schedule should be counted — the old one must be excluded
+        assert total_sms == 1

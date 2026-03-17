@@ -374,3 +374,31 @@ class TestContactImportCSV:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_import_phone_normalization_before_duplicate_check(
+        self, authenticated_client, organisation
+    ):
+        """CSV import normalises +61 numbers before checking for duplicates.
+
+        A contact saved as '0412345678' and an import row with '+61412345678'
+        (same number, different format) should be flagged as a duplicate, not
+        create a second contact.
+        """
+        from tests.factories import ContactFactory
+        ContactFactory(organisation=organisation, phone='0412345678')
+
+        # Import the same number in +61 format
+        csv_content = b'phone,first_name\n+61412345678,Duplicate'
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        response = authenticated_client.post(
+            '/api/contacts/import/',
+            {'file': csv_file},
+            format='multipart'
+        )
+
+        # 207 Multi-Status when all rows have errors; 200 if mixed
+        assert response.status_code in (status.HTTP_200_OK, 207)
+        # Should be flagged as duplicate — no new contact created
+        assert response.data['error_count'] == 1
+        assert Contact.objects.filter(organisation=organisation).count() == 1

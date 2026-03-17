@@ -192,8 +192,8 @@ class TestGroupScheduleUpdate:
     """Tests for PUT/PATCH /api/group-schedules/{id}/ endpoint."""
 
     def test_update_propagates_to_pending_children(self, authenticated_client, organisation, user):
-        """Updating parent propagates changes to PENDING children only."""
-        group, contacts = create_contact_group_with_members(organisation, num_members=4, user=user)
+        """Updating parent propagates changes to all PENDING children."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
         parent = ScheduleFactory(
             organisation=organisation,
             group=group,
@@ -202,8 +202,7 @@ class TestGroupScheduleUpdate:
             created_by=user
         )
 
-        # Create children with different statuses
-        child_pending = ScheduleFactory(
+        child1 = ScheduleFactory(
             organisation=organisation,
             parent=parent,
             contact=contacts[0],
@@ -212,28 +211,16 @@ class TestGroupScheduleUpdate:
             status=ScheduleStatus.PENDING,
             created_by=user
         )
-        child_sent = ScheduleFactory(
+        child2 = ScheduleFactory(
             organisation=organisation,
             parent=parent,
             contact=contacts[1],
             phone=contacts[1].phone,
             text='Original',
-            status=ScheduleStatus.SENT,
-            sent=True,
-            created_by=user
-        )
-        child_failed = ScheduleFactory(
-            organisation=organisation,
-            parent=parent,
-            contact=contacts[2],
-            phone=contacts[2].phone,
-            text='Original',
-            status=ScheduleStatus.FAILED,
-            failed=True,
+            status=ScheduleStatus.PENDING,
             created_by=user
         )
 
-        # Update parent
         future = timezone.now() + timedelta(hours=2)
         data = {
             'name': 'Campaign',
@@ -246,14 +233,78 @@ class TestGroupScheduleUpdate:
 
         assert response.status_code == status.HTTP_200_OK
 
-        # Verify propagation
-        child_pending.refresh_from_db()
-        child_sent.refresh_from_db()
-        child_failed.refresh_from_db()
+        child1.refresh_from_db()
+        child2.refresh_from_db()
+        assert child1.text == 'Updated message'
+        assert child2.text == 'Updated message'
 
-        assert child_pending.text == 'Updated message'  # PENDING updated
-        assert child_sent.text == 'Original'  # SENT not updated
-        assert child_failed.text == 'Original'  # FAILED not updated
+    def test_update_blocked_when_children_have_been_sent(self, authenticated_client, organisation, user):
+        """Cannot update a group schedule after any child message has already been sent."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+        parent = ScheduleFactory(
+            organisation=organisation,
+            group=group,
+            text='Original',
+            name='Campaign',
+            created_by=user
+        )
+        ScheduleFactory(
+            organisation=organisation,
+            parent=parent,
+            contact=contacts[0],
+            phone=contacts[0].phone,
+            text='Original',
+            status=ScheduleStatus.PENDING,
+            created_by=user
+        )
+        # One child already sent
+        ScheduleFactory(
+            organisation=organisation,
+            parent=parent,
+            contact=contacts[1],
+            phone=contacts[1].phone,
+            text='Original',
+            status=ScheduleStatus.SENT,
+            sent=True,
+            created_by=user
+        )
+
+        future = timezone.now() + timedelta(hours=2)
+        data = {
+            'name': 'Campaign',
+            'group_id': group.id,
+            'text': 'Updated message',
+            'scheduled_time': future.isoformat()
+        }
+
+        response = authenticated_client.put(f'/api/group-schedules/{parent.id}/', data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'already been sent' in response.data['detail']
+
+    def test_create_group_schedule_all_opted_out_members(
+        self, authenticated_client, organisation, user, mock_check_sms_limit
+    ):
+        """Creating a group schedule when all members are opted out returns 400."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
+
+        # Opt out all members
+        for contact in contacts:
+            contact.opt_out = True
+            contact.save()
+
+        future = timezone.now() + timedelta(hours=1)
+        data = {
+            'name': 'Campaign',
+            'group_id': group.id,
+            'text': 'Hello',
+            'scheduled_time': future.isoformat()
+        }
+
+        response = authenticated_client.post('/api/group-schedules/', data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'no members' in response.data['detail'].lower()
 
     def test_cannot_update_sent_group_schedule(self, authenticated_client, organisation, user):
         """Cannot update group schedule that has been sent."""

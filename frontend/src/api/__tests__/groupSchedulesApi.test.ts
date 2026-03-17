@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import {
   getAllGroupSchedulesQueryOptions,
   getGroupScheduleByIdQueryOptions,
 } from '../groupSchedulesApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('groupSchedulesApi', () => {
   const client = createMockApiClient()
@@ -45,6 +47,18 @@ describe('groupSchedulesApi', () => {
       expect(result).toHaveProperty('id', 1)
       expect(result).toHaveProperty('name')
       expect(result).toHaveProperty('child_count')
+    })
+  })
+
+  describe('error handling', () => {
+    it('getAllGroupSchedulesQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/group-schedules/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getAllGroupSchedulesQueryOptions(client)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
     })
   })
 })

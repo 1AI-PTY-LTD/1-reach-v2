@@ -105,4 +105,40 @@ test.describe('Users Page', () => {
 
     await expect(page.getByPlaceholder('user@example.com')).not.toBeVisible({ timeout: 5000 })
   })
+
+  test('Make Admin button triggers role update without error', async ({ page }) => {
+    await page.goto('/app/users')
+
+    await expect(page.getByText('admin@example.com')).toBeVisible({ timeout: 10000 })
+
+    // Click "Make Admin" for the member user
+    await page.getByRole('button', { name: 'Make Admin' }).first().click()
+
+    // Should not show an error message
+    await expect(page.getByText(/failed|error/i)).not.toBeVisible({ timeout: 3000 })
+  })
+
+  test('Deactivate button triggers status update without error', async ({ page }) => {
+    await page.goto('/app/users')
+
+    await expect(page.getByText('admin@example.com')).toBeVisible({ timeout: 10000 })
+
+    // Click "Deactivate" for an active member
+    await page.getByRole('button', { name: 'Deactivate' }).first().click()
+
+    // Should not show an error message
+    await expect(page.getByText(/failed|error/i)).not.toBeVisible({ timeout: 3000 })
+  })
+
+  test('Re-invite button triggers re-invitation without error', async ({ page }) => {
+    await page.goto('/app/users')
+
+    await expect(page.getByText('admin@example.com')).toBeVisible({ timeout: 10000 })
+
+    // Click "Re-invite" for the inactive user
+    await page.getByRole('button', { name: 'Re-invite' }).click()
+
+    // Should not show an error message
+    await expect(page.getByText(/failed|error/i)).not.toBeVisible({ timeout: 3000 })
+  })
 })

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import { sendSms, sendMms, sendSmsToGroup, uploadImageFile } from '../smsApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('smsApi', () => {
   const client = createMockApiClient()
@@ -55,6 +57,19 @@ describe('smsApi', () => {
 
       expect(result).toHaveProperty('success', true)
       expect(result).toHaveProperty('url')
+    })
+  })
+
+  describe('error handling', () => {
+    it('sendSms rejects when API returns 500', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/sms/send/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      await expect(
+        sendSms(client, { message: 'Hello', recipient: '0412345678', contact_id: 1 })
+      ).rejects.toThrow()
     })
   })
 })

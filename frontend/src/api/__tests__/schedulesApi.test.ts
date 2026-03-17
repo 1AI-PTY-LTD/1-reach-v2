@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import {
   getAllSchedulesQueryOptions,
   getSchedulesByContactIdQueryOptions,
 } from '../schedulesApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('schedulesApi', () => {
   const client = createMockApiClient()
@@ -49,6 +51,28 @@ describe('schedulesApi', () => {
       const result = await options.queryFn!({} as any)
       expect(result).toHaveProperty('results')
       expect(result).toHaveProperty('pagination')
+    })
+  })
+
+  describe('error handling', () => {
+    it('getAllSchedulesQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/schedules/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getAllSchedulesQueryOptions(client, '2026-01-15')
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('getSchedulesByContactIdQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/contacts/:contactId/schedules/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getSchedulesByContactIdQueryOptions(client, 1)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
     })
   })
 })

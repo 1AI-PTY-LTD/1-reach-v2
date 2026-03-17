@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import {
   getAllGroupsQueryOptions,
   getGroupByIdQueryOptions,
   getSearchInGroupsQueryOptions,
 } from '../groupsApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('groupsApi', () => {
   const client = createMockApiClient()
@@ -71,6 +73,18 @@ describe('groupsApi', () => {
       const result = await options.queryFn!({} as any)
       expect(Array.isArray(result)).toBe(true)
       expect(result.some((g: any) => g.name.includes('VIP'))).toBe(true)
+    })
+  })
+
+  describe('error handling', () => {
+    it('getAllGroupsQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/groups/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getAllGroupsQueryOptions(client)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
     })
   })
 })

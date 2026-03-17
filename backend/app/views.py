@@ -547,6 +547,12 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if Schedule.objects.filter(parent=parent).exclude(status=ScheduleStatus.PENDING).exists():
+            return Response(
+                {'detail': 'Cannot update group schedule after messages have already been sent or failed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = GroupScheduleUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data

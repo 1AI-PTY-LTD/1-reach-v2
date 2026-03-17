@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { http, HttpResponse } from 'msw'
 import {
   getAllTemplatesQueryOptions,
   getTemplateByIdQueryOptions,
 } from '../templatesApi'
 import { createMockApiClient } from '../../test/test-utils'
+import { server } from '../../test/handlers'
 
 describe('templatesApi', () => {
   const client = createMockApiClient()
@@ -35,6 +37,18 @@ describe('templatesApi', () => {
       const result = await options.queryFn!({} as any)
       expect(result).toHaveProperty('id', 1)
       expect(result).toHaveProperty('name')
+    })
+  })
+
+  describe('error handling', () => {
+    it('getAllTemplatesQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/templates/', () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getAllTemplatesQueryOptions(client)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
     })
   })
 })
