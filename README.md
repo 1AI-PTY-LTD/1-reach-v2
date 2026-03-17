@@ -289,14 +289,34 @@ Delivery receipt tracking (`DELIVERED` status, carrier-confirmed delivery time) 
 
 ### 2. Production Deployment
 
-The app currently runs with Django's development server and Docker Compose (local dev only). For production:
+Docker is used for local development only. The production target is Azure:
 
-- Add a production settings file (`production.py`) with `DEBUG=False`, secure `ALLOWED_HOSTS`, etc.
-- Serve with Gunicorn or Uvicorn behind a reverse proxy
-- Serve static files via Whitenoise or a CDN
-- Provision Redis separately (e.g. Azure Cache for Redis) and set `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`
-- Deploy Celery worker and beat as separate processes/containers (e.g. Azure Container Instances)
-- Set up a CI/CD pipeline and migration strategy
+| Component | Target |
+|-----------|--------|
+| Backend (Django) | Azure App Service — Linux, Python 3.12, `gunicorn -k uvicorn.workers.UvicornWorker` |
+| Frontend (React) | Azure Static Web Apps |
+| Database | Azure Database for PostgreSQL (Flexible Server) |
+| Redis / Celery broker | Azure Cache for Redis |
+| Celery worker | Azure App Service (separate instance, custom startup command) |
+| Celery beat | Azure App Service (separate instance, `django-celery-beat` DB scheduler) |
+
+**Changes required before first deploy (can be done in local dev):**
+
+- `backend/requirements.txt` — add `gunicorn`, `uvicorn[standard]`, `whitenoise[brotli]`, `django-celery-beat`
+- `backend/app/settings.py` — fix `DEBUG` parsing, add `STATIC_ROOT`, `WhiteNoiseMiddleware`, security headers (`SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, `SECURE_HSTS_SECONDS`, `X_FRAME_OPTIONS`, `SECURE_CONTENT_TYPE_NOSNIFF`), switch Celery beat to `DatabaseScheduler`
+- `backend/app/urls.py` — gate Swagger/OpenAPI behind `DEBUG=True`; add `GET /api/health/` (DB + Redis liveness check for App Service health probe)
+- `backend/startup.sh`, `startup-worker.sh`, `startup-beat.sh` — Azure App Service startup commands
+- `frontend/staticwebapp.config.json` — SPA fallback routing for Azure Static Web Apps
+- `frontend/vite.config.ts` — explicit `build.outDir` and `sourcemap: false`
+- Frontend UX fixes: `_layout.send.index.tsx` (blank page), `__root.tsx` (raw JSON error boundary), missing `errorComponent` on billing/users routes
+- `.github/workflows/` — CI (pytest + vitest on PRs) and CD (deploy to Azure on `main`)
+
+**Changes required at Azure provisioning time:**
+
+- Set all secrets as Azure App Service environment variables (not `.env` files) — see `backend/.envexample` for full list
+- Rotate `DJANGO_SECRET_KEY`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET` before go-live
+- `SECURE_SSL_REDIRECT` must remain `False` — Azure terminates TLS at the load balancer; setting `True` causes redirect loops
+- Enable App Service health check probe at `/api/health/`
 
 ### 3. Metered Billing (Clerk not yet supported)
 
