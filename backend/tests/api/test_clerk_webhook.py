@@ -309,3 +309,91 @@ class TestClerkWebhook:
             status.HTTP_200_OK,
             status.HTTP_400_BAD_REQUEST
         ]
+
+    @patch('svix.Webhook.verify')
+    def test_subscription_active_transitions_org_to_subscribed(self, mock_verify, api_client):
+        """subscription.active webhook sets org billing_mode to subscribed."""
+        mock_verify.side_effect = mock_webhook_verify
+
+        org = OrganisationFactory(clerk_org_id='org_billing_active', billing_mode=Organisation.BILLING_TRIAL)
+
+        payload = {
+            'type': 'subscription.active',
+            'data': {'organization_id': 'org_billing_active'},
+        }
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    @patch('svix.Webhook.verify')
+    def test_subscription_item_canceled_reverts_org_to_trial(self, mock_verify, api_client):
+        """subscriptionItem.canceled webhook reverts org billing_mode to trial."""
+        mock_verify.side_effect = mock_webhook_verify
+
+        org = OrganisationFactory(clerk_org_id='org_billing_cancel', billing_mode=Organisation.BILLING_SUBSCRIBED)
+
+        payload = {
+            'type': 'subscriptionItem.canceled',
+            'data': {'organization_id': 'org_billing_cancel'},
+        }
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
+
+    @patch('svix.Webhook.verify')
+    def test_subscription_item_ended_reverts_org_to_trial(self, mock_verify, api_client):
+        """subscriptionItem.ended webhook reverts org billing_mode to trial."""
+        mock_verify.side_effect = mock_webhook_verify
+
+        org = OrganisationFactory(clerk_org_id='org_billing_ended', billing_mode=Organisation.BILLING_SUBSCRIBED)
+
+        payload = {
+            'type': 'subscriptionItem.ended',
+            'data': {'organization_id': 'org_billing_ended'},
+        }
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
+
+    @patch('svix.Webhook.verify')
+    def test_subscription_past_due_does_not_change_billing_mode(self, mock_verify, api_client):
+        """subscription.past_due webhook logs but does not change billing_mode."""
+        mock_verify.side_effect = mock_webhook_verify
+
+        org = OrganisationFactory(clerk_org_id='org_billing_pastdue', billing_mode=Organisation.BILLING_SUBSCRIBED)
+
+        payload = {
+            'type': 'subscription.past_due',
+            'data': {'id': 'sub_123', 'organization_id': 'org_billing_pastdue'},
+        }
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED

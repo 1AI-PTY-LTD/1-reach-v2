@@ -33,9 +33,9 @@ from app.utils.clerk import (
     _handle_user_created as handle_user_created,
     _handle_user_deleted as handle_user_deleted,
     _handle_user_updated as handle_user_updated,
-    _handle_billing_subscription_created as handle_billing_subscription_created,
-    _handle_billing_subscription_deleted as handle_billing_subscription_deleted,
-    _handle_billing_payment_failed as handle_billing_payment_failed,
+    _handle_subscription_active as handle_billing_subscription_created,
+    _handle_subscription_canceled as handle_billing_subscription_deleted,
+    _handle_subscription_past_due as handle_billing_payment_failed,
 )
 from tests.factories import (
     ContactFactory,
@@ -354,8 +354,8 @@ class TestHandleOrganizationCreatedGrantsCredits:
 # ============================================================================
 
 @pytest.mark.django_db
-class TestHandleBillingSubscriptionCreated:
-    """Tests for billing.subscription.created webhook handler."""
+class TestHandleSubscriptionActive:
+    """Tests for subscription.active webhook handler."""
 
     def test_transitions_org_to_subscribed(self):
         """Org billing_mode is set to 'subscribed' when subscription created."""
@@ -392,8 +392,8 @@ class TestHandleBillingSubscriptionCreated:
 
 
 @pytest.mark.django_db
-class TestHandleBillingSubscriptionDeleted:
-    """Tests for billing.subscription.deleted webhook handler."""
+class TestHandleSubscriptionCanceled:
+    """Tests for subscriptionItem.canceled/ended webhook handler."""
 
     def test_reverts_org_to_trial(self):
         """Org billing_mode is reverted to 'trial' when subscription cancelled."""
@@ -426,8 +426,8 @@ class TestHandleBillingSubscriptionDeleted:
 
 
 @pytest.mark.django_db
-class TestHandleBillingPaymentFailed:
-    """Tests for billing.payment.failed webhook handler."""
+class TestHandleSubscriptionPastDue:
+    """Tests for subscription.past_due webhook handler."""
 
     def test_does_not_raise(self):
         """payment.failed stub completes without error."""

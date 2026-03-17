@@ -143,7 +143,7 @@ backend/
 │   ├── utils/
 │   │   ├── billing.py          # grant_credits, check_can_send, record_usage, refund_usage, etc.
 │   │   ├── failure_classifier.py  # classify_failure() — maps provider errors to FailureCategory
-│   │   ├── clerk.py            # Webhook handlers (user/org sync + billing subscription stubs)
+│   │   ├── clerk.py            # Webhook handlers (user/org/membership sync + billing subscription events)
 │   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
@@ -169,7 +169,7 @@ Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults t
 
 **Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
 
-**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. Clerk Billing webhook stubs are registered and ready for wiring once the corporate Clerk account has Billing enabled.
+**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. Clerk Billing is live: `subscription.active` sets `billing_mode='subscribed'`; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` logs a warning. Per-SMS/MMS metered billing is tracked internally via `CreditTransaction` (for manual invoicing); native Clerk metered billing will be wired into `record_usage()` when Clerk adds support.
 
 **SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). Implement the abstract base class to add real providers.
 
@@ -255,8 +255,14 @@ docker compose exec -e PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-bro
 1. Create an application in the [Clerk Dashboard](https://dashboard.clerk.com)
 2. Enable **Organizations** in the Clerk Dashboard
 3. Enable **Organization Invitations** (Organizations → Settings)
-4. Configure your **Webhook** endpoint to point to `https://your-domain/api/webhooks/clerk/` and subscribe to all 9 core events: `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`. When Clerk Billing is enabled on the corporate account, also subscribe to: `billing.subscription.created`, `billing.subscription.deleted`, `billing.payment.failed`
-5. Set the **Application name** in Settings → General (appears in invitation emails)
+4. Configure your **Webhook** endpoint to point to `https://your-domain/api/webhooks/clerk/` and subscribe to all events below:
+
+   **Core (user/org/membership sync):** `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`
+
+   **Clerk Billing:** `subscription.active`, `subscriptionItem.canceled`, `subscriptionItem.ended`, `subscription.past_due`
+
+5. **Enable Billing** in the Clerk Dashboard. Create **one paid subscription plan for Organizations** only. Do **not** create a free or trial plan in Clerk — the $10 credit trial is managed entirely in-app; a Clerk trial plan would immediately fire `subscription.active` on signup and bypass the credit trial.
+6. Set the **Application name** in Settings → General (appears in invitation emails)
 
 For E2E tests, set `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` (a test user ID in your Clerk instance).
 
@@ -290,34 +296,17 @@ The app currently runs with Django's development server and Docker Compose (loca
 - Deploy Celery worker and beat as separate processes/containers (e.g. Azure Container Instances)
 - Set up a CI/CD pipeline and migration strategy
 
-### 3. Clerk Billing Integration (active Clerk Billing account required)
+### 3. Metered Billing (Clerk not yet supported)
 
-The billing system is implemented. New orgs receive `FREE_CREDIT_AMOUNT` (default $10) trial credits on signup. Trial orgs are blocked when balance reaches $0. Subscribed orgs have usage tracked for metered Clerk Billing reporting. Transaction history and per-format spend are available at `GET /api/billing/summary/`.
+Per-SMS/MMS usage is tracked internally via `CreditTransaction` and visible at `GET /api/billing/summary/`. Clerk Billing does not yet support metered/usage-based billing (it is on their roadmap). When Clerk adds it, the integration point is `record_usage()` in `backend/app/utils/billing.py` — add a Clerk metered billing API call there alongside the existing internal tracking.
 
-**Remaining step:** The Clerk Billing webhook handlers (`billing.subscription.created`, `billing.subscription.deleted`, `billing.payment.failed`) are registered as stubs in `backend/app/utils/clerk.py`. The exact Clerk event type strings and payload schema must be confirmed once the corporate Clerk account has Billing enabled. Subscribe to these webhook events and verify the payload shapes match the handlers.
-
-### 4. Migrate to Corporate Clerk Account
-
-The current setup uses a personal/dev Clerk account. Before going to production this needs to move to the corporate account.
-
-Steps:
-- Create a new Clerk application under the corporate account at [dashboard.clerk.com](https://dashboard.clerk.com)
-- Enable **Organizations** and **Organization Invitations** on the new application
-- Configure the webhook endpoint and subscribe to all 9 events (see Clerk Configuration above)
-- Update all four Clerk credentials across the three env files:
-  - `backend/.env`: `CLERK_FRONTEND_API`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET`
-  - `frontend/.env`: `VITE_CLERK_PUBLISHABLE_KEY`
-- Test user/org sync via webhooks end-to-end on the new account before cutover
-- Set the **Application name** in Clerk Settings → General (used in invitation and sign-up emails)
-- Update email templates in Clerk to match corporate branding
-
-### 5. Remaining Clerk Production Configuration
+### 4. Remaining Clerk Production Configuration
 
 From codebase inspection, these items need to be addressed before production:
 
-- Set `CLERK_AUTHORIZED_PARTIES`, `CORS_ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` in `backend/.env` to include the production frontend URL (all three are now env-var driven; defaults are `localhost`)
+- Set `CLERK_AUTHORIZED_PARTIES`, `CORS_ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` in `backend/.env` to include the production frontend URL (all three are env-var driven; current values are `localhost` / `localhost:5173`)
 - Confirm Clerk email templates (invitation, sign-up, magic link) are correctly branded for the corporate account before sending to real users
-- Configure Clerk to require verified email addresses before allowing users to be created or organisations to be joined — this prevents unverified or disposable addresses from accessing the platform (Clerk Dashboard → User & Authentication → Email, Phone, Username → enable "Require verified email address")
+- Configure Clerk to require verified email addresses before allowing users to be created or organisations to be joined (Clerk Dashboard → User & Authentication → Email, Phone, Username → enable "Require verified email address")
 
 ---
 

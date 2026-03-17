@@ -125,11 +125,11 @@ def _handle_membership_deleted(data):
 # corporate Clerk account with Billing enabled is set up.
 # ---------------------------------------------------------------------------
 
-def _handle_billing_subscription_created(data):
-    """Transition org to subscribed mode when a Clerk Billing subscription is created."""
+def _handle_subscription_active(data):
+    """Transition org to subscribed mode when a Clerk Billing subscription becomes active."""
     org_id = data.get('organization_id') or data.get('organization', {}).get('id')
     if not org_id:
-        logger.warning('billing.subscription.created: no org id in payload %s', data)
+        logger.warning('subscription.active: no org id in payload %s', data)
         return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_SUBSCRIBED
@@ -137,14 +137,14 @@ def _handle_billing_subscription_created(data):
     if updated:
         logger.info('Org %s transitioned to subscribed billing mode', org_id)
     else:
-        logger.warning('billing.subscription.created: org %s not found', org_id)
+        logger.warning('subscription.active: org %s not found', org_id)
 
 
-def _handle_billing_subscription_deleted(data):
-    """Revert org to trial mode when a Clerk Billing subscription is cancelled."""
+def _handle_subscription_canceled(data):
+    """Revert org to trial mode when a Clerk Billing subscription item is cancelled or ended."""
     org_id = data.get('organization_id') or data.get('organization', {}).get('id')
     if not org_id:
-        logger.warning('billing.subscription.deleted: no org id in payload %s', data)
+        logger.warning('subscriptionItem.canceled/ended: no org id in payload %s', data)
         return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_TRIAL
@@ -152,13 +152,13 @@ def _handle_billing_subscription_deleted(data):
     if updated:
         logger.info('Org %s reverted to trial billing mode (subscription cancelled)', org_id)
     else:
-        logger.warning('billing.subscription.deleted: org %s not found', org_id)
+        logger.warning('subscriptionItem.canceled/ended: org %s not found', org_id)
 
 
-def _handle_billing_payment_failed(data):
-    """Log a failed payment. TODO: decide policy (notify admin, suspend, etc.)."""
-    # TODO: implement notification or suspension when Clerk Billing is configured
-    logger.warning('billing.payment.failed received: %s', data.get('id'))
+def _handle_subscription_past_due(data):
+    """Log a past-due subscription. TODO: decide policy (notify admin, suspend, etc.)."""
+    # TODO: implement notification or suspension when policy is decided
+    logger.warning('subscription.past_due received: %s', data.get('id'))
 
 
 # Clerk API event type strings must use US spelling (Clerk's API convention)
@@ -172,8 +172,9 @@ WEBHOOK_HANDLERS = {
     'organizationMembership.created': _handle_membership_created,
     'organizationMembership.updated': _handle_membership_updated,
     'organizationMembership.deleted': _handle_membership_deleted,
-    # Clerk Billing events (stubs — event type strings to be confirmed when Clerk Billing is configured)
-    'billing.subscription.created': _handle_billing_subscription_created,
-    'billing.subscription.deleted': _handle_billing_subscription_deleted,
-    'billing.payment.failed': _handle_billing_payment_failed,
+    # Clerk Billing events
+    'subscription.active': _handle_subscription_active,
+    'subscriptionItem.canceled': _handle_subscription_canceled,
+    'subscriptionItem.ended': _handle_subscription_canceled,
+    'subscription.past_due': _handle_subscription_past_due,
 }
