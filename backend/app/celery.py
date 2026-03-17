@@ -19,21 +19,23 @@ import os
 import random
 from datetime import timedelta
 
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
+
+import django
 from celery import Celery, shared_task
 from django.conf import settings
 from django.db import OperationalError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+app = Celery('reach')
+app.config_from_object('django.conf:settings', namespace='CELERY')
+django.setup()
+
 from app.models import MessageFormat, Schedule, ScheduleStatus
 from app.utils.billing import record_usage, refund_usage
 from app.utils.failure_classifier import classify_failure
 from app.utils.sms import get_sms_provider
-
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
-
-app = Celery('reach')
-app.config_from_object('django.conf:settings', namespace='CELERY')
 
 logger = logging.getLogger(__name__)
 
