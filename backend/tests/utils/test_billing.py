@@ -118,6 +118,13 @@ class TestCheckCanSend:
         assert allowed is False
         assert 'Insufficient balance' in error
 
+    def test_returns_false_when_billing_past_due(self):
+        """check_can_send is blocked immediately when billing_mode is past_due."""
+        org = OrganisationFactory(billing_mode=Organisation.BILLING_PAST_DUE)
+        allowed, error = check_can_send(org, 1, 'sms')
+        assert allowed is False
+        assert 'past due' in error.lower()
+
 
 @pytest.mark.django_db
 class TestRecordUsage:
@@ -368,3 +375,10 @@ class TestRefundUsage:
         )
         assert refund_tx.amount == Decimal('0.05')
         assert get_balance(org) == balance_before_refund + Decimal('0.05')
+
+
+class TestGetRate:
+    def test_raises_for_unknown_format(self):
+        from app.utils.billing import get_rate
+        with pytest.raises(ValueError, match='No billing rate configured'):
+            get_rate('fax')

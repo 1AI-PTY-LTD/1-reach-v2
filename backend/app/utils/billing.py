@@ -130,12 +130,16 @@ def check_can_send(org, units: int, format: str) -> tuple:
     cost = units * get_rate(format)
 
     Checks (in order):
+    0. Past-due billing — blocks all sends when subscription payment is overdue
     1. Monthly spending limit (both modes) — Config(name='monthly_limit')
     2. Dollar balance (trial mode only)
 
     Adding a new message type requires no changes here — just pass the new format string
     and ensure a corresponding {FORMAT}_RATE setting exists.
     """
+    if org.billing_mode == org.BILLING_PAST_DUE:
+        return False, 'Subscription payment is past due. Please update your billing details.'
+
     cost = Decimal(units) * get_rate(format)
     info = get_monthly_limit_info(org)
 

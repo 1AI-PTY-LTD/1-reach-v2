@@ -147,7 +147,7 @@ backend/
 │   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 484 tests
+└── tests/                 # 503 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
@@ -171,7 +171,7 @@ Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults t
 
 **Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
 
-**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. Clerk Billing is live: `subscription.active` sets `billing_mode='subscribed'`; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` logs a warning. Per-SMS/MMS metered billing is tracked internally via `CreditTransaction` (for manual invoicing); native Clerk metered billing will be wired into `record_usage()` when Clerk adds support.
+**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed` | `past_due`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. `check_can_send` blocks all sends when `billing_mode='past_due'`. Clerk Billing is live: `subscription.active` sets `billing_mode='subscribed'` and clears the Clerk `billing_suspended` metadata flag; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` sets `billing_mode='past_due'` and sets `billing_suspended=True` in Clerk org metadata. Per-SMS/MMS metered billing is tracked internally via `CreditTransaction` (for manual invoicing); native Clerk metered billing will be wired into `record_usage()` when Clerk adds support.
 
 **SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). Implement the abstract base class to add real providers.
 
@@ -224,7 +224,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-484 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+503 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q

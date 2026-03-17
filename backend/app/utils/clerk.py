@@ -1,6 +1,7 @@
 import logging
 
 from django.conf import settings
+from clerk_backend_api import Clerk
 
 from app.utils.billing import grant_credits
 from ..models import *
@@ -136,6 +137,17 @@ def _handle_subscription_active(data):
     )
     if updated:
         logger.info('Org %s transitioned to subscribed billing mode', org_id)
+        try:
+            clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+            clerk_client.organizations.update(
+                organization_id=org_id,
+                private_metadata={'billing_suspended': False},
+            )
+            logger.info('Clerk org %s billing_suspended cleared', org_id)
+        except Exception:
+            logger.warning(
+                'Failed to clear Clerk billing_suspended for org %s', org_id, exc_info=True
+            )
     else:
         logger.warning('subscription.active: org %s not found', org_id)
 
@@ -156,19 +168,36 @@ def _handle_subscription_canceled(data):
 
 
 def _handle_subscription_past_due(data):
-    """Log a past-due subscription with org context so Sentry captures it for manual follow-up."""
+    """Set billing_mode=past_due and disable the org in Clerk when subscription is past due."""
     subscription_id = data.get('id')
     org_id = data.get('organizationId') or data.get('organization', {}).get('id')
     org_info = {}
+
     if org_id:
         try:
             org = Organisation.objects.filter(clerk_org_id=org_id).first()
             if org:
                 org_info = {'org_id': org.pk, 'org_name': org.name}
+                org.billing_mode = Organisation.BILLING_PAST_DUE
+                org.save(update_fields=['billing_mode'])
+                try:
+                    clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+                    clerk_client.organizations.update(
+                        organization_id=org_id,
+                        private_metadata={'billing_suspended': True},
+                    )
+                    logger.info('Clerk org %s marked billing_suspended=True', org_id)
+                except Exception:
+                    logger.warning(
+                        'Failed to set Clerk billing_suspended for org %s', org_id, exc_info=True
+                    )
         except Exception:
-            pass
+            logger.warning(
+                'Error processing subscription.past_due for org %s', org_id, exc_info=True
+            )
+
     logger.warning(
-        'subscription.past_due: manual follow-up required',
+        'subscription.past_due: billing suspended',
         extra={'subscription_id': subscription_id, **org_info},
     )
 

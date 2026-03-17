@@ -27,9 +27,11 @@ class User(AbstractUser):
 class Organisation(models.Model):
     BILLING_TRIAL = 'trial'
     BILLING_SUBSCRIBED = 'subscribed'
+    BILLING_PAST_DUE = 'past_due'
     BILLING_MODE_CHOICES = [
         (BILLING_TRIAL, 'Trial'),
         (BILLING_SUBSCRIBED, 'Subscribed'),
+        (BILLING_PAST_DUE, 'Past Due'),
     ]
 
     clerk_org_id = models.CharField(max_length=255, unique=True, db_index=True)
