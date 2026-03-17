@@ -116,8 +116,8 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 					</Button>
 				</div>
 			)}
-			<ContactMessageModal
-				customer={{
+			{isModalOpen && <ContactMessageModal
+				contact={{
 					id: message.contact!,
 					first_name: message.contact_detail?.first_name || '',
 					last_name: message.contact_detail?.last_name || '',
@@ -126,7 +126,7 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 				message={message}
 				isOpen={isModalOpen}
 				setIsOpen={setIsModalOpen}
-			/>
+			/>}
 			<Alert open={isAlertOpen} onClose={() => setIsAlertOpen(false)}>
 				<AlertTitle>Are you sure you want to delete this message?</AlertTitle>
 				<AlertDescription>The message will be removed from the list of messages.</AlertDescription>

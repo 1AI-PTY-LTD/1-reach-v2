@@ -1,13 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ScheduleDetails } from '../ScheduleDetails'
 import { createSchedule } from '../../test/factories'
 import { renderWithProviders } from '../../test/test-utils'
 
-// Mock ContactMessageModal to avoid prop mismatch issue (customer vs contact)
+const mockContactMessageModal = vi.fn().mockReturnValue(null)
 vi.mock('../contacts/CustomerMessageModal', () => ({
-  ContactMessageModal: () => null,
+  ContactMessageModal: (props: any) => mockContactMessageModal(props),
 }))
 
 const contactDetail = {
@@ -22,6 +22,10 @@ const contactDetail = {
 }
 
 describe('ScheduleDetails', () => {
+  beforeEach(() => {
+    mockContactMessageModal.mockClear()
+  })
+
   it('renders nothing when message is undefined', () => {
     const { container } = renderWithProviders(<ScheduleDetails message={undefined} />)
     expect(container.textContent).toBe('')
@@ -108,5 +112,22 @@ describe('ScheduleDetails', () => {
     await waitFor(() => {
       expect(screen.queryByText('Are you sure you want to delete this message?')).not.toBeInTheDocument()
     })
+  })
+
+  it('does not render ContactMessageModal on initial render', () => {
+    const message = createSchedule({ contact: 1, contact_detail: contactDetail })
+    renderWithProviders(<ScheduleDetails message={message} />)
+    expect(mockContactMessageModal).not.toHaveBeenCalled()
+  })
+
+  it('passes contact prop (not customer) to ContactMessageModal when Edit is clicked', async () => {
+    const user = userEvent.setup()
+    const futureTime = new Date(Date.now() + 3600000).toISOString()
+    const message = createSchedule({ contact: 1, contact_detail: contactDetail, scheduled_time: futureTime })
+    renderWithProviders(<ScheduleDetails message={message} />)
+    await user.click(screen.getByText('Edit'))
+    expect(mockContactMessageModal).toHaveBeenCalledWith(
+      expect.objectContaining({ contact: expect.objectContaining({ id: 1 }) })
+    )
   })
 })
