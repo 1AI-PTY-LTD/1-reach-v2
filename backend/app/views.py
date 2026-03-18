@@ -401,6 +401,16 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
         instance.updated_by = self.request.user
         instance.save(update_fields=['status', 'updated_by'])
 
+    @action(detail=True, methods=['patch'], url_path='force-status')
+    def force_status(self, request, pk=None):
+        """PATCH /api/schedules/{id}/force-status/ — set status directly (TEST mode only)."""
+        if not settings.TEST:
+            return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
+        schedule = self.get_object()
+        schedule.status = request.data['status']
+        schedule.save(update_fields=['status'])
+        return Response({'status': schedule.status})
+
 
 class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
     """Manages group schedules — a parent Schedule linked to per-member child Schedules.
@@ -999,3 +1009,13 @@ class BillingViewSet(viewsets.GenericViewSet):
             'monthly_usage_by_format': monthly_usage_by_format,
         })
         return response
+
+    @action(detail=False, methods=['patch'], url_path='test-set-balance')
+    def test_set_balance(self, request):
+        """PATCH /api/billing/test-set-balance/ — set org credit balance directly (TEST mode only)."""
+        if not settings.TEST:
+            return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
+        from decimal import Decimal
+        request.org.credit_balance = Decimal(str(request.data['balance']))
+        request.org.save(update_fields=['credit_balance'])
+        return Response({'credit_balance': str(request.org.credit_balance)})
