@@ -21,6 +21,9 @@ class StorageProvider(ABC):
     implementation methods.
     """
 
+    def __init__(self, **kwargs):
+        pass
+
     ALLOWED_TYPES = {'image/png', 'image/jpeg', 'image/jpg', 'image/gif'}
     MAX_FILE_SIZE = 400 * 1024  # 400KB
 

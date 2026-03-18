@@ -37,7 +37,9 @@ jobs:
           touch frontend/.env
 
       - name: Run backend tests
-        run: docker compose run --rm backend sh -c "pip install -r requirements.txt -q && python -m pytest tests/ -q"
+        run: |
+          docker compose up -d redis
+          docker compose run --rm backend sh -c "pip install -r requirements.txt -q && python -m pytest tests/ -q"
 
   frontend:
     runs-on: ubuntu-latest
@@ -140,7 +142,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: frontend
-        run: npm ci
+        run: sudo rm -rf node_modules && npm ci
 
       - name: Install Playwright Chromium
         working-directory: frontend
