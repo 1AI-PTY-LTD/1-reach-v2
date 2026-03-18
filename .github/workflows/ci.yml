@@ -44,18 +44,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create .env files
-        run: |
-          touch backend/.env
-          printf 'VITE_CLERK_PUBLISHABLE_KEY=pk_test_placeholder\nVITE_API_BASE_URL=http://localhost:8000\n' > frontend/.env
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
 
       - name: Run frontend tests
-        run: docker compose run --rm frontend npx vitest run
+        working-directory: frontend
+        run: npx vitest run
 
   e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Create stub .env files
+        run: touch backend/.env frontend/.env
 
       - name: Install Svix CLI
         run: |
@@ -69,7 +78,7 @@ jobs:
         run: |
           svix listen http://localhost:8000/api/webhooks/clerk/ > /tmp/svix-output.txt 2>&1 &
           for i in $(seq 1 15); do
-            SVIX_URL=$(grep -oP 'https://play\.svix\.com/in/[^/\s]+/' /tmp/svix-output.txt 2>/dev/null)
+            SVIX_URL=$(grep -oP 'https://play\.svix\.com/in/[^/\s]+/' /tmp/svix-output.txt 2>/dev/null) || true
             [ -n "$SVIX_URL" ] && break
             sleep 1
           done
