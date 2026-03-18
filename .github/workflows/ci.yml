@@ -11,6 +11,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Create .env files
+        run: |
+          cat > backend/.env <<EOF
+          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+          DEBUG=0
+          TEST=1
+          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_HOST=db
+          POSTGRES_PORT=5432
+          ALLOWED_HOSTS=localhost,127.0.0.1
+          CORS_ALLOWED_ORIGINS=http://localhost:5173
+          CLERK_FRONTEND_API=${{ secrets.E2E_CLERK_FRONTEND_API }}
+          CLERK_SECRET_KEY=${{ secrets.E2E_CLERK_SECRET_KEY }}
+          CLERK_WEBHOOK_SIGNING_SECRET=${{ secrets.E2E_CLERK_WEBHOOK_SIGNING_SECRET }}
+          CLERK_AUTHORIZED_PARTIES=http://localhost:5173
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/0
+          FREE_CREDIT_AMOUNT=10.00
+          SMS_RATE=0.05
+          MMS_RATE=0.20
+          EOF
+          touch frontend/.env
+
       - name: Run backend tests
         run: docker compose run --rm backend python -m pytest tests/ -q
 
@@ -18,6 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Create .env files
+        run: |
+          touch backend/.env
+          printf 'VITE_CLERK_PUBLISHABLE_KEY=pk_test_placeholder\nVITE_API_BASE_URL=http://localhost:8000\n' > frontend/.env
 
       - name: Run frontend tests
         run: docker compose run --rm frontend npx vitest run
@@ -29,9 +59,11 @@ jobs:
 
       - name: Install Svix CLI
         run: |
-          curl -fsSL https://github.com/svix/svix-cli/releases/latest/download/svix_linux_amd64.tar.gz \
-            | tar -xz svix
-          sudo mv svix /usr/local/bin/
+          SVIX_VERSION=$(curl -fsSL https://api.github.com/repos/svix/svix-cli/releases/latest \
+            | grep -o '"tag_name": *"[^"]*"' | grep -o 'v[^"]*')
+          curl -fsSL "https://github.com/svix/svix-cli/releases/download/${SVIX_VERSION}/svix_${SVIX_VERSION#v}_linux_amd64.deb" \
+            -o svix.deb
+          sudo dpkg -i svix.deb
 
       - name: Start Svix listener (tunnel Clerk webhooks to localhost)
         run: |
