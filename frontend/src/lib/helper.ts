@@ -26,7 +26,9 @@ export class ApiClient {
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}))
-      const message = errorBody.detail || errorBody.error || `API error: ${response.status}`
+      const message = errorBody.detail || errorBody.error ||
+        (Array.isArray(errorBody) ? errorBody[0] : undefined) ||
+        `API error: ${response.status}`
       const error = new Error(message) as Error & { status: number; body: unknown }
       error.status = response.status
       error.body = errorBody

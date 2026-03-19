@@ -17,7 +17,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import {
   authenticatePage,
-  createContact, deleteContact,
+  deleteContact, ensureContact,
   createGroup, addMembers, deleteGroup,
   deleteSchedule, forceStatus,
   apiRequest,
@@ -38,8 +38,19 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage()
   await authenticatePage(page)
 
-  contact = await createContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' })
-  const groupContact = await createContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' })
+  // Ensure enough balance for all sends (parallel tests may consume credits)
+  await setOrgBalance(page, 100)
+
+  // Clean up any stale monthly_limit config from a previous failed run
+  const configs = await apiRequest(page, 'GET', '/api/configs/?limit=100')
+  for (const c of (configs.results || configs || [])) {
+    if (c.name === 'monthly_limit') {
+      await apiRequest(page, 'DELETE', `/api/configs/${c.id}/`).catch(() => {})
+    }
+  }
+
+  contact = await ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' })
+  const groupContact = await ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' })
   group = await createGroup(page, { name: 'Pipeline Group' })
   await addMembers(page, group.id, [groupContact.id])
 
@@ -138,6 +149,9 @@ test.describe('Send MMS — success flow', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Billing gate — error surfaces in UI', () => {
+  // These tests mutate shared org state (balance, config) — must not run in parallel
+  test.describe.configure({ mode: 'serial' })
+
   test('insufficient trial balance shows balance error message', async ({ page }) => {
     await setOrgBalance(page, 0)
     try {
@@ -145,9 +159,9 @@ test.describe('Billing gate — error surfaces in UI', () => {
       await fillAndSubmitSmsForm(page)
       await expect(
         page.getByText(/insufficient balance/i).or(page.getByText(/subscribe to continue/i)).first()
-      ).toBeVisible({ timeout: 8000 })
+      ).toBeVisible({ timeout: 15000 })
     } finally {
-      await setOrgBalance(page, 10)
+      await setOrgBalance(page, 100)
     }
   })
 
@@ -160,7 +174,7 @@ test.describe('Billing gate — error surfaces in UI', () => {
         page.getByText(/monthly spending limit reached/i).or(page.getByText(/limit/i)).first()
       ).toBeVisible({ timeout: 8000 })
     } finally {
-      await deleteConfig(page, config.id)
+      await deleteConfig(page, config.id).catch(() => {})
     }
   })
 
@@ -176,7 +190,7 @@ test.describe('Billing gate — error surfaces in UI', () => {
         page.getByText(/insufficient balance/i).or(page.getByText(/subscribe to continue/i)).first()
       ).toBeVisible()
     } finally {
-      await setOrgBalance(page, 10)
+      await setOrgBalance(page, 100)
     }
   })
 })

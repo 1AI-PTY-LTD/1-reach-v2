@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import dayjs from 'dayjs'
 import {
   authenticatePage,
-  createContact, deleteContact,
+  deleteContact, ensureContact,
   apiRequest, forceStatus, deleteSchedule,
 } from './helpers'
 
@@ -23,7 +23,7 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage()
   await authenticatePage(page)
 
-  contact = await createContact(page, { first_name: 'Schedule', last_name: 'Test', phone: '0414000000' })
+  contact = await ensureContact(page, { first_name: 'Schedule', last_name: 'Test', phone: '0414000000' })
 
   for (const s of SCHEDULES) {
     const schedule = await apiRequest(page, 'POST', '/api/sms/send/', {

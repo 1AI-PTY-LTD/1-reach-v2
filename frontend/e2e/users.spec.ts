@@ -2,15 +2,27 @@
  * E2E tests for the Users page.
  *
  * Self-contained: creates its own Clerk admin user + org + member + inactive
- * user in beforeAll via the real Clerk API. Clerk fires real webhooks via the
- * Svix tunnel → Django processes them → backend records appear.
- *
- * No synthetic webhooks, no mocked endpoints.
+ * user in beforeAll via the real Clerk API, then seeds Django DB directly
+ * via simulated webhook POSTs (no Svix tunnel needed).
  */
 
 import { test, expect } from '@playwright/test'
 import { createClerkClient } from '@clerk/backend'
 import { authenticatePage, apiRequest } from './helpers'
+
+/** POST a simulated Clerk webhook event directly to the backend.
+ *  In CI the backend has TEST=True so it skips Svix signature verification. */
+async function seedWebhook(body: object) {
+  const res = await fetch('http://localhost:8000/api/webhooks/clerk/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Webhook seed failed (${res.status}): ${text}`)
+  }
+}
 
 let adminUserId: string
 let memberUserId: string
@@ -19,6 +31,7 @@ let specOrgId: string
 let ts: number
 
 test.beforeAll(async ({ browser }) => {
+  test.setTimeout(120_000) // Clerk API + seedWebhook + auth takes time
   if (!process.env.CLERK_SECRET_KEY) return
   const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
   ts = Date.now()
@@ -53,7 +66,7 @@ test.beforeAll(async ({ browser }) => {
     role: 'org:member',
   })
 
-  // Create inactive user + add to org, then remove from org (Clerk fires membership.deleted)
+  // Create inactive user + add to org, then remove from org
   const inactiveUser = await clerk.users.createUser({
     emailAddress: [`inactive-${ts}@test.1reach.com`],
     firstName: 'Inactive',
@@ -71,7 +84,71 @@ test.beforeAll(async ({ browser }) => {
     userId: inactiveUserId,
   })
 
-  // Poll backend (as admin) until all users appear — webhooks may take a moment
+  // Seed Django DB directly (no Svix tunnel in CI — webhooks aren't delivered)
+  await seedWebhook({
+    type: 'user.created',
+    data: {
+      id: adminUserId,
+      primary_email_address_id: 'email_1',
+      email_addresses: [{ id: 'email_1', email_address: `admin-${ts}@test.1reach.com` }],
+      first_name: 'E2E', last_name: 'Admin',
+    },
+  })
+  await seedWebhook({
+    type: 'organization.created',
+    data: { id: specOrgId, name: `E2E Users Org ${slug}`, slug },
+  })
+  await seedWebhook({
+    type: 'organizationMembership.created',
+    data: {
+      organization: { id: specOrgId },
+      public_user_data: { user_id: adminUserId },
+      role: 'org:admin',
+    },
+  })
+  await seedWebhook({
+    type: 'user.created',
+    data: {
+      id: memberUserId,
+      primary_email_address_id: 'email_2',
+      email_addresses: [{ id: 'email_2', email_address: `member-${ts}@test.1reach.com` }],
+      first_name: 'Member', last_name: 'User',
+    },
+  })
+  await seedWebhook({
+    type: 'organizationMembership.created',
+    data: {
+      organization: { id: specOrgId },
+      public_user_data: { user_id: memberUserId },
+      role: 'org:member',
+    },
+  })
+  await seedWebhook({
+    type: 'user.created',
+    data: {
+      id: inactiveUserId,
+      primary_email_address_id: 'email_3',
+      email_addresses: [{ id: 'email_3', email_address: `inactive-${ts}@test.1reach.com` }],
+      first_name: 'Inactive', last_name: 'User',
+    },
+  })
+  await seedWebhook({
+    type: 'organizationMembership.created',
+    data: {
+      organization: { id: specOrgId },
+      public_user_data: { user_id: inactiveUserId },
+      role: 'org:member',
+    },
+  })
+  await seedWebhook({
+    type: 'organizationMembership.deleted',
+    data: {
+      organization: { id: specOrgId },
+      public_user_data: { user_id: inactiveUserId },
+    },
+  })
+
+  // Verify seeded data is visible via the API
   const page = await browser.newPage()
   await authenticatePage(page, adminUserId)
   await expect(async () => {
@@ -93,12 +170,23 @@ test.afterAll(async () => {
     inactiveUserId ? clerk.users.deleteUser(inactiveUserId).catch(() => {}) : Promise.resolve(),
     adminUserId    ? clerk.users.deleteUser(adminUserId).catch(() => {})    : Promise.resolve(),
   ])
-  // Wait for deletion webhooks to be processed
-  await new Promise(r => setTimeout(r, 3000))
 })
+
+// Users spec signs in as its own admin user (not the main test user),
+// so we must clear storageState to avoid session conflicts.
+test.use({ storageState: { cookies: [], origins: [] } })
 
 test.beforeEach(async ({ page }) => {
   await authenticatePage(page, adminUserId)
+  // Activate the spec's org so JWTs include org claims for API calls
+  await page.evaluate(async (oid: string) => {
+    await (window as any).Clerk.setActive({ organization: oid })
+  }, specOrgId)
+  await page.waitForFunction(
+    (oid: string) => (window as any).Clerk?.organization?.id === oid,
+    specOrgId,
+    { timeout: 10_000 }
+  )
 })
 
 test.describe('Users Page', () => {

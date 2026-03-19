@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   authenticatePage,
-  createContact, deleteContact,
+  deleteContact, ensureContact,
   apiRequest,
 } from './helpers'
 
@@ -13,9 +13,9 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage()
   await authenticatePage(page)
   ;[c1, c2, c3] = await Promise.all([
-    createContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0412111111' }),
-    createContact(page, { first_name: 'Bob',   last_name: 'Jones', phone: '0412222222' }),
-    createContact(page, { first_name: 'Charlie', last_name: 'Brown', phone: '0412333333' }),
+    ensureContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0412111111' }),
+    ensureContact(page, { first_name: 'Bob',   last_name: 'Jones', phone: '0412222222' }),
+    ensureContact(page, { first_name: 'Charlie', last_name: 'Brown', phone: '0412333333' }),
   ])
   createdIds.push(c1.id, c2.id, c3.id)
   await page.close()

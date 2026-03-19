@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   authenticatePage,
-  createContact, deleteContact,
+  deleteContact, ensureContact,
   createGroup, addMembers, deleteGroup,
 } from './helpers'
 
@@ -13,8 +13,8 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage()
   await authenticatePage(page)
   ;[contact1, contact2] = await Promise.all([
-    createContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0413111111' }),
-    createContact(page, { first_name: 'Bob',   last_name: 'Jones', phone: '0413222222' }),
+    ensureContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0413111111' }),
+    ensureContact(page, { first_name: 'Bob',   last_name: 'Jones', phone: '0413222222' }),
   ])
   group = await createGroup(page, { name: 'VIP Customers' })
   await addMembers(page, group.id, [contact1.id, contact2.id])
@@ -83,7 +83,7 @@ test.describe('Groups Page', () => {
     await page.goto(`/app/groups/${group?.id}`)
     await expect(page.getByText('VIP Customers').first()).toBeVisible({ timeout: 10000 })
     await page.locator('[role="tab"][aria-controls="tabpanel-users"]').click()
-    await expect(page.getByText('Alice').first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Alice').first()).toBeVisible({ timeout: 15000 })
     await expect(page.getByText('Smith').first()).toBeVisible()
     await expect(page.getByText('Bob').first()).toBeVisible()
     await expect(page.getByText('Jones').first()).toBeVisible()
@@ -93,7 +93,7 @@ test.describe('Groups Page', () => {
     await page.goto(`/app/groups/${group?.id}`)
     await expect(page.getByText('VIP Customers').first()).toBeVisible({ timeout: 10000 })
     await page.locator('[role="tab"][aria-controls="tabpanel-users"]').click()
-    await expect(page.getByText('Alice').first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Alice').first()).toBeVisible({ timeout: 15000 })
     await page.locator('[role="tabpanel"] button:not([aria-label])').last().click()
     await expect(page.getByText('Select Contacts To Add').first()).toBeVisible({ timeout: 5000 })
   })

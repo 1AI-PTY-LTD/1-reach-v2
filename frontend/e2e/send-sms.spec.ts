@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 import {
   authenticatePage,
-  createContact, deleteContact,
-  createTemplate, deleteTemplate,
+  deleteContact, deleteTemplate,
+  ensureContact, ensureTemplate,
 } from './helpers'
 
 let contact: { id: number }
@@ -13,9 +13,9 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage()
   await authenticatePage(page)
   ;[contact, t1, t2] = await Promise.all([
-    createContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0415111111' }),
-    createTemplate(page, { name: 'Welcome', content: 'Welcome to our service!' }),
-    createTemplate(page, { name: 'Reminder', content: 'This is your reminder.' }),
+    ensureContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0415111111' }),
+    ensureTemplate(page, { name: 'SMS Welcome', text: 'Welcome to our service!' }),
+    ensureTemplate(page, { name: 'SMS Reminder', text: 'This is your reminder.' }),
   ])
   await page.close()
 })
@@ -66,7 +66,7 @@ test.describe('Send SMS Page', () => {
     const templateSelect = page.getByText(/template/i).first()
     if (await templateSelect.isVisible()) {
       await templateSelect.click()
-      await expect(page.getByText('Welcome').first()).toBeVisible({ timeout: 5000 })
+      await expect(page.getByText('SMS Welcome').first()).toBeVisible({ timeout: 5000 })
     }
   })
 

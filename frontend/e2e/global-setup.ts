@@ -33,13 +33,51 @@ export default async function globalSetup(_config: FullConfig) {
     createdBy: user.id,
   })
 
-  // Persist IDs for authenticatePage (reads clerkUserId) and global-teardown
+  // Persist IDs for auth.setup.ts and global-teardown
+  const email = `e2e-${ts}@test.1reach.com`
   fs.writeFileSync('/tmp/e2e-state.json', JSON.stringify({
     clerkUserId: user.id,
     clerkOrgId: org.id,
-    userEmail: `e2e-${ts}@test.1reach.com`,
+    userEmail: email,
   }))
 
-  // Wait for Clerk to deliver webhooks via Svix tunnel → backend processes them
-  await new Promise(r => setTimeout(r, 5000))
+  // Seed Django DB by posting simulated webhook events directly to the backend.
+  // In TEST mode the backend skips Svix signature verification.
+  const webhookUrl = 'http://localhost:8000/api/webhooks/clerk/'
+  const post = async (body: object) => {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(`Webhook seed failed (${res.status}): ${text}`)
+    }
+  }
+
+  await post({
+    type: 'user.created',
+    data: {
+      id: user.id,
+      primary_email_address_id: 'email_1',
+      email_addresses: [{ id: 'email_1', email_address: email }],
+      first_name: 'E2E',
+      last_name: 'Test',
+    },
+  })
+
+  await post({
+    type: 'organization.created',
+    data: { id: org.id, name: `E2E Test Org ${slug}`, slug },
+  })
+
+  await post({
+    type: 'organizationMembership.created',
+    data: {
+      organization: { id: org.id },
+      public_user_data: { user_id: user.id },
+      role: 'org:admin',
+    },
+  })
 }
