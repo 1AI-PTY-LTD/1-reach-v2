@@ -103,7 +103,6 @@ cp frontend/.envexample frontend/.env
 |---|---|---|
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key (`pk_...`) |
 | `VITE_API_BASE_URL` | No | Backend URL (default: `http://localhost:8000`) |
-| `VITE_E2E_TEST_MODE` | No | Set to `true` to bypass Clerk auth gate in E2E tests. **Never set in production.** |
 
 ### Running Locally
 
@@ -147,7 +146,7 @@ backend/
 │   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 503 tests
+└── tests/                 # 512 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
@@ -209,7 +208,7 @@ frontend/
 | SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/` |
 | Stats | `GET /api/stats/monthly/` |
 | Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history (admin only) |
-| Configs | `GET/POST/PUT/PATCH /api/configs/` |
+| Configs | `GET/POST/PUT/PATCH/DELETE /api/configs/`, `GET/PUT/PATCH/DELETE /api/configs/:id/` |
 | Webhooks | `POST /api/webhooks/clerk/` |
 
 All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
@@ -224,7 +223,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-503 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+512 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -236,19 +235,45 @@ docker compose exec backend python -m pytest --create-db tests/ -q
 docker compose exec frontend npx vitest run
 ```
 
-268 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+292 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 
 ```bash
-docker compose exec -e PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser frontend npx playwright test
+docker compose exec frontend npx playwright test
 ```
 
-41 Playwright tests across contacts, groups, templates, schedules, send SMS/MMS pipeline, and users pages. Backend API is mocked via `page.route()` — no real backend required.
+53 Playwright tests across contacts, groups, templates, schedules, send SMS/MMS pipeline, billing gates, and users pages. Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
 
-**Local dev (no Clerk credentials):** `VITE_E2E_TEST_MODE=true` in `frontend/.env` bypasses the Clerk auth gate so tests run without Clerk credentials. This value is never used in production builds.
+**Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 
-**CI with real Clerk:** Set `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` in the CI environment. The `global-setup.ts` and `authenticatePage()` helper detect these and perform real Clerk sign-in instead.
+1. `global-setup.ts` creates a fresh Clerk user + org per CI run, then seeds the Django DB by posting simulated webhook events directly to the backend (in `TEST` mode, Svix signature verification is skipped).
+2. `auth.setup.ts` (Playwright setup project) signs in via Clerk's ticket strategy and saves browser `storageState` to `/tmp/e2e-auth-state.json`.
+3. All chromium tests inherit the pre-authenticated state. `beforeAll` blocks that need API access (e.g., `send-pipeline.spec.ts`) use `authenticatePage()` which falls back to a full sign-in from the state file.
+4. `global-teardown.ts` deletes the Clerk user + org.
+
+**CI requirements:** Set `CLERK_SECRET_KEY` (Clerk secret key) and `E2E_CLERK_USER_ID` (a test user ID) as CI secrets. The backend must have `TEST=True` to enable test-only endpoints (`force-status`, `test-set-balance`) and skip webhook signature verification.
+
+**users.spec.ts** is self-contained: it creates its own Clerk admin, member, and inactive users + org in `beforeAll`, independent of the global test user. It uses `test.use({ storageState: { cookies: [], origins: [] } })` to clear the main user's session.
+
+### E2E Test Limitations
+
+The E2E tests are **UI integration tests** — they exercise real HTTP calls against a real backend and database, but external services and the async task queue are mocked or bypassed:
+
+| Component | E2E Behaviour | What's NOT tested |
+|---|---|---|
+| **SMS/MMS provider** | `MockSMSProvider` returns fake message IDs | No real message delivery or provider error handling |
+| **Storage provider** | `MockStorageProvider` returns fake URLs | No real file uploads (MMS attachments) |
+| **Clerk webhooks** | Simulated via direct POST (no Svix signature) | Real webhook delivery, retries, and signature validation |
+| **Celery workers** | Not running — tasks enqueued to Redis but never consumed | Async dispatch, retry logic, status transitions, failure recovery |
+| **Schedule statuses** | Forced via TEST-only `PATCH /api/schedules/:id/force-status/` | Organic state machine transitions from task execution |
+| **Billing** | Real `check_can_send` DB checks; balance set via TEST-only endpoint | Credit transactions from actual task execution; refund-on-failure flow |
+| **Redis** | Running but effectively unused (no worker consuming tasks) | Broker reliability, task routing |
+
+**TEST-mode-only endpoints** used by E2E tests:
+- `PATCH /api/schedules/:id/force-status/` — set schedule status directly
+- `PATCH /api/billing/test-set-balance/` — set org credit balance directly
+- Webhook endpoint skips Svix signature verification
 
 ---
 
@@ -266,7 +291,7 @@ docker compose exec -e PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-bro
 5. **Enable Billing** in the Clerk Dashboard. Create **one paid subscription plan for Organizations** only. Do **not** create a free or trial plan in Clerk — the $10 credit trial is managed entirely in-app; a Clerk trial plan would immediately fire `subscription.active` on signup and bypass the credit trial.
 6. Set the **Application name** in Settings → General (appears in invitation emails)
 
-For E2E tests, set `CLERK_SECRET_KEY` and `E2E_CLERK_USER_ID` (a test user ID in your Clerk instance).
+For E2E tests in CI, set `CLERK_SECRET_KEY` as a secret. The test infrastructure creates and tears down its own Clerk users and orgs automatically via `global-setup.ts` / `global-teardown.ts`.
 
 ---
 
