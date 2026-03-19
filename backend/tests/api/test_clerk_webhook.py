@@ -9,6 +9,7 @@ Tests:
 
 import json
 import pytest
+from django.test import override_settings
 from unittest.mock import patch
 from rest_framework import status
 
@@ -267,6 +268,7 @@ class TestClerkWebhook:
         membership.refresh_from_db()
         assert membership.is_active is False
 
+    @override_settings(TEST=False)
     def test_webhook_requires_valid_signature(self, api_client):
         """Webhook rejects requests with invalid signature."""
         payload = {
