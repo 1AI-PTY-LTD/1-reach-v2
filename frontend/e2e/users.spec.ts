@@ -13,7 +13,8 @@ import { authenticatePage, apiRequest } from './helpers'
 /** POST a simulated Clerk webhook event directly to the backend.
  *  In CI the backend has TEST=True so it skips Svix signature verification. */
 async function seedWebhook(body: object) {
-  const res = await fetch('http://localhost:8000/api/webhooks/clerk/', {
+  const apiBase = process.env.E2E_API_BASE_URL || 'http://localhost:8000'
+  const res = await fetch(`${apiBase}/api/webhooks/clerk/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
