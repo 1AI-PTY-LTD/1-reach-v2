@@ -43,7 +43,8 @@ export default async function globalSetup(_config: FullConfig) {
 
   // Seed Django DB by posting simulated webhook events directly to the backend.
   // In TEST mode the backend skips Svix signature verification.
-  const webhookUrl = 'http://localhost:8000/api/webhooks/clerk/'
+  const apiBase = process.env.E2E_API_BASE_URL || 'http://localhost:8000'
+  const webhookUrl = `${apiBase}/api/webhooks/clerk/`
   const post = async (body: object) => {
     const res = await fetch(webhookUrl, {
       method: 'POST',
