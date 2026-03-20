@@ -1,0 +1,83 @@
+import { test, expect } from '@playwright/test'
+import {
+  authenticatePage,
+  ensureContact, deleteContact,
+  deleteSchedule,
+  apiRequest,
+  setOrgBalance,
+} from './helpers'
+
+let contact: { id: number }
+const scheduleIds: number[] = []
+
+test.beforeAll(async ({ browser }) => {
+  if (!process.env.CLERK_SECRET_KEY) return
+  const page = await browser.newPage()
+  await authenticatePage(page)
+
+  // Set known balance
+  await setOrgBalance(page, 50)
+
+  // Create a contact and send an SMS to generate a transaction
+  contact = await ensureContact(page, { first_name: 'Billing', last_name: 'Test', phone: '0416111111' })
+  const res = await apiRequest(page, 'POST', '/api/sms/send/', {
+    message: 'Billing test message',
+    recipient: '0416111111',
+    contact_id: contact.id,
+  })
+  if (res?.schedule_id) scheduleIds.push(res.schedule_id)
+
+  await page.close()
+})
+
+test.afterAll(async ({ browser }) => {
+  if (!process.env.CLERK_SECRET_KEY) return
+  const page = await browser.newPage()
+  await authenticatePage(page)
+  // Restore balance to a reasonable amount
+  await setOrgBalance(page, 100).catch(() => {})
+  await Promise.all(scheduleIds.map(id => deleteSchedule(page, id).catch(() => {})))
+  await deleteContact(page, contact.id).catch(() => {})
+  await page.close()
+})
+
+test.beforeEach(async ({ page }) => {
+  await authenticatePage(page)
+})
+
+test.describe('Billing Page', () => {
+  test.describe.configure({ mode: 'serial' })
+
+  test('displays billing heading and mode badge', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Trial').first()).toBeVisible()
+  })
+
+  test('shows trial balance', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText('Trial balance').first()).toBeVisible({ timeout: 10000 })
+  })
+
+  test('shows monthly spend section', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText(/Monthly spend:/).first()).toBeVisible({ timeout: 10000 })
+  })
+
+  test('displays transaction history', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText('Transaction history').first()).toBeVisible({ timeout: 10000 })
+    // At least one transaction row should exist from the SMS sent in beforeAll
+    await expect(page.locator('table').last().locator('tbody tr').first()).toBeVisible()
+  })
+
+  test('shows exhausted balance warning when balance is zero', async ({ page }) => {
+    try {
+      await setOrgBalance(page, 0)
+      await page.goto('/app/billing')
+      await expect(page.getByText(/Balance exhausted/).first()).toBeVisible({ timeout: 10000 })
+    } finally {
+      await setOrgBalance(page, 100).catch(() => {})
+    }
+  })
+})

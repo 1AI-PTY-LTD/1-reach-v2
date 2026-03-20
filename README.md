@@ -243,7 +243,7 @@ docker compose exec frontend npx vitest run
 docker compose exec frontend npx playwright test
 ```
 
-53 Playwright tests across contacts, groups, templates, schedules, send SMS/MMS pipeline, billing gates, and users pages. Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
+75 Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
 
 **Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 
