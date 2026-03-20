@@ -336,12 +336,7 @@ Docker is used for local development only. The production target is Azure:
 - ~~Frontend UX fixes: `_layout.send.index.tsx` (blank page), `__root.tsx` (raw JSON error boundary), missing `errorComponent` on billing/users routes~~ ✓
 - ~~`.github/workflows/` — CI (pytest + vitest on PRs) and CD (deploy to Azure on `main`)~~ ✓
 
-**Changes required at Azure provisioning time:**
-
-- Set all secrets as Azure App Service environment variables (not `.env` files) — see `backend/.envexample` for full list
-- Rotate `DJANGO_SECRET_KEY`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET` before go-live
-- `SECURE_SSL_REDIRECT` must remain `False` — Azure terminates TLS at the load balancer; setting `True` causes redirect loops
-- Enable App Service health check probe at `/api/health/`
+**Azure provisioning — see [Azure Deployment](#azure-deployment) below.**
 
 ### 3. Metered Billing (Clerk not yet supported)
 
@@ -354,6 +349,94 @@ From codebase inspection, these items need to be addressed before production:
 - Set `CLERK_AUTHORIZED_PARTIES`, `CORS_ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` in `backend/.env` to include the production frontend URL (all three are env-var driven; current values are `localhost` / `localhost:5173`)
 - Confirm Clerk email templates (invitation, sign-up, magic link) are correctly branded for the corporate account before sending to real users
 - Configure Clerk to require verified email addresses before allowing users to be created or organisations to be joined (Clerk Dashboard → User & Authentication → Email, Phone, Username → enable "Require verified email address")
+
+---
+
+## Azure Deployment
+
+The app deploys to Azure as five services. GitHub Actions workflows (`.github/workflows/deploy-backend.yml` and `deploy-frontend.yml`) deploy automatically on push to `main`.
+
+| Component | Azure Service | Startup |
+|-----------|---------------|---------|
+| Backend API | App Service (Python 3.12, Linux) | `startup.sh` — gunicorn + uvicorn ASGI workers |
+| Celery Worker | App Service (same plan) | `startup-worker.sh` — processes `messages` queue |
+| Celery Beat | App Service (same plan) | `startup-beat.sh` — `DatabaseScheduler`, dispatches due messages every 60s |
+| Frontend | Azure Static Web Apps | Vite build → `dist/` uploaded via `Azure/static-web-apps-deploy` |
+| Database | Azure Database for PostgreSQL | Flexible Server |
+| Redis | Azure Cache for Redis | Celery broker + result backend |
+| Storage | Azure Blob Storage | MMS media files |
+
+### Azure Resources
+
+1. **Azure Database for PostgreSQL** — Flexible Server
+2. **Azure Cache for Redis** — Basic C0 (or Azure Managed Redis). Connection URL must use `rediss://` (TLS) and the correct port (6380 for classic, 10000 for AMR)
+3. **App Service Plan** — Linux, B1 or higher. All three backend services (API, worker, beat) can share one plan for dev/staging
+4. **App Service × 3** — One each for API, worker, and beat. Set the startup command in Configuration → General settings
+5. **Azure Static Web Apps** — Free tier. `frontend/staticwebapp.config.json` handles SPA routing fallback
+6. **Azure Blob Storage** — Standard LRS. Create a `media` container and generate a SAS URL
+
+### Environment Variables
+
+Set these on **all three** App Services (API, worker, beat) via Settings → Environment variables:
+
+| Variable | Value |
+|----------|-------|
+| `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (triggers `pip install` on deploy) |
+| `DJANGO_SECRET_KEY` | Strong random key |
+| `DEBUG` | `0` |
+| `ALLOWED_HOSTS` | `<api-app-name>.azurewebsites.net` |
+| `CORS_ALLOWED_ORIGINS` | `https://<static-web-app>.azurestaticapps.net` |
+| `POSTGRES_DB` | Database name |
+| `POSTGRES_USER` | Database user |
+| `POSTGRES_PASSWORD` | Database password |
+| `POSTGRES_HOST` | `<server>.postgres.database.azure.com` |
+| `POSTGRES_PORT` | `5432` |
+| `DB_CONN_MAX_AGE` | `600` |
+| `CELERY_BROKER_URL` | `rediss://:<key>@<redis-host>:<port>/0` |
+| `CELERY_RESULT_BACKEND` | Same as broker URL |
+| `CLERK_FRONTEND_API` | Clerk frontend API URL |
+| `CLERK_SECRET_KEY` | Clerk secret key |
+| `CLERK_WEBHOOK_SIGNING_SECRET` | Clerk webhook signing secret |
+| `CLERK_AUTHORIZED_PARTIES` | `https://<static-web-app>.azurestaticapps.net` |
+| `STORAGE_PROVIDER_CLASS` | `app.utils.storage.AzureBlobStorageProvider` |
+| `AZURE_BLOB_URL` | `https://<account>.blob.core.windows.net/?<sas-token>` |
+| `AZURE_CONTAINER` | `media` |
+| `LOG_LEVEL` | `INFO` |
+| `LOG_FORMAT` | `json` |
+| `SESSION_COOKIE_SECURE` | `True` |
+| `CSRF_COOKIE_SECURE` | `True` |
+| `SECURE_HSTS_SECONDS` | `31536000` |
+
+> **Do NOT set `SECURE_SSL_REDIRECT=True`** — Azure terminates TLS at the load balancer; enabling this causes infinite redirect loops.
+
+### GitHub Secrets (CD)
+
+| Secret | Where to find it |
+|--------|------------------|
+| `AZURE_BACKEND_APP_NAME` | API App Service name |
+| `AZURE_BACKEND_PUBLISH_PROFILE` | API App Service → Overview → Download publish profile |
+| `AZURE_WORKER_APP_NAME` | Worker App Service name |
+| `AZURE_WORKER_PUBLISH_PROFILE` | Worker App Service → Download publish profile |
+| `AZURE_BEAT_APP_NAME` | Beat App Service name |
+| `AZURE_BEAT_PUBLISH_PROFILE` | Beat App Service → Download publish profile |
+| `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
+| `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` |
+
+### Clerk Configuration (Staging/Production)
+
+1. Add the Static Web App URL to allowed origins in the Clerk Dashboard
+2. Create a webhook endpoint → `https://<api-app-name>.azurewebsites.net/api/webhooks/clerk/`
+3. Subscribe to all events listed in [Clerk Configuration](#clerk-configuration) above
+4. Rotate `DJANGO_SECRET_KEY`, `CLERK_SECRET_KEY`, and `CLERK_WEBHOOK_SIGNING_SECRET` before go-live
+
+### Verification
+
+After first deploy, check:
+- `GET https://<api-app-name>.azurewebsites.net/api/health/` returns 200
+- Frontend loads and Clerk sign-in works
+- App Service → Monitoring → Log stream shows JSON-formatted logs
+- Send a test message to verify the Celery worker processes it
 
 ---
 
