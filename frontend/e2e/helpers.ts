@@ -149,7 +149,7 @@ export async function authenticatePage(page: Page, userId?: string) {
 // Authenticated API helpers — use the Clerk session token from the page
 // ---------------------------------------------------------------------------
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = process.env.E2E_API_BASE_URL || 'http://localhost:8000'
 
 export async function getAuthToken(page: Page): Promise<string> {
   return page.evaluate(() => {

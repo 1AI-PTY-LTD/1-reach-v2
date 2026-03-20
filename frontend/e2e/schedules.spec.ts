@@ -101,4 +101,19 @@ test.describe('Schedule Page', () => {
     await expect(page.getByText(/delivered/i).first()).toBeVisible()
     await expect(page.getByText(/failed/i).first()).toBeVisible()
   })
+
+  test('can expand a row to see message details', async ({ page }) => {
+    await page.goto('/app/schedule')
+    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    // Click the row to expand
+    await page.getByText('Hello Alice').first().click()
+    // Expanded detail row should appear with a colspan cell
+    await expect(page.locator('td[colspan]').first()).toBeVisible({ timeout: 5000 })
+  })
+
+  test('shows pagination info text', async ({ page }) => {
+    await page.goto('/app/schedule')
+    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Showing .* of .* results/i).first()).toBeVisible()
+  })
 })

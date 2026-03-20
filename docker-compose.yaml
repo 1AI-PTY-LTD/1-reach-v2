@@ -18,13 +18,15 @@ services:
   backend:
     image: python:latest
     working_dir: /app
-    command: sh -c "pip install -r requirements.txt && python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "pip install -r requirements.txt && python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
     volumes:
       - ./backend:/app
     ports:
       - "8000:8000"
     env_file:
       - backend/.env
+    environment:
+      - DB_CONN_MAX_AGE=0
     depends_on:
       db:
         condition: service_healthy
@@ -54,6 +56,8 @@ services:
       - ./backend:/app
     env_file:
       - backend/.env
+    environment:
+      - DB_CONN_MAX_AGE=0
     depends_on:
       db:
         condition: service_healthy
@@ -68,6 +72,8 @@ services:
       - ./backend:/app
     env_file:
       - backend/.env
+    environment:
+      - DB_CONN_MAX_AGE=0
     depends_on:
       db:
         condition: service_healthy
@@ -77,13 +83,20 @@ services:
   frontend:
     image: node:20-bookworm-slim
     working_dir: /frontend
-    command: sh -c "npm install && npm run dev -- --host"  # this is only intended for dev!
+    command: sh -c "npm install && apt-get update -qq && npx playwright install --with-deps && npm run dev -- --host"  # this is only intended for dev!
     volumes:
       - ./frontend:/frontend
     ports:
       - "5173:5173"
     env_file:
       - frontend/.env
+    environment:
+      - E2E_API_BASE_URL=http://backend:8000
+      - VITE_API_BASE_URL=
+      - VITE_API_PROXY_TARGET=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
     # Required for Playwright/Chromium to run inside the container
     security_opt:
       - seccomp=unconfined

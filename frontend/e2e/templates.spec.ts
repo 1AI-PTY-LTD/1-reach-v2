@@ -76,4 +76,31 @@ test.describe('Templates Page', () => {
     await expect(page.getByText('Welcome to our service!').first()).toBeVisible({ timeout: 5000 })
     await expect(page.getByRole('button', { name: /edit/i })).toBeVisible()
   })
+
+  test('can edit template via edit modal', async ({ page }) => {
+    await page.goto('/app/templates')
+    await expect(page.getByText('TPL Welcome').first()).toBeVisible({ timeout: 10000 })
+    await page.getByText('TPL Welcome').first().click()
+    await expect(page.getByText('Welcome to our service!').first()).toBeVisible({ timeout: 5000 })
+    await page.getByRole('button', { name: /edit/i }).click()
+    await expect(page.getByText('Edit template')).toBeVisible({ timeout: 5000 })
+    const nameInput = page.getByPlaceholder('Template name')
+    await nameInput.clear()
+    await nameInput.fill('TPL Welcome')
+    await page.getByRole('button', { name: /update/i }).click()
+    await expect(page.getByText('Edit template')).not.toBeVisible({ timeout: 5000 })
+  })
+
+  test('edit modal pre-fills existing template values', async ({ page }) => {
+    await page.goto('/app/templates')
+    await expect(page.getByText('TPL Reminder').first()).toBeVisible({ timeout: 10000 })
+    await page.getByText('TPL Reminder').first().click()
+    await expect(page.getByText('This is your reminder.').first()).toBeVisible({ timeout: 5000 })
+    await page.getByRole('button', { name: /edit/i }).click()
+    await expect(page.getByText('Edit template')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByPlaceholder('Template name')).toHaveValue('TPL Reminder')
+    await expect(page.getByPlaceholder('Template text')).toHaveValue('This is your reminder.')
+    // Close modal without saving
+    await page.getByRole('button', { name: /cancel/i }).click()
+  })
 })

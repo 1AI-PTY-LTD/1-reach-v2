@@ -8,7 +8,7 @@ POSTGRES_PORT=5432
 # Backend
 DJANGO_SECRET_KEY=
 DEBUG=1
-TEST=0
+TEST=0                                          # Set to 1 for E2E tests (enables test-only endpoints, skips webhook signature verification)
 ALLOWED_HOSTS=localhost,127.0.0.1
 CORS_ALLOWED_ORIGINS=http://localhost:5173
 CLERK_AUTHORIZED_PARTIES=http://localhost:5173
@@ -43,7 +43,7 @@ MMS_RATE=0.20
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
 
-# Database connection pooling (set to 0 to disable; 600 recommended for production)
+# Database connection pooling (0 for dev/E2E to avoid connection exhaustion; 600 for production)
 DB_CONN_MAX_AGE=600
 
 # Security (set to True in production; False locally)

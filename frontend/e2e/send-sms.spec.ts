@@ -76,4 +76,33 @@ test.describe('Send SMS Page', () => {
     const sendButton = page.getByRole('button', { name: /send/i }).first()
     await expect(sendButton).toBeVisible()
   })
+
+  test('shows error when submitting with empty message', async ({ page }) => {
+    await page.goto('/app/send')
+    await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 })
+    // Add a recipient so the only error is the empty message
+    const recipientInput = page.getByPlaceholder(/phone|name|list/i).first()
+    await recipientInput.fill('0499888777')
+    await recipientInput.press('Enter')
+    // Submit with no message
+    await page.getByRole('button', { name: /send/i }).first().click()
+    await expect(page.getByText(/Please select a template or enter a custom message/i)).toBeVisible({ timeout: 5000 })
+  })
+
+  test('shows recipients count', async ({ page }) => {
+    await page.goto('/app/send')
+    await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 })
+    // Initially 0 recipients
+    await expect(page.getByText('Recipients: 0')).toBeVisible()
+  })
+
+  test('selecting a template populates the message textarea', async ({ page }) => {
+    await page.goto('/app/send')
+    await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 })
+    // Select 'SMS Welcome' template from the dropdown
+    const select = page.locator('select').first()
+    await select.selectOption({ label: 'SMS Welcome' })
+    // Textarea should be populated with the template text
+    await expect(page.locator('textarea').first()).toHaveValue('Welcome to our service!')
+  })
 })

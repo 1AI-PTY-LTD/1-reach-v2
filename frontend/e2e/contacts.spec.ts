@@ -1,23 +1,36 @@
 import { test, expect } from '@playwright/test'
 import {
   authenticatePage,
-  deleteContact, ensureContact,
-  apiRequest,
+  deleteContact, ensureContact, deleteSchedule,
+  apiRequest, setOrgBalance,
 } from './helpers'
 
 const createdIds: number[] = []
+const scheduleIds: number[] = []
 let c1: { id: number }, c2: { id: number }, c3: { id: number }
 
 test.beforeAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
+
+  await setOrgBalance(page, 100)
+
   ;[c1, c2, c3] = await Promise.all([
     ensureContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0412111111' }),
     ensureContact(page, { first_name: 'Bob',   last_name: 'Jones', phone: '0412222222' }),
     ensureContact(page, { first_name: 'Charlie', last_name: 'Brown', phone: '0412333333' }),
   ])
   createdIds.push(c1.id, c2.id, c3.id)
+
+  // Send an SMS to c1 to populate message history
+  const res = await apiRequest(page, 'POST', '/api/sms/send/', {
+    message: 'Contact history test',
+    recipient: '0412111111',
+    contact_id: c1.id,
+  })
+  if (res?.schedule_id) scheduleIds.push(res.schedule_id)
+
   await page.close()
 })
 
@@ -25,6 +38,7 @@ test.afterAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
+  await Promise.all(scheduleIds.map(id => deleteSchedule(page, id).catch(() => {})))
   await Promise.all(createdIds.map(id => deleteContact(page, id).catch(() => {})))
   await page.close()
 })
@@ -100,5 +114,23 @@ test.describe('Contacts Page', () => {
     await firstNameInput.fill('Alicia')
     await page.getByRole('button', { name: /update/i }).first().click()
     await expect(page.getByText(/edit contact details/i)).not.toBeVisible({ timeout: 5000 })
+  })
+
+  test('shows message history table on contact detail', async ({ page }) => {
+    await page.goto(`/app/contacts/${c1?.id}`)
+    await expect(page.getByText(/ali/i).first()).toBeVisible({ timeout: 10000 })
+    // Message history table headers should be visible
+    await expect(page.getByText('Status').first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Scheduled Time').first()).toBeVisible()
+    await expect(page.getByText('Sent Time').first()).toBeVisible()
+    await expect(page.getByText('Message').first()).toBeVisible()
+  })
+
+  test('can open send message modal from contact detail', async ({ page }) => {
+    await page.goto(`/app/contacts/${c1?.id}`)
+    await expect(page.getByText(/ali/i).first()).toBeVisible({ timeout: 10000 })
+    // Click the green + button (emerald button with white plus icon)
+    await page.locator('button').filter({ has: page.locator('svg.fill-white') }).first().click()
+    await expect(page.getByText(/create new message for/i)).toBeVisible({ timeout: 5000 })
   })
 })
