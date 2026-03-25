@@ -1,6 +1,5 @@
 #!/bin/bash
 set -e
-cd /home/site/wwwroot
 python manage.py migrate --no-input
 python manage.py collectstatic --no-input
 gunicorn app.asgi:application \
