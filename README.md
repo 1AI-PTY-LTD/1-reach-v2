@@ -359,22 +359,69 @@ The app deploys to Azure as five services. GitHub Actions workflows (`.github/wo
 
 | Component | Azure Service | Startup |
 |-----------|---------------|---------|
-| Backend API | App Service (Python 3.12, Linux) | `startup.sh` — gunicorn + uvicorn ASGI workers |
-| Celery Worker | App Service (same plan) | `startup-worker.sh` — processes `messages` queue |
-| Celery Beat | App Service (same plan) | `startup-beat.sh` — `DatabaseScheduler`, dispatches due messages every 60s |
+| Backend API | App Service (Python 3.12, Linux) | `bash startup.sh` — migrations, collectstatic, gunicorn + uvicorn ASGI workers |
+| Celery Worker | App Service (same plan) | `bash startup-worker.sh` — processes `messages` queue |
+| Celery Beat | App Service (same plan) | `bash startup-beat.sh` — `DatabaseScheduler`, dispatches due messages every 60s |
 | Frontend | Azure Static Web Apps | Vite build → `dist/` uploaded via `Azure/static-web-apps-deploy` |
 | Database | Azure Database for PostgreSQL | Flexible Server |
 | Redis | Azure Cache for Redis | Celery broker + result backend |
 | Storage | Azure Blob Storage | MMS media files |
 
-### Azure Resources
+### Step-by-Step Azure Setup
 
-1. **Azure Database for PostgreSQL** — Flexible Server
-2. **Azure Cache for Redis** — Basic C0 (or Azure Managed Redis). Connection URL must use `rediss://` (TLS) and the correct port (6380 for classic, 10000 for AMR)
-3. **App Service Plan** — Linux, B1 or higher. All three backend services (API, worker, beat) can share one plan for dev/staging
-4. **App Service × 3** — One each for API, worker, and beat. Set the startup command in Configuration → General settings
-5. **Azure Static Web Apps** — Free tier. `frontend/staticwebapp.config.json` handles SPA routing fallback
-6. **Azure Blob Storage** — Standard LRS. Create a `media` container and generate a SAS URL
+#### 1. Provision Azure Resources
+
+Create these resources in a single resource group (a logical container that groups related Azure resources for unified management, billing, and access control):
+
+1. **Azure Database for PostgreSQL** — Flexible Server. Note the server name, database name, admin user, and password.
+2. **Azure Cache for Redis** — Basic C0 (~$15/mo). Classic Azure Cache for Redis is being deprecated in 2028; Azure Managed Redis (AMR) is the replacement but starts at ~$30/mo for the B0 tier. For dev/staging, Classic Basic C0 is fine.
+   - Connection URL format: `rediss://:<access-key>@<redis-name>.redis.cache.windows.net:6380/0`
+   - Must use `rediss://` (TLS) and port `6380` (classic) or `10000` (AMR)
+3. **App Service Plan** — Linux, B1 or higher. All three backend services (API, worker, beat) can share one plan for dev/staging.
+4. **App Service × 3** — Create three App Services on the plan above (API, worker, beat). Set runtime to Python 3.12.
+5. **Azure Static Web Apps** — Free tier. `frontend/staticwebapp.config.json` handles SPA routing fallback.
+6. **Azure Blob Storage** — Standard LRS. Create a `media` container. Generate a SAS token via Storage Account → Shared access signature (enable Blob service, Container + Object resource types, Read + Write + Create permissions).
+
+#### 2. Configure App Services
+
+For each App Service (API, worker, beat):
+
+**Settings → Configuration → General settings → Startup command:**
+- API: `bash startup.sh`
+- Worker: `bash startup-worker.sh`
+- Beat: `bash startup-beat.sh`
+
+**Settings → Environment variables** — set the variables listed in the [Environment Variables](#environment-variables) table below.
+
+**Settings → Configuration → General settings:**
+- Ensure `SCM_DO_BUILD_DURING_DEPLOYMENT` is set to `true` — this triggers Oryx to run `pip install -r requirements.txt` during zip deploy.
+
+**Download publish profiles:**
+- Each App Service → Overview → Download publish profile. You need **Basic authentication** enabled (Settings → Configuration → General settings → Basic Auth Publishing Credentials → On).
+
+#### 3. Configure GitHub Secrets
+
+In your GitHub repo → Settings → Secrets and variables → Actions, set the secrets listed in the [GitHub Secrets](#github-secrets-cd) table below.
+
+#### 4. Configure Clerk for Azure
+
+1. **Clerk Dashboard → Domains:** Add the Static Web App URL (`https://<name>.azurestaticapps.net`) as an allowed origin
+2. **Clerk Dashboard → Webhooks → Add Endpoint:**
+   - URL: `https://<api-app-name>.azurewebsites.net/api/webhooks/clerk/`
+   - Subscribe to: `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`, `subscription.active`, `subscriptionItem.canceled`, `subscriptionItem.ended`, `subscription.past_due`
+   - Copy the **Signing Secret** (`whsec_...`) → set as `CLERK_WEBHOOK_SIGNING_SECRET` on all backend App Services
+
+#### 5. Deploy
+
+Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab.
+
+#### 6. Verify
+
+- `GET https://<api-app-name>.azurewebsites.net/api/health/` returns 200
+- Frontend loads at the Static Web App URL and Clerk sign-in works
+- Sign up a user → check Clerk Dashboard → Webhooks → verify events delivered successfully (200)
+- App Service → Monitoring → Log stream shows JSON-formatted request/response logs
+- Send a test message to verify the Celery worker processes it
 
 ### Environment Variables
 
@@ -385,7 +432,7 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (triggers `pip install` on deploy) |
 | `DJANGO_SECRET_KEY` | Strong random key |
 | `DEBUG` | `0` |
-| `ALLOWED_HOSTS` | `<api-app-name>.azurewebsites.net` |
+| `ALLOWED_HOSTS` | `<api-app-name>.azurewebsites.net,169.254.129.2` |
 | `CORS_ALLOWED_ORIGINS` | `https://<static-web-app>.azurestaticapps.net` |
 | `POSTGRES_DB` | Database name |
 | `POSTGRES_USER` | Database user |
@@ -397,7 +444,7 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `CELERY_RESULT_BACKEND` | Same as broker URL |
 | `CLERK_FRONTEND_API` | Clerk frontend API URL |
 | `CLERK_SECRET_KEY` | Clerk secret key |
-| `CLERK_WEBHOOK_SIGNING_SECRET` | Clerk webhook signing secret |
+| `CLERK_WEBHOOK_SIGNING_SECRET` | Clerk webhook signing secret (`whsec_...`) |
 | `CLERK_AUTHORIZED_PARTIES` | `https://<static-web-app>.azurestaticapps.net` |
 | `STORAGE_PROVIDER_CLASS` | `app.utils.storage.AzureBlobStorageProvider` |
 | `AZURE_BLOB_URL` | `https://<account>.blob.core.windows.net/?<sas-token>` |
@@ -407,8 +454,6 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `SESSION_COOKIE_SECURE` | `True` |
 | `CSRF_COOKIE_SECURE` | `True` |
 | `SECURE_HSTS_SECONDS` | `31536000` |
-
-> **Do NOT set `SECURE_SSL_REDIRECT=True`** — Azure terminates TLS at the load balancer; enabling this causes infinite redirect loops.
 
 ### GitHub Secrets (CD)
 
@@ -424,20 +469,42 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` |
 
-### Clerk Configuration (Staging/Production)
+### Gotchas & Troubleshooting
 
-1. Add the Static Web App URL to allowed origins in the Clerk Dashboard
-2. Create a webhook endpoint → `https://<api-app-name>.azurewebsites.net/api/webhooks/clerk/`
-3. Subscribe to all events listed in [Clerk Configuration](#clerk-configuration) above
-4. Rotate `DJANGO_SECRET_KEY`, `CLERK_SECRET_KEY`, and `CLERK_WEBHOOK_SIGNING_SECRET` before go-live
+These are issues encountered during initial deployment that are easy to miss:
 
-### Verification
+#### Oryx build system and startup scripts
+Azure App Service uses **Oryx** to build and run Python apps. Oryx extracts the deployed zip to a **temp directory** (e.g., `/tmp/8de8a2ddc57556c`), NOT `/home/site/wwwroot`. Startup scripts must use **relative paths** — never `cd /home/site/wwwroot`. The startup command in Azure Portal must also be relative: `bash startup.sh`, not `bash /home/site/wwwroot/startup.sh`.
 
-After first deploy, check:
-- `GET https://<api-app-name>.azurewebsites.net/api/health/` returns 200
-- Frontend loads and Clerk sign-in works
-- App Service → Monitoring → Log stream shows JSON-formatted logs
-- Send a test message to verify the Celery worker processes it
+#### VITE_API_BASE_URL must include the protocol
+`VITE_API_BASE_URL` is baked into the frontend JS bundle at build time. It **must** include `https://` — without it, the browser resolves it as a relative path and API requests go to `https://<frontend-host>/<backend-host>/api/...` instead of `https://<backend-host>/api/...`. It must NOT have a trailing slash (API paths already start with `/api/`).
+
+#### CORS_ALLOWED_ORIGINS — no trailing slash
+Django-cors-headers silently rejects origins with a trailing slash. Use `https://<host>.azurestaticapps.net`, not `https://<host>.azurestaticapps.net/`.
+
+#### ALLOWED_HOSTS must include Azure health probe IP
+Azure health probes hit the app from internal IP `169.254.129.2`. Add it to `ALLOWED_HOSTS` or Django returns `DisallowedHost` and Azure marks the app as unhealthy. For dev/staging you can use `*`.
+
+#### SECURE_SSL_REDIRECT must NOT be True
+Azure terminates TLS at the load balancer. The app receives plain HTTP internally. Setting `SECURE_SSL_REDIRECT=True` causes an infinite redirect loop.
+
+#### Frontend deploy — skip_app_build
+The `Azure/static-web-apps-deploy@v1` action runs its own internal build by default, **without** your GitHub secrets as env vars. Since Vite env vars (`VITE_*`) must be present at build time, the workflow builds first with `npm run build` (where secrets are available), then deploys the pre-built `dist/` with `skip_app_build: true`.
+
+#### Clerk webhook URL
+The webhook endpoint is `POST /api/webhooks/clerk/` (not `/api/clerk/webhook/` or similar). The trailing slash is required — Django's `APPEND_SLASH` doesn't work for POST requests.
+
+#### Clerk webhook signing secret
+The `CLERK_WEBHOOK_SIGNING_SECRET` env var on the backend must exactly match the signing secret shown in the Clerk Dashboard for that webhook endpoint. A mismatch causes Svix signature verification to fail → 400 response → webhooks silently not processed.
+
+#### CLERK_AUTHORIZED_PARTIES
+The backend validates the `azp` (authorized party) claim in Clerk JWTs against this comma-separated list. If the Azure frontend URL is missing, all authenticated API calls return 403. Include both local and deployed URLs: `http://localhost:5173,https://<static-web-app>.azurestaticapps.net`.
+
+#### App Service log stream shows stale logs
+After redeploying, the Azure Portal log stream may continue showing old logs. **Stop and restart** the App Service (not just restart — do Stop, wait, then Start). If logs still don't update, the deployment may not have triggered an Oryx rebuild — check the deployment logs in the Deployment Center.
+
+#### Publish profile requires Basic Auth
+To download a publish profile, Basic Authentication must be enabled: App Service → Settings → Configuration → General settings → Basic Auth Publishing Credentials → On.
 
 ---
 
