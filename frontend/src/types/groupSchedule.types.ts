@@ -17,6 +17,8 @@ export type GroupSchedule = {
     contact?: { id: number; first_name: string; last_name: string; phone: string } | null
     phone: string
     status: string
+    scheduled_time?: string | null
+    sent_time?: string | null
   }[]
 }
 

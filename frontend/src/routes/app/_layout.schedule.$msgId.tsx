@@ -1,16 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { z } from 'zod'
 import { Heading } from '../../ui/heading'
-import {
-  DescriptionDetails,
-  DescriptionList,
-  DescriptionTerm,
-} from '../../ui/description-list'
-import dayjs from 'dayjs'
-import { StatusBadge } from '../../components/StatusBadge'
-import { Divider } from '../../ui/divider'
-import { PencilIcon, TrashIcon } from '@heroicons/react/16/solid'
-import { Button } from '../../ui/button'
 
 export const Route = createFileRoute('/app/_layout/schedule/$msgId')({
   component: MessageDetails,

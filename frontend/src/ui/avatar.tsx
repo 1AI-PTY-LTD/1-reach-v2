@@ -75,6 +75,7 @@ export const AvatarButton = forwardRef(function AvatarButton(
       </TouchTarget>
     </Link>
   ) : (
+    // @ts-expect-error HeadlessUI Button and TanStack Link have incompatible event handler types at the union level
     <Headless.Button {...props} className={classes} ref={ref}>
       <TouchTarget>
         <Avatar src={src} square={square} initials={initials} alt={alt} />

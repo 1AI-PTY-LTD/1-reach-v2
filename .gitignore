@@ -7,3 +7,4 @@ test-results/
 .tanstack/
 .pytest_cache/
 */playwright-report/
+.DS_Store

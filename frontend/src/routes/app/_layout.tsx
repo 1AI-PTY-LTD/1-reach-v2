@@ -86,7 +86,7 @@ function AppLayout() {
             {navItems.map(({ label, to }) => (
               <NavbarItem
                 key={label}
-                to={to}
+                to={to as any}
                 current={matches.some((m) =>
                   m.pathname.startsWith(to),
                 )}

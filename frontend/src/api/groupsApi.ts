@@ -1,5 +1,5 @@
 import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
-import type { ContactGroup, ContactGroupDetail, CreateGroup, UpdateGroup } from '../types/group.types'
+import type { ContactGroup, CreateGroup, UpdateGroup } from '../types/group.types'
 import type { PaginatedResponse, Pagination } from '../types/pagination.types'
 import type { Contact } from '../types/contact.types'
 import type { ApiClient } from '../lib/helper'

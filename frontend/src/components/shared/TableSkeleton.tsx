@@ -45,7 +45,7 @@ export default function TableSkeleton({
 				<Table className="w-full table-fixed">
 					<TableHead>
 						<TableRow>
-							{columns.map((column, index) => (
+							{columns.map((_column, index) => (
 								<TableHeader key={index}>
 									<SkeletonBox className="h-3 w-2/3" />
 								</TableHeader>

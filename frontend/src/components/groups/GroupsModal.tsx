@@ -5,7 +5,7 @@ import { Button } from '../../ui/button';
 import { useForm } from '@tanstack/react-form';
 import Logger from '../../utils/logger';
 import { Textarea } from '../../ui/textarea';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useCreateGroupMutation, useUpdateGroupMutation, getGroupByIdQueryOptions } from '../../api/groupsApi';
 import { useQuery } from '@tanstack/react-query';
 import type { ContactGroup } from '../../types';

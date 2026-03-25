@@ -120,6 +120,7 @@ export const SidebarItem = forwardRef(function SidebarItem(
           </Link>
         </Headless.CloseButton>
       ) : (
+        // @ts-expect-error HeadlessUI Button and TanStack Link have incompatible event handler types at the union level
         <Headless.Button
           {...props}
           className={clsx('cursor-default', classes)}

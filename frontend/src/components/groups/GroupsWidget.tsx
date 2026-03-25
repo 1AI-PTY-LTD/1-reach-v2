@@ -8,7 +8,6 @@ import { MagnifyingGlassIcon, PlusIcon } from '@heroicons/react/16/solid';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getSearchInGroupsQueryOptions } from '../../api/groupsApi';
-import type { GroupDetailResponse } from '../../api/groupsApi';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useRouterState, useNavigate } from '@tanstack/react-router';
 import Logger from '../../utils/logger';

@@ -335,6 +335,7 @@ Docker is used for local development only. The production target is Azure:
 - ~~`frontend/vite.config.ts` — explicit `build.outDir` and `sourcemap: false`~~ ✓
 - ~~Frontend UX fixes: `_layout.send.index.tsx` (blank page), `__root.tsx` (raw JSON error boundary), missing `errorComponent` on billing/users routes~~ ✓
 - ~~`.github/workflows/` — CI (pytest + vitest on PRs) and CD (deploy to Azure on `main`)~~ ✓
+- ~~TypeScript build errors — fix ~35 errors caught by `tsc -b` (unused imports, missing status colors, null safety, HeadlessUI/TanStack type conflicts)~~ ✓
 
 **Azure provisioning — see [Azure Deployment](#azure-deployment) below.**
 

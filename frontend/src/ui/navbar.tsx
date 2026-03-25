@@ -113,6 +113,7 @@ export const NavbarItem = forwardRef(function NavbarItem(
                     <TouchTarget>{children}</TouchTarget>
                 </Link>
             ) : (
+                // @ts-expect-error HeadlessUI Button and TanStack Link have incompatible event handler types at the union level
                 <Headless.Button
                     {...props}
                     className={clsx("cursor-default", classes)}

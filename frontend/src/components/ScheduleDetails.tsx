@@ -1,5 +1,4 @@
 import dayjs from 'dayjs';
-import { StatusBadge } from './StatusBadge';
 import { Divider } from '../ui/divider';
 import { Button } from '../ui/button';
 import { PencilIcon, TrashIcon } from '@heroicons/react/16/solid';

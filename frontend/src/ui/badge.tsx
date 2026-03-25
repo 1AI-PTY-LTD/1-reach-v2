@@ -73,6 +73,7 @@ export const BadgeButton = forwardRef(function BadgeButton(
       </TouchTarget>
     </Link>
   ) : (
+    // @ts-expect-error HeadlessUI Button and TanStack Link have incompatible event handler types at the union level
     <Headless.Button {...props} className={classes} ref={ref}>
       <TouchTarget>
         <Badge color={color}>{children}</Badge>

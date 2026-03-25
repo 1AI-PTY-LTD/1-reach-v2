@@ -1,6 +1,5 @@
 import { Badge } from "../ui/badge";
 import type { ScheduleStatus } from "../types/schedule.types";
-import Logger from "../utils/logger";
 
 // Define a type for the badge colors
 type BadgeColor =
@@ -26,8 +25,11 @@ type BadgeColor =
 // Use string literal keys matching ScheduleStatus union type
 const badgeColor: Record<ScheduleStatus, BadgeColor> = {
     pending: "indigo",
+    queued: "sky",
     processing: "amber",
     sent: "emerald",
+    retrying: "yellow",
+    delivered: "green",
     failed: "orange",
     cancelled: "zinc",
 };

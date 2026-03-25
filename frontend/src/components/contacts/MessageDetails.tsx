@@ -1,6 +1,5 @@
 import { Button } from '../../ui/button';
 import { PencilIcon, TrashIcon } from '@heroicons/react/16/solid';
-import { StatusBadge } from '../StatusBadge';
 import dayjs from 'dayjs';
 import type { Schedule } from '../../types/schedule.types';
 import { ContactMessageModal } from './CustomerMessageModal';

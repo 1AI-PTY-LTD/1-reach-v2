@@ -93,8 +93,8 @@ export function DropdownItem({
                 />
             ) : (
                 <button
-                    type="button"
-                    {...props}
+                    type={"button" as const}
+                    {...(props as React.ComponentPropsWithoutRef<"button">)}
                     className={classes}
                 />
             )}

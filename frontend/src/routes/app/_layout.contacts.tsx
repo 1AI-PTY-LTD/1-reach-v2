@@ -53,7 +53,7 @@ function ContactsLayout() {
   return (
     <div className="flex">
       <div className="w-1/4 overflow-hidden border-light-gray rounded-md mr-4 bg-white dark:bg-zinc-900 shadow-lg">
-        <ContactsWidget contacts={contacts} />
+        <ContactsWidget contacts={contacts ?? []} />
       </div>
       <div className="w-3/4 overflow-auto border-light-gray rounded-md">
         <Outlet />

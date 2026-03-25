@@ -47,7 +47,7 @@ export default function ScheduleTable({
 		}
 	};
 
-	const renderedMessages = messages.map((entry, idx) => {
+	const renderedMessages = messages.map((entry, _idx) => {
 		const isExpanded = expandedMessageId === entry.id;
 		const isSelected = selectedMessageId === entry.id;
 

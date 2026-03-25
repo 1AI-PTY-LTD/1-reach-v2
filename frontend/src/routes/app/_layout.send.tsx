@@ -23,11 +23,10 @@ import {
 } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/20/solid'
 import { getSearchContactsQueryOptions } from '../../api/contactsApi'
-import { getAllGroupsQueryOptions, getSearchInGroupsQueryOptions, getGroupByIdQueryOptions } from '../../api/groupsApi'
+import { getSearchInGroupsQueryOptions, getGroupByIdQueryOptions } from '../../api/groupsApi'
 import type { Contact } from '../../types/contact.types'
 import type { ContactGroup } from '../../types/group.types'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
-import Logger from '../../utils/logger'
 import { FileUpload } from '../../ui/file-upload'
 import { useApiClient } from '../../lib/ApiClientProvider'
 
@@ -62,7 +61,7 @@ function SendContent() {
   const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null)
   const [uploadingFile, setUploadingFile] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [, setSelectedFile] = useState<File | null>(null)
   const [fileUploadKey, setFileUploadKey] = useState<number>(0)
 
   const extractErrorMessage = (error: any): string => {

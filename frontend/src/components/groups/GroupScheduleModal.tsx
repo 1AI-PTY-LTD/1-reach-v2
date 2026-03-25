@@ -13,7 +13,6 @@ import { Select } from '../../ui/select';
 import dayjs from 'dayjs';
 import { sendSmsToGroup } from '../../api/smsApi';
 import type { SendGroupSmsRequest } from '../../types/sms.types';
-import { ErrorMessage } from '../../ui/fieldset';
 import { useApiClient } from '../../lib/ApiClientProvider';
 
 export default function GroupScheduleModal({

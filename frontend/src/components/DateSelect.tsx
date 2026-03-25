@@ -1,14 +1,18 @@
-import { FieldApi } from "@tanstack/react-form";
 import { Field, Label } from "../ui/fieldset";
 import { Select } from "../ui/select";
 import { useState, useEffect } from "react";
 import dayjs from "dayjs";
 import Logger from "../utils/logger";
 
+interface DateFieldApi {
+    state: { value: string };
+    handleChange: (value: string) => void;
+}
+
 export function DateSelect({
     field,
 }: {
-    field: FieldApi<any, any, any, any, any>;
+    field: DateFieldApi;
 }) {
     Logger.debug("Rendering DateSelect", { 
         component: "DateSelect",

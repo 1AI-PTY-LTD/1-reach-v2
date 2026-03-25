@@ -2,7 +2,6 @@ import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../ui/table';
 import { getGroupScheduleByIdQueryOptions, useDeleteGroupScheduleMutation } from '../../api/groupSchedulesApi';
-import { Text } from '../../ui/text';
 import { StatusBadge } from '../StatusBadge';
 import type { ScheduleStatus } from '../../types/schedule.types';
 import LoadingSpinner from '../shared/LoadingSpinner';

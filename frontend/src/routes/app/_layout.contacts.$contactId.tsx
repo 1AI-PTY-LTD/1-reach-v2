@@ -15,7 +15,6 @@ import { ContactMessageModal } from '../../components/contacts/CustomerMessageMo
 import { useQuery } from '@tanstack/react-query'
 import Logger from '../../utils/logger'
 import { getAllContactsQueryOptions, getContactByIdQueryOptions } from '../../api/contactsApi'
-import TableSkeleton from '../../components/shared/TableSkeleton'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
 
@@ -157,15 +156,12 @@ function ContactDetails() {
           <TableCell>{dayjs(entry.scheduled_time).format('hh:mmA DD/MM/YYYY')}</TableCell>
           <TableCell>{entry.sent_time ? dayjs(entry.sent_time).format('hh:mmA DD/MM/YYYY') : ''}</TableCell>
           <TableCell className="w-16">{entry.format || 'SMS'}</TableCell>
-          <TableCell>{entry.text.length > 40 ? entry.text.substring(0, 40) + '...' : entry.text}</TableCell>
+          <TableCell>{(entry.text ?? '').length > 40 ? (entry.text ?? '').substring(0, 40) + '...' : (entry.text ?? '')}</TableCell>
         </TableRow>
         {selectedRowId === entry.id && (
           <TableRow className="bg-zinc-100 dark:bg-zinc-800">
             <TableCell colSpan={6} className="p-0">
-              <MessageDetails message={{
-                ...entry,
-                template_id: entry.template_id ?? undefined,
-              }} />
+              <MessageDetails message={entry} />
             </TableCell>
           </TableRow>
         )}
