@@ -193,7 +193,7 @@ function GroupedDataView({ data, existingGroups }: { data: GroupedData; existing
                       </span>
                     </div>
                     <Button
-                      color="green"
+                      color="purple"
                       onClick={() => handleSend(groupName)}
                       disabled={groupSendingState.isSending || !!groupSendingState.success || isMessageTooLong}
                     >

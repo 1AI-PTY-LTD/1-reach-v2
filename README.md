@@ -27,7 +27,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 | Backend | Django 6 + Django REST Framework + PostgreSQL 16 |
 | Auth | Clerk (JWT + webhooks) |
 | Frontend | React 19 + Vite 7 + TanStack Router + TanStack Query |
-| Styling | Tailwind CSS 3 + HeadlessUI |
+| Styling | Tailwind CSS 3 + HeadlessUI + Lucide icons |
 | SMS/Storage | Pluggable provider interface (Mock by default, Azure Blob for storage) |
 | Task queue | Celery 5 + Redis 7 (async send pipeline, retry logic, beat scheduler) |
 | Monitoring | Sentry + structured JSON logging |
@@ -180,14 +180,34 @@ Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults t
 frontend/
 ├── src/
 │   ├── api/               # Query options + mutation hooks (usersApi, contactsApi, etc.)
-│   ├── components/        # Feature components (contacts/, groups/, shared/)
+│   ├── components/
+│   │   ├── landing/       # Landing page sections (Navbar, Hero, Features, Pricing, etc.)
+│   │   ├── contacts/      # Contact-related components
+│   │   ├── groups/        # Group-related components
+│   │   └── shared/        # Shared components (LoadingSpinner, etc.)
 │   ├── routes/app/        # File-based route components (TanStack Router)
 │   ├── ui/                # HeadlessUI + Tailwind component library
 │   ├── types/             # TypeScript types matching backend snake_case fields
-│   ├── lib/               # ApiClient, ApiClientProvider
+│   ├── lib/               # ApiClient, ApiClientProvider, cn() utility
 │   └── test/              # Vitest setup, MSW handlers, factories
 └── e2e/                   # Playwright tests
 ```
+
+**Landing page:** Unauthenticated visitors see a marketing landing page (`src/components/landing/`) rendered via Clerk's `<SignedOut>` gate in `__root.tsx`. It includes a hero section with animated canvas background, features grid, pricing tiers, and CTA sections. Sign In / Sign Up buttons open Clerk modals. Once authenticated, users are redirected to `/app/send`.
+
+**Brand colours:** Defined in `tailwind.config.cjs` under `theme.extend.colors.brand`:
+
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `brand-purple` | `#7400f6` | Primary actions, buttons, progress bars |
+| `brand-navy` | `#190075` | Dark text accents |
+| `brand-light-purple` | `#9d30a0` | Secondary accents |
+| `brand-teal` | `#048fb5` | Tertiary accents |
+| `brand-green` | `#2CDFB5` | Success states |
+| `brand-red` | `#FC7091` | Error states |
+| `brand-amber` | `#FEC200` | Warning states |
+
+Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in `index.html`.
 
 **API client pattern:** All components use `useApiClient()` to get an `ApiClient` instance pre-authenticated with a Clerk JWT. API modules (`src/api/`) export TanStack Query options and mutation hooks that accept the client as their first argument.
 

@@ -292,9 +292,9 @@ function SendContent() {
                       {selectedRecipients.length > 0 && (
                         <div ref={chipsContainerRef} className="flex flex-wrap gap-2 mb-1 pr-1 overflow-y-auto max-h-16">
                           {selectedRecipients.map((r, idx) => (
-                            <span key={`${r.phone}-${idx}`} className="inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-200 px-2 py-0.5 border border-emerald-200 dark:border-emerald-800">
+                            <span key={`${r.phone}-${idx}`} className="inline-flex items-center gap-1 rounded-md bg-brand-purple/10 text-brand-purple dark:bg-brand-purple/20 dark:text-brand-purple px-2 py-0.5 border border-brand-purple/20 dark:border-brand-purple/30">
                               <span className="truncate max-w-[200px]">{r.name ? r.name : r.phone}</span>
-                              <button type="button" className="text-emerald-800 hover:text-emerald-900" onClick={() => setSelectedRecipients((prev) => prev.filter((_, i) => i !== idx))}>
+                              <button type="button" className="text-brand-purple/70 hover:text-brand-purple" onClick={() => setSelectedRecipients((prev) => prev.filter((_, i) => i !== idx))}>
                                 <XMarkIcon className="size-4" />
                               </button>
                             </span>
@@ -524,7 +524,7 @@ function SendContent() {
             </div>
 
             <div className="flex justify-end mt-4">
-              <Button type="submit" color="emerald" disabled={isSending}>
+              <Button type="submit" color="purple" disabled={isSending}>
                 {isSending ? (
                   <div className="flex items-center gap-2">
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
@@ -547,7 +547,7 @@ function SendContent() {
                 <span>Total recipients</span>
                 <span>{summaryCounts.total}</span>
               </div>
-              <div className="flex justify-between text-emerald-700 dark:text-emerald-400">
+              <div className="flex justify-between text-brand-green">
                 <span>Successful</span>
                 <span>{summaryCounts.success}</span>
               </div>
@@ -570,7 +570,7 @@ function SendContent() {
             </div>
           </DialogBody>
           <DialogActions>
-            <Button color="emerald" onClick={() => setSummaryOpen(false)}>
+            <Button color="purple" onClick={() => setSummaryOpen(false)}>
               Close
             </Button>
           </DialogActions>

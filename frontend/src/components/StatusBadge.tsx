@@ -27,7 +27,7 @@ const badgeColor: Record<ScheduleStatus, BadgeColor> = {
     pending: "indigo",
     queued: "sky",
     processing: "amber",
-    sent: "emerald",
+    sent: "green",
     retrying: "yellow",
     delivered: "green",
     failed: "orange",

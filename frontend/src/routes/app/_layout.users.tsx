@@ -34,7 +34,7 @@ export const Route = createFileRoute('/app/_layout/users')({
       </p>
       <button
         onClick={() => window.location.reload()}
-        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+        className="px-4 py-2 bg-brand-purple text-white rounded-lg hover:bg-brand-purple/80"
       >
         Retry
       </button>
@@ -100,7 +100,7 @@ function InviteUserDialog({
           <Button plain onClick={() => setIsOpen(false)}>
             Cancel
           </Button>
-          <Button type="submit" color="emerald" disabled={inviteUser.isPending}>
+          <Button type="submit" color="purple" disabled={inviteUser.isPending}>
             {inviteUser.isPending ? (
               <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
             ) : 'Send Invite'}
@@ -147,7 +147,7 @@ export function UsersContent() {
     <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-4">
       {isAdmin && (
         <div className="mb-4 flex justify-end">
-          <Button color="emerald" onClick={() => setInviteOpen(true)}>
+          <Button color="purple" onClick={() => setInviteOpen(true)}>
             Invite User
           </Button>
           <InviteUserDialog isOpen={inviteOpen} setIsOpen={setInviteOpen} />
@@ -178,7 +178,7 @@ export function UsersContent() {
                 <TableCell>{user.email}</TableCell>
                 <TableCell>{user.organisation}</TableCell>
                 <TableCell>
-                  <Badge color={user.role === 'org:admin' ? 'emerald' : 'zinc'}>
+                  <Badge color={user.role === 'org:admin' ? 'purple' : 'zinc'}>
                     {user.role === 'org:admin' ? 'Admin' : 'Member'}
                   </Badge>
                 </TableCell>

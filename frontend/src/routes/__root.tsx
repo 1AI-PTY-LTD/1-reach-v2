@@ -1,6 +1,7 @@
 import { createRootRouteWithContext, Outlet } from '@tanstack/react-router'
-import { SignedIn, SignedOut, SignInButton, SignUpButton } from '@clerk/clerk-react'
+import { SignedIn, SignedOut } from '@clerk/clerk-react'
 import type { QueryClient } from '@tanstack/react-query'
+import { LandingPage } from '../components/landing/LandingPage'
 
 // Bypass Clerk auth in local E2E test mode. This variable is set in frontend/.env
 // (local dev only) and is never present in production builds.
@@ -18,7 +19,7 @@ export const Route = createRootRouteWithContext<{
       </p>
       <button
         onClick={() => window.location.reload()}
-        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+        className="px-4 py-2 bg-brand-purple text-white rounded-lg hover:bg-brand-purple/80"
       >
         Reload page
       </button>
@@ -36,27 +37,15 @@ function Root() {
   }
 
   return (
-    <div className="md:max-h-screen overflow-hidden">
+    <>
       <SignedIn>
-        <Outlet />
+        <div className="md:max-h-screen overflow-hidden">
+          <Outlet />
+        </div>
       </SignedIn>
       <SignedOut>
-        <div className="flex flex-col items-center justify-center min-h-screen gap-4 dark:text-white">
-          <h1 className="text-2xl font-bold">Welcome to 1Reach</h1>
-          <div className="flex gap-4">
-            <SignInButton mode="modal">
-              <button className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
-                Sign In
-              </button>
-            </SignInButton>
-            <SignUpButton mode="modal">
-              <button className="px-4 py-2 border border-emerald-600 text-emerald-600 rounded-lg hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-400 dark:hover:bg-emerald-950">
-                Sign Up
-              </button>
-            </SignUpButton>
-          </div>
-        </div>
+        <LandingPage />
       </SignedOut>
-    </div>
+    </>
   )
 }
