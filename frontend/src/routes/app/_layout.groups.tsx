@@ -49,7 +49,7 @@ function GroupsLayout() {
   return (
     <div className="flex max-h-[85vh] gap-4">
       <div className="w-1/4 flex-shrink-0">
-        <GroupsWidget userGroups={groups} />
+        <GroupsWidget userGroups={groups ?? []} />
       </div>
       <div className="w-3/4 flex-1 min-h-0">
         <Outlet />
