@@ -26,7 +26,7 @@ export const Route = createFileRoute('/app/_layout/billing')({
       </p>
       <button
         onClick={() => window.location.reload()}
-        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+        className="px-4 py-2 bg-brand-purple text-white rounded-lg hover:bg-brand-purple/80"
       >
         Retry
       </button>
@@ -117,7 +117,7 @@ function BillingContent() {
           {limit !== null && (
             <div className="mt-2 h-2 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
               <div
-                className="h-full bg-emerald-500 rounded-full"
+                className="h-full bg-brand-purple rounded-full"
                 style={{ width: `${Math.min((spend / limit) * 100, 100)}%` }}
               />
             </div>

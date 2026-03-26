@@ -12,7 +12,6 @@ import {
   NavbarSpacer,
 } from '../../ui/navbar'
 import { UserButton, useOrganization } from '@clerk/clerk-react'
-import logo from '../../assets/images/1ai_logo.png'
 
 export const Route = createFileRoute('/app/_layout')({
   component: AppLayout,
@@ -74,13 +73,11 @@ function AppLayout() {
     <StackedLayout
       navbar={
         <Navbar className="max-w-6xl m-auto">
-          <Link to="/app/schedule">
-            <img
-              src={logo}
-              alt="Logo"
-              width={55}
-              height={55}
-            />
+          <Link to="/app/schedule" className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-purple">
+              <span className="text-sm font-semibold text-white font-mono">1</span>
+            </div>
+            <span className="text-lg font-semibold text-zinc-950 dark:text-white font-mono tracking-tight">1Reach</span>
           </Link>
           <NavbarSection className="">
             {navItems.map(({ label, to }) => (
