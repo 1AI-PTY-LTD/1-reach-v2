@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import Logger from '../../utils/logger'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
-import { Heading } from '../../ui/heading'
+import DatePicker from '../../components/DatePicker'
 import type { Schedule } from '../../types'
 
 export const Route = createFileRoute('/app/_layout/schedule')({
@@ -93,7 +93,7 @@ function ScheduleContent() {
         <Button outline onClick={goToPreviousDay}>
           <ChevronLeftIcon />
         </Button>
-        <Heading>{date.format('DD/MM/YYYY')}</Heading>
+        <DatePicker value={date} onChange={(d) => { setSelectedMessageId(undefined); setDate(d) }} />
         <Button outline onClick={goToNextDay}>
           <ChevronRightIcon />
         </Button>
