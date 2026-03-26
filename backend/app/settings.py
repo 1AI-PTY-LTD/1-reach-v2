@@ -224,10 +224,19 @@ CELERY_BEAT_SCHEDULE = {
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # Redis SSL — required for Azure Cache for Redis (rediss:// URLs)
-if CELERY_BROKER_URL.startswith('rediss://') and 'ssl_cert_reqs' not in CELERY_BROKER_URL:
-    _ssl_param = '&ssl_cert_reqs=CERT_NONE' if '?' in CELERY_BROKER_URL else '?ssl_cert_reqs=CERT_NONE'
-    CELERY_BROKER_URL += _ssl_param
-    CELERY_RESULT_BACKEND += _ssl_param
+def _ensure_redis_ssl(url):
+    if url and url.startswith('rediss://') and 'ssl_cert_reqs' not in url:
+        sep = '&' if '?' in url else '?'
+        return url + sep + 'ssl_cert_reqs=CERT_NONE'
+    return url
+
+CELERY_BROKER_URL = _ensure_redis_ssl(CELERY_BROKER_URL)
+CELERY_RESULT_BACKEND = _ensure_redis_ssl(CELERY_RESULT_BACKEND)
+
+if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
+    import ssl as _ssl
+    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
+    CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
 
 
 # SMS Provider
