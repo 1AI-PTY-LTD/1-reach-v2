@@ -80,7 +80,7 @@ export default function UploadFileModal({
                     <Heading className="text-center mb-2">
                         Upload Complete
                     </Heading>
-                    <div className="text-sm text-gray-600w-full text-center mb-2">
+                    <div className="text-sm text-gray-600 dark:text-gray-400 w-full text-center mb-2">
                         {uploadResult.message}
                     </div>
                     <div className="flex justify-end mt-4">
@@ -110,7 +110,7 @@ export default function UploadFileModal({
                             >
                                 Choose File
                             </Button>
-                            <div className="text-sm text-gray-600 bg-purple-100 flex-1 text-center p-2 rounded-md shadow-md">
+                            <div className="text-sm text-gray-600 dark:text-gray-400 bg-purple-100 dark:bg-purple-950/30 flex-1 text-center p-2 rounded-md shadow-md">
                                 Selected File:{" "}
                                 <span className="font-bold px-2">
                                     {selectedFile?.name}

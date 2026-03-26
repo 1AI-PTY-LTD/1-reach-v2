@@ -191,7 +191,7 @@ export function DateSelect({
                 <input
                     value={time}
                     onChange={handleTimeChange}
-                    className="block rounded-md py-1 px-1 mt-[1px]"
+                    className="block rounded-md py-1 px-1 mt-[1px] dark:bg-white/5 dark:text-white dark:border dark:border-white/10"
                     type="time"
                 />
             </div>

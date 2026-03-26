@@ -449,7 +449,7 @@ function SendContent() {
                           )}
                           {(contactsQuery.isError || groupsQuery.isError) && inputValue.length >= 2 && (
                             <div className="absolute z-50 mt-1 w-full rounded-md bg-white dark:bg-zinc-900 py-2 shadow-lg border border-zinc-950/10 dark:border-white/10">
-                              <p className="px-3 text-sm text-red-500">Search failed. Please try again.</p>
+                              <p className="px-3 text-sm text-red-500 dark:text-red-400">Search failed. Please try again.</p>
                             </div>
                           )}
                           {!contactsQuery.isFetching && !groupsQuery.isFetching && contacts.length === 0 && searchGroups.length === 0 && inputValue.length >= 2 && !contactsQuery.isError && !groupsQuery.isError && (
@@ -465,7 +465,7 @@ function SendContent() {
                                     <ComboboxOption
                                       key={`c-${contact.id}`}
                                       value={{ __type: 'contact', data: contact }}
-                                      className={({ focus }) => `cursor-default select-none py-1.5 pl-3 pr-4 text-sm ${focus ? 'bg-zinc-50 dark:bg-zinc-800' : ''}`}
+                                      className={({ focus }) => `cursor-default select-none py-1.5 pl-3 pr-4 text-sm text-zinc-900 dark:text-zinc-100 ${focus ? 'bg-zinc-50 dark:bg-zinc-800' : ''}`}
                                       disabled={isDuplicatePhone(contact.phone)}
                                     >
                                       {`${contact.first_name} ${contact.last_name} - ${contact.phone.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3')}`}
@@ -479,7 +479,7 @@ function SendContent() {
                                     <ComboboxOption
                                       key={`g-${group.id}`}
                                       value={{ __type: 'group', data: group }}
-                                      className={({ focus }) => `cursor-default select-none py-1.5 pl-3 pr-4 text-sm ${focus ? 'bg-zinc-50 dark:bg-zinc-800' : ''}`}
+                                      className={({ focus }) => `cursor-default select-none py-1.5 pl-3 pr-4 text-sm text-zinc-900 dark:text-zinc-100 ${focus ? 'bg-zinc-50 dark:bg-zinc-800' : ''}`}
                                     >
                                       {group.name} {group.member_count !== undefined ? `(${group.member_count})` : ''}
                                     </ComboboxOption>

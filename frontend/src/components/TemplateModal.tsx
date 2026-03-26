@@ -214,7 +214,7 @@ export function TemplateModal({
                                 />
                                 <div className="text-sm mt-1 flex justify-between">
                                     {field.state.meta.errors && (
-                                        <div className="text-red-500">
+                                        <div className="text-red-500 dark:text-red-400">
                                             {field.state.meta.errors}
                                         </div>
                                     )}
