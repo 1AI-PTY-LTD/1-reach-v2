@@ -130,9 +130,16 @@ function TemplatesContent() {
                         />
                     </InputGroup>
                     <div className="flex-1 min-h-0 overflow-auto">
-                        <Table>
-                            <TableBody>{renderedTemplates}</TableBody>
-                        </Table>
+                        {templates.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-12 text-center">
+                                <p className="text-zinc-400">No templates yet</p>
+                                <p className="text-sm text-zinc-400">Click "Add" to create your first template</p>
+                            </div>
+                        ) : (
+                            <Table>
+                                <TableBody>{renderedTemplates}</TableBody>
+                            </Table>
+                        )}
                     </div>
                     <TemplateModal
                         isOpen={isModalOpen}

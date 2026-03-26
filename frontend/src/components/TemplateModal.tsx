@@ -11,6 +11,7 @@ import { useApiClient } from "../lib/ApiClientProvider";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import Logger from "../utils/logger";
+import { toast } from "sonner";
 
 export function TemplateModal({
     isOpen,
@@ -90,9 +91,11 @@ export function TemplateModal({
                         }
                     });
                 }
+                toast.success(template ? "Template updated" : "Template created");
                 setIsOpen(false);
                 form.reset();
             } catch (error) {
+                toast.error("Failed to save template");
                 Logger.error("Failed to save template", {
                     component: "TemplateModal",
                     data: {

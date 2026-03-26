@@ -29,9 +29,12 @@ import type { ContactGroup } from '../../types/group.types'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { FileUpload } from '../../ui/file-upload'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/app/_layout/send')({
   component: Send,
+  errorComponent: RouteErrorComponent,
 })
 
 function SendContent() {
@@ -245,8 +248,16 @@ function SendContent() {
         setFileUploadKey((prev) => prev + 1)
         setSummaryCounts({ total: recipientsList.length, success: successCount, error: errorCount, errors: errorMessages })
         setSummaryOpen(true)
+        if (errorCount === 0) {
+          toast.success(`${successCount} message${successCount !== 1 ? 's' : ''} sent`)
+        } else if (successCount > 0) {
+          toast.warning(`${successCount} sent, ${errorCount} failed`)
+        } else {
+          toast.error('All messages failed to send')
+        }
       } catch (error) {
         const errorMsg = extractErrorMessage(error)
+        toast.error(errorMsg)
         setErrorMessage(errorMsg)
       } finally {
         setIsSending(false)
@@ -357,6 +368,16 @@ function SendContent() {
                           {(contactsQuery.isFetching || groupsQuery.isFetching) && (
                             <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
                               <div className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-400 border-t-transparent" />
+                            </div>
+                          )}
+                          {(contactsQuery.isError || groupsQuery.isError) && inputValue.length >= 2 && (
+                            <div className="absolute z-50 mt-1 w-full rounded-md bg-white dark:bg-zinc-900 py-2 shadow-lg border border-zinc-950/10 dark:border-white/10">
+                              <p className="px-3 text-sm text-red-500">Search failed. Please try again.</p>
+                            </div>
+                          )}
+                          {!contactsQuery.isFetching && !groupsQuery.isFetching && contacts.length === 0 && searchGroups.length === 0 && inputValue.length >= 2 && !contactsQuery.isError && !groupsQuery.isError && (
+                            <div className="absolute z-50 mt-1 w-full rounded-md bg-white dark:bg-zinc-900 py-2 shadow-lg border border-zinc-950/10 dark:border-white/10">
+                              <p className="px-3 text-sm text-zinc-400">No contacts or groups found</p>
                             </div>
                           )}
                           {(contacts.length > 0 || searchGroups.length > 0) && (

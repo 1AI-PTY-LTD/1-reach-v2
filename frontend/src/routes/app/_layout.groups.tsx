@@ -5,9 +5,11 @@ import { getAllGroupsQueryOptions } from '../../api/groupsApi'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/groups')({
   component: GroupsLayout,
+  errorComponent: RouteErrorComponent,
 })
 
 function GroupsLayout() {

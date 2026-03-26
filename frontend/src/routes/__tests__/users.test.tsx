@@ -204,6 +204,6 @@ describe('UsersPage', () => {
       />
     )
     expect(screen.getByText('Failed to load users.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
   })
 })

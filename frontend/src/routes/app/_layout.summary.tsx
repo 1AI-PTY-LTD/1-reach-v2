@@ -12,10 +12,12 @@ import {
 import { Suspense } from 'react'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/summary')({
   component: RouteComponent,
   pendingComponent: () => <LoadingSpinner />,
+  errorComponent: RouteErrorComponent,
 })
 
 function SummaryContent() {
@@ -54,7 +56,17 @@ function SummaryContent() {
             <TableHeader className="text-center">Errored</TableHeader>
           </TableRow>
         </TableHead>
-        <TableBody>{statsTableContent}</TableBody>
+        <TableBody>
+          {data.monthly_stats.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="text-center py-8 text-zinc-400">
+                No data yet. Stats will appear after your first message is sent.
+              </TableCell>
+            </TableRow>
+          ) : (
+            statsTableContent
+          )}
+        </TableBody>
       </Table>
     </div>
   )

@@ -156,9 +156,16 @@ export default function GroupsWidget({ userGroups }: { userGroups: ContactGroup[
 				</InputGroup>
 			</div>
 			<div className="flex-1 min-h-0 overflow-auto">
-				<Table>
-					<TableBody>{renderedGroups}</TableBody>
-				</Table>
+				{groupsToRender.length === 0 && !isFetching ? (
+					<div className="flex flex-col items-center justify-center py-12 text-center">
+						<Text className="text-zinc-400">No groups yet</Text>
+						<Text className="text-sm text-zinc-400">Click "Add" to create your first group</Text>
+					</div>
+				) : (
+					<Table>
+						<TableBody>{renderedGroups}</TableBody>
+					</Table>
+				)}
 			</div>
 			<GroupsModal isOpen={isModalOpen} setIsOpen={setIsModalOpen} onGroupCreated={handleGroupCreated} />
 		</div>

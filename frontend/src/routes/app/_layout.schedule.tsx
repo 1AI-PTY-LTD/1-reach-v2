@@ -11,9 +11,11 @@ import Logger from '../../utils/logger'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import DatePicker from '../../components/DatePicker'
 import type { Schedule } from '../../types'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/schedule')({
   component: ScheduleLayout,
+  errorComponent: RouteErrorComponent,
 })
 
 function ScheduleContent() {
@@ -157,11 +159,17 @@ function ScheduleContent() {
         </div>
       )}
       <div className="relative flex-1 min-h-0 overflow-auto" ref={scrollContainerRef}>
-        <ScheduleTable
-          messages={messages}
-          selectedMessageId={selectedMessageId}
-          setSelectedMessageId={setSelectedMessageId}
-        />
+        {messages.length === 0 && !messagesQuery.isFetching ? (
+          <div className="flex items-center justify-center py-16">
+            <p className="text-zinc-400 dark:text-zinc-500">No messages scheduled for this date</p>
+          </div>
+        ) : (
+          <ScheduleTable
+            messages={messages}
+            selectedMessageId={selectedMessageId}
+            setSelectedMessageId={setSelectedMessageId}
+          />
+        )}
       </div>
     </div>
   )

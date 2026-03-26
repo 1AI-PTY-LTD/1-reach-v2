@@ -137,6 +137,16 @@ function ContactDetails() {
       data: { messages, pagination: paginatedData.pagination },
     })
 
+    if (messages.length === 0) {
+      return (
+        <TableRow>
+          <TableCell colSpan={6} className="text-center py-8 text-zinc-400">
+            No messages for this contact
+          </TableCell>
+        </TableRow>
+      )
+    }
+
     const renderedMessages = messages.map((entry) => (
       <React.Fragment key={entry.id}>
         <TableRow

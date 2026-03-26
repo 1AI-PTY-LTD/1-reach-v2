@@ -32,6 +32,7 @@ export function DateSelect({
     const [month, setMonth] = useState(initialMonth ?? currentMonth);
     const [year, setYear] = useState(initialYear ?? currentYear);
     const [time, setTime] = useState(initialDate?.format("HH:mm") || "12:00");
+    const [pastDateWarning, setPastDateWarning] = useState(false);
 
     useEffect(() => {
         const selectedDate = dayjs()
@@ -55,11 +56,13 @@ export function DateSelect({
             if (selectedDate.isBefore(currentDate)) {
                 Logger.warn("Past date selected, resetting to current date", {
                     component: "DateSelect",
-                    data: { 
+                    data: {
                         selectedDate: formattedSelectedDate,
                         currentDate: currentDate.toISOString()
                     }
                 });
+                setPastDateWarning(true);
+                setTimeout(() => setPastDateWarning(false), 3000);
                 setYear(currentYear);
                 setMonth(currentMonth);
                 setDay(currentDay);
@@ -148,7 +151,11 @@ export function DateSelect({
     });
 
     return (
-        <Field className="flex gap-4 mt-4 justify-start">
+        <Field className="mt-4">
+            {pastDateWarning && (
+                <p className="text-sm text-red-500 mb-2">Scheduled time must be in the future</p>
+            )}
+            <div className="flex gap-4 justify-start">
             <div className="w-18">
                 <Label className="ms-2 mb-2">Day</Label>
                 <Select
@@ -187,6 +194,7 @@ export function DateSelect({
                     className="block rounded-md py-1 px-1 mt-[1px]"
                     type="time"
                 />
+            </div>
             </div>
         </Field>
     );

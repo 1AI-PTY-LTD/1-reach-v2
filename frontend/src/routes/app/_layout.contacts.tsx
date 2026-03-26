@@ -5,9 +5,11 @@ import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import Logger from '../../utils/logger'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/contacts')({
   component: ContactsLayout,
+  errorComponent: RouteErrorComponent,
 })
 
 function ContactsLayout() {

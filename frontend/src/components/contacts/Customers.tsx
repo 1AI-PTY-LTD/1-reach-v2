@@ -166,9 +166,16 @@ export default function ContactsWidget({
                 </InputGroup>
             </div>
             <div className="flex-1 min-h-0 overflow-auto">
-                <Table dense>
-                    <TableBody>{renderedContacts}</TableBody>
-                </Table>
+                {contactsToRender.length === 0 && !isFetching ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                        <Text className="text-zinc-400">No contacts yet</Text>
+                        <Text className="text-sm text-zinc-400">Click "Add" to create your first contact</Text>
+                    </div>
+                ) : (
+                    <Table dense>
+                        <TableBody>{renderedContacts}</TableBody>
+                    </Table>
+                )}
             </div>
             <div className="pt-3 flex justify-center">
                 <Button

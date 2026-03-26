@@ -14,6 +14,7 @@ import dayjs from 'dayjs';
 import { sendSmsToGroup } from '../../api/smsApi';
 import type { SendGroupSmsRequest } from '../../types/sms.types';
 import { useApiClient } from '../../lib/ApiClientProvider';
+import { toast } from 'sonner';
 
 export default function GroupScheduleModal({
 	groupId,
@@ -216,11 +217,13 @@ export default function GroupScheduleModal({
 
 				// Close modal after successful operation
 				setErrorMessage(""); // Clear any error state
+				toast.success(isEditMode ? 'Message updated' : 'Message scheduled');
 				setIsOpen(false);
 				form.reset();
 			} catch (error) {
 				const errorMsg = extractErrorMessage(error);
 				setErrorMessage(errorMsg);
+				toast.error(errorMsg);
 
 				Logger.error('Failed to process group message', {
 					component: 'GroupScheduleModal',

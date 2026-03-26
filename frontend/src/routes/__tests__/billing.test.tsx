@@ -251,7 +251,7 @@ describe('BillingLayout', () => {
       />
     )
     expect(screen.getByText('Failed to load billing.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
   })
 })
 
