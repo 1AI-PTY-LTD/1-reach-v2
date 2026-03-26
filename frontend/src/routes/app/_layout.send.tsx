@@ -14,6 +14,8 @@ import { Dialog, DialogActions, DialogBody, DialogTitle } from '../../ui/dialog'
 import { getAllTemplatesQueryOptions } from '../../api/templatesApi'
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
 import { sendSms, sendMms, uploadImageFile } from '../../api/smsApi'
+import { useCreateScheduleMutation } from '../../api/schedulesApi'
+import { DateSelect } from '../../components/DateSelect'
 import { useForm } from '@tanstack/react-form'
 import {
   Combobox,
@@ -66,6 +68,12 @@ function SendContent() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [, setSelectedFile] = useState<File | null>(null)
   const [fileUploadKey, setFileUploadKey] = useState<number>(0)
+
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false)
+  const [scheduledTime, setScheduledTime] = useState('')
+  const [isScheduling, setIsScheduling] = useState(false)
+  const [lastActionWasSchedule, setLastActionWasSchedule] = useState(false)
+  const createSchedule = useCreateScheduleMutation(client)
 
   const extractErrorMessage = (error: any): string => {
     if (error?.detail) return error.detail
@@ -173,6 +181,104 @@ function SendContent() {
     </option>
   ))
 
+  const validateAndBuildMessage = (formValues: { templateId: string; text: string; recipient: Contact | undefined | null }) => {
+    if (!formValues.templateId && !formValues.text.trim() && !uploadedFileUrl) {
+      const errorMsg = import.meta.env.VITE_ENABLE_MMS === 'true'
+        ? 'Please select a template, enter a custom message, or upload an image'
+        : 'Please select a template or enter a custom message'
+      setErrorMessage(errorMsg)
+      return null
+    }
+
+    let messageText = ''
+    if (formValues.templateId && templates) {
+      const selectedTemplate = templates.find((template) => template.id.toString() === formValues.templateId)
+      messageText = selectedTemplate?.text || ''
+    } else {
+      messageText = formValues.text.trim()
+    }
+
+    if (!messageText && !uploadedFileUrl) {
+      messageText = formValues.text.trim()
+    }
+
+    if (selectedRecipients.length === 0 && !formValues.recipient && !inputValue) {
+      setErrorMessage('Please select a recipient or enter the phone number')
+      return null
+    }
+
+    const recipientsList: SelectedRecipient[] = selectedRecipients.length > 0
+      ? selectedRecipients
+      : [{ phone: formValues.recipient?.phone ?? inputValue, name: formValues.recipient ? `${formValues.recipient.first_name} ${formValues.recipient.last_name}` : undefined, contactId: formValues.recipient?.id ?? undefined }]
+
+    return { messageText, recipientsList }
+  }
+
+  const resetForm = () => {
+    setErrorMessage('')
+    setInputValue('')
+    setSelectedRecipients([])
+    form.reset()
+    setUploadedFileUrl(null)
+    setSelectedFile(null)
+    setUploadError(null)
+    setFileUploadKey((prev) => prev + 1)
+    setShowSchedulePicker(false)
+    setScheduledTime('')
+  }
+
+  const handleSchedule = async () => {
+    const formValues = form.state.values
+    const result = validateAndBuildMessage(formValues)
+    if (!result) return
+
+    setIsScheduling(true)
+    setErrorMessage('')
+    try {
+      const { messageText, recipientsList } = result
+      let successCount = 0
+      let errorCount = 0
+      const errorMessages: string[] = []
+
+      for (const r of recipientsList) {
+        try {
+          await createSchedule.mutateAsync({
+            phone: r.phone,
+            contact_id: r.contactId ?? null,
+            scheduled_time: scheduledTime,
+            text: messageText,
+            template_id: formValues.templateId ? parseInt(formValues.templateId) : undefined,
+            format: uploadedFileUrl ? 'mms' : 'sms',
+            media_url: uploadedFileUrl ?? undefined,
+          })
+          successCount += 1
+        } catch (e) {
+          errorCount += 1
+          const errorMsg = extractErrorMessage(e)
+          errorMessages.push(errorMsg)
+        }
+      }
+
+      resetForm()
+      setLastActionWasSchedule(true)
+      setSummaryCounts({ total: recipientsList.length, success: successCount, error: errorCount, errors: errorMessages })
+      setSummaryOpen(true)
+      if (errorCount === 0) {
+        toast.success(`${successCount} message${successCount !== 1 ? 's' : ''} scheduled`)
+      } else if (successCount > 0) {
+        toast.warning(`${successCount} scheduled, ${errorCount} failed`)
+      } else {
+        toast.error('All messages failed to schedule')
+      }
+    } catch (error) {
+      const errorMsg = extractErrorMessage(error)
+      toast.error(errorMsg)
+      setErrorMessage(errorMsg)
+    } finally {
+      setIsScheduling(false)
+    }
+  }
+
   const form = useForm({
     defaultValues: {
       recipient: null as Contact | undefined | null,
@@ -180,36 +286,13 @@ function SendContent() {
       templateId: '',
     },
     onSubmit: async ({ value }) => {
+      const result = validateAndBuildMessage(value)
+      if (!result) return
+
       setIsSending(true)
       setErrorMessage('')
       try {
-        if (!value.templateId && !value.text.trim() && !uploadedFileUrl) {
-          const errorMsg = import.meta.env.VITE_ENABLE_MMS === 'true'
-            ? 'Please select a template, enter a custom message, or upload an image'
-            : 'Please select a template or enter a custom message'
-          setErrorMessage(errorMsg)
-          return
-        }
-
-        let messageText = ''
-        if (value.templateId && templates) {
-          const selectedTemplate = templates.find((template) => template.id.toString() === value.templateId)
-          messageText = selectedTemplate?.text || ''
-        } else {
-          messageText = value.text.trim()
-        }
-
-        if (!messageText && !uploadedFileUrl) {
-          messageText = value.text.trim()
-        }
-
-        if (selectedRecipients.length === 0 && !value.recipient && !inputValue) {
-          return 'Please select a recipient or enter the phone number'
-        }
-
-        const recipientsList: SelectedRecipient[] = selectedRecipients.length > 0
-          ? selectedRecipients
-          : [{ phone: value?.recipient?.phone ?? inputValue, name: value?.recipient ? `${value.recipient.first_name} ${value.recipient.last_name}` : undefined, contactId: value.recipient?.id ?? undefined }]
+        const { messageText, recipientsList } = result
 
         let successCount = 0
         let errorCount = 0
@@ -238,14 +321,8 @@ function SendContent() {
           }
         }
 
-        setErrorMessage('')
-        setInputValue('')
-        setSelectedRecipients([])
-        form.reset()
-        setUploadedFileUrl(null)
-        setSelectedFile(null)
-        setUploadError(null)
-        setFileUploadKey((prev) => prev + 1)
+        resetForm()
+        setLastActionWasSchedule(false)
         setSummaryCounts({ total: recipientsList.length, success: successCount, error: errorCount, errors: errorMessages })
         setSummaryOpen(true)
         if (errorCount === 0) {
@@ -544,24 +621,71 @@ function SendContent() {
               />
             </div>
 
-            <div className="flex justify-end mt-4">
-              <Button type="submit" color="purple" disabled={isSending}>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button type="submit" color="purple" disabled={isSending || isScheduling}>
                 {isSending ? (
                   <div className="flex items-center gap-2">
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                     {'Sending...'}
                   </div>
                 ) : (
-                  'Send'
+                  'Send Now'
                 )}
               </Button>
+              <Button
+                type="button"
+                outline
+                disabled={isSending || isScheduling}
+                onClick={() => setShowSchedulePicker((prev) => !prev)}
+              >
+                Schedule
+              </Button>
             </div>
+
+            {showSchedulePicker && (
+              <div className="mt-4 border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800/50">
+                <DateSelect
+                  field={{
+                    state: { value: scheduledTime },
+                    handleChange: setScheduledTime,
+                  }}
+                />
+                <div className="flex justify-end gap-2 mt-4">
+                  <Button
+                    type="button"
+                    outline
+                    onClick={() => {
+                      setShowSchedulePicker(false)
+                      setScheduledTime('')
+                    }}
+                    disabled={isScheduling}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    color="purple"
+                    disabled={isScheduling || !scheduledTime}
+                    onClick={handleSchedule}
+                  >
+                    {isScheduling ? (
+                      <div className="flex items-center gap-2">
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        {'Scheduling...'}
+                      </div>
+                    ) : (
+                      'Confirm Schedule'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
           </form>
         </FieldGroup>
       </Fieldset>
       {summaryOpen && (
         <Dialog open={summaryOpen} onClose={setSummaryOpen} size="sm">
-          <DialogTitle>Send summary</DialogTitle>
+          <DialogTitle>{lastActionWasSchedule ? 'Schedule summary' : 'Send summary'}</DialogTitle>
           <DialogBody>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
@@ -569,7 +693,7 @@ function SendContent() {
                 <span>{summaryCounts.total}</span>
               </div>
               <div className="flex justify-between text-brand-green">
-                <span>Successful</span>
+                <span>{lastActionWasSchedule ? 'Scheduled' : 'Successful'}</span>
                 <span>{summaryCounts.success}</span>
               </div>
               <div className="flex justify-between text-red-700 dark:text-red-400">
