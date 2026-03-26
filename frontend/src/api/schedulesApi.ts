@@ -97,6 +97,32 @@ export function useCreateScheduleMutation(client: ApiClient) {
   })
 }
 
+export function useCancelScheduleMutation(client: ApiClient) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => {
+      Logger.debug('Cancelling schedule', {
+        component: 'schedulesApi.cancelSchedule',
+        data: { scheduleId: id },
+      })
+      return client.del<void>(`/api/schedules/${id}/`)
+    },
+    onSuccess: (_, id) => {
+      Logger.info('Schedule cancelled successfully', {
+        component: 'schedulesApi.cancelSchedule',
+        data: { scheduleId: id },
+      })
+      queryClient.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    onError: (error) => {
+      Logger.error('Error cancelling schedule', {
+        component: 'schedulesApi.cancelSchedule',
+        data: { error: error.message },
+      })
+    },
+  })
+}
+
 export function useUpdateScheduleMutation(client: ApiClient) {
   const queryClient = useQueryClient()
   return useMutation({

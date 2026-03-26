@@ -74,5 +74,14 @@ describe('schedulesApi', () => {
       const options = getSchedulesByContactIdQueryOptions(client, 1)
       await expect(options.queryFn!({} as any)).rejects.toThrow()
     })
+
+    it('cancelSchedule rejects when API returns 400', async () => {
+      server.use(
+        http.delete('http://localhost:8000/api/schedules/:id/', () =>
+          HttpResponse.json({ detail: 'Cannot delete schedule' }, { status: 400 })
+        )
+      )
+      await expect(client.del('/api/schedules/1/')).rejects.toThrow()
+    })
   })
 })

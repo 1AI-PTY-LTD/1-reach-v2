@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 import { Divider } from '../ui/divider';
 import { Button } from '../ui/button';
-import { PencilIcon, TrashIcon } from '@heroicons/react/16/solid';
+import { PencilIcon, XMarkIcon } from '@heroicons/react/16/solid';
 import type { Contact } from '../types/contact.types';
 import type { Schedule } from '../types/schedule.types';
 import { ContactMessageModal } from './contacts/CustomerMessageModal';
@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import Logger from '../utils/logger';
 import { Alert, AlertActions, AlertDescription, AlertTitle } from '../ui/alert';
-import { useUpdateScheduleMutation } from '../api/schedulesApi';
+import { useCancelScheduleMutation } from '../api/schedulesApi';
 import { useApiClient } from '../lib/ApiClientProvider';
 
 export function ScheduleDetails({ message }: { message: Schedule | undefined }) {
@@ -28,7 +28,7 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 	const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 	const [isAlertOpen, setIsAlertOpen] = useState<boolean>(false);
 	const client = useApiClient();
-	const updateScheduleMutation = useUpdateScheduleMutation(client);
+	const cancelMutation = useCancelScheduleMutation(client);
 
 	if (!message) {
 		Logger.debug('No message data', {
@@ -50,8 +50,8 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 		setIsModalOpen(true);
 	};
 
-	const handleDelete = async () => {
-		Logger.warn('Message deletion requested', {
+	const handleCancel = async () => {
+		Logger.warn('Message cancellation requested', {
 			component: 'ScheduleDetails',
 			data: {
 				messageId: message.id,
@@ -60,33 +60,22 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 		});
 
 		try {
-			await updateScheduleMutation.mutateAsync({
-				id: message.id,
-				text: message.text || undefined,
-				contact_id: message.contact || undefined,
-				scheduled_time: message.scheduled_time,
-			});
-			Logger.info('Message deleted successfully', {
-				component: 'MessageDetails',
+			await cancelMutation.mutateAsync(message.id);
+			Logger.info('Message cancelled successfully', {
+				component: 'ScheduleDetails',
 				data: { messageId: message.id },
 			});
 		} catch (error) {
-			Logger.error('Failed to delete message', {
-				component: 'MessageDetails',
+			Logger.error('Failed to cancel message', {
+				component: 'ScheduleDetails',
 				data: { messageId: message.id, error },
 			});
 			throw error;
 		}
 	};
 
-	const canEdit = dayjs(message.scheduled_time).isAfter(dayjs());
-	Logger.debug('Checking edit permissions', {
-		component: 'ScheduleDetails',
-		data: {
-			canEdit,
-			scheduledTime: message.scheduled_time,
-		},
-	});
+	const canCancel = message.status === 'pending';
+	const canEdit = message.status === 'pending' && dayjs(message.scheduled_time).isAfter(dayjs());
 
 	return (
 		<div className="">
@@ -103,16 +92,20 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 				</TableBody>
 			</Table>
 			<Divider />
-			{canEdit && (
+			{(canCancel || canEdit) && (
 				<div className="flex justify-between mt-4">
-					<Button color="red" onClick={() => setIsAlertOpen(true)}>
-						<TrashIcon />
-						Remove
-					</Button>
-					<Button color="emerald" onClick={handleEdit}>
-						<PencilIcon />
-						Edit
-					</Button>
+					{canCancel && (
+						<Button color="red" onClick={() => setIsAlertOpen(true)}>
+							<XMarkIcon />
+							Cancel
+						</Button>
+					)}
+					{canEdit && (
+						<Button color="emerald" onClick={handleEdit} className="ml-auto">
+							<PencilIcon />
+							Edit
+						</Button>
+					)}
 				</div>
 			)}
 			{isModalOpen && <ContactMessageModal
@@ -127,26 +120,26 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 				setIsOpen={setIsModalOpen}
 			/>}
 			<Alert open={isAlertOpen} onClose={() => setIsAlertOpen(false)}>
-				<AlertTitle>Are you sure you want to delete this message?</AlertTitle>
-				<AlertDescription>The message will be removed from the list of messages.</AlertDescription>
+				<AlertTitle>Are you sure you want to cancel this message?</AlertTitle>
+				<AlertDescription>The message will be cancelled and will not be sent.</AlertDescription>
 				<AlertActions>
 					<Button plain onClick={() => setIsAlertOpen(false)}>
-						Cancel
+						No, keep it
 					</Button>
 					<Button
 						color="red"
 						onClick={async () => {
-							await handleDelete();
+							await handleCancel();
 							setIsAlertOpen(false);
 						}}
-						disabled={updateScheduleMutation.isPending}
+						disabled={cancelMutation.isPending}
 					>
-						{updateScheduleMutation.isPending ? (
+						{cancelMutation.isPending ? (
 							<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 						) : (
 							<>
-								<TrashIcon />
-								Delete
+								<XMarkIcon />
+								Yes, cancel
 							</>
 						)}
 					</Button>

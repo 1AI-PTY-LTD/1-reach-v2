@@ -136,6 +136,12 @@ export const handlers = [
     return HttpResponse.json({ ...schedule, ...body })
   }),
 
+  http.delete(`${BASE_URL}/api/schedules/:id/`, ({ params }) => {
+    const schedule = schedules.find((s) => s.id === Number(params.id))
+    if (!schedule) return HttpResponse.json({ error: 'Schedule not found' }, { status: 404 })
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   // Groups
   http.get(`${BASE_URL}/api/groups/`, ({ request }) => {
     const url = new URL(request.url)
