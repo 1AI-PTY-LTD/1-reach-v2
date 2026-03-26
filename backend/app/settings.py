@@ -223,6 +223,11 @@ CELERY_BEAT_SCHEDULE = {
 }
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
+# Redis SSL — required for Azure Cache for Redis (rediss:// URLs)
+if CELERY_BROKER_URL.startswith('rediss://'):
+    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': 'CERT_REQUIRED'}
+    CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': 'CERT_REQUIRED'}
+
 
 # SMS Provider
 SMS_PROVIDER_CLASS = 'app.utils.sms.MockSMSProvider'

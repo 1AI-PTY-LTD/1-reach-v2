@@ -288,7 +288,7 @@ function SendContent() {
                 children={(field) => (
                   <Field>
                     <Label className="block mb-2">To</Label>
-                    <div className="w-full rounded-lg border border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 px-2 py-1.5 text-sm h-24 flex flex-col">
+                    <div className="w-full rounded-lg border border-zinc-950/10 dark:border-white/10 bg-white dark:bg-white/5 px-2 py-1.5 text-sm h-24 flex flex-col">
                       {selectedRecipients.length > 0 && (
                         <div ref={chipsContainerRef} className="flex flex-wrap gap-2 mb-1 pr-1 overflow-y-auto max-h-16">
                           {selectedRecipients.map((r, idx) => (
