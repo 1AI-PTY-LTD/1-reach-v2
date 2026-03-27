@@ -67,23 +67,25 @@ test.describe('Schedule Page', () => {
   test('can navigate to previous day', async ({ page }) => {
     await page.goto('/app/schedule')
     const today = dayjs().format('DD/MM/YYYY')
-    const dateHeading = page.getByRole('heading', { name: today })
-    await expect(dateHeading).toBeVisible({ timeout: 10000 })
-    const prevButton = page.locator('main button').first()
-    await prevButton.click()
+    const dateButton = page.getByRole('button', { name: today })
+    await expect(dateButton).toBeVisible({ timeout: 10000 })
+    // Previous day arrow is the first button in the nav row
+    const navRow = dateButton.locator('..').locator('..')
+    await navRow.locator('button').first().click()
     const yesterday = dayjs().subtract(1, 'day').format('DD/MM/YYYY')
-    await expect(page.getByRole('heading', { name: yesterday })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('button', { name: yesterday })).toBeVisible({ timeout: 5000 })
   })
 
   test('can navigate to next day', async ({ page }) => {
     await page.goto('/app/schedule')
     const today = dayjs().format('DD/MM/YYYY')
-    const dateHeading = page.getByRole('heading', { name: today })
-    await expect(dateHeading).toBeVisible({ timeout: 10000 })
-    const nextDayButton = dateHeading.locator('~ button').first()
-    await nextDayButton.click({ timeout: 5000 })
+    const dateButton = page.getByRole('button', { name: today })
+    await expect(dateButton).toBeVisible({ timeout: 10000 })
+    // Next day arrow is the last button in the nav row
+    const navRow = dateButton.locator('..').locator('..')
+    await navRow.locator('button').last().click({ timeout: 5000 })
     const tomorrow = dayjs().add(1, 'day').format('DD/MM/YYYY')
-    await expect(page.getByRole('heading', { name: tomorrow })).toBeVisible({ timeout: 5000 })
+    await expect(page.getByRole('button', { name: tomorrow })).toBeVisible({ timeout: 5000 })
   })
 
   test('shows message status badges', async ({ page }) => {
