@@ -146,7 +146,7 @@ backend/
 │   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 512 tests
+└── tests/                 # 517 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
@@ -243,7 +243,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-512 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+517 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -263,7 +263,7 @@ docker compose exec frontend npx vitest run
 docker compose exec frontend npx playwright test
 ```
 
-75 Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
+77 Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
 
 **Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 

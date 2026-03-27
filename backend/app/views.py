@@ -209,8 +209,6 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         schedules = Schedule.objects.filter(
             contact=contact,
             organisation=contact.organisation,
-        ).exclude(
-            status=ScheduleStatus.CANCELLED
         ).order_by('-scheduled_time')
         
         page = self.paginate_queryset(schedules)
@@ -384,9 +382,7 @@ class TemplateViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet)
 
 
 class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
-    queryset = Schedule.objects.exclude(
-        status=ScheduleStatus.CANCELLED,
-    ).filter(
+    queryset = Schedule.objects.filter(
         parent__isnull=True,  # Exclude child schedules
         group__isnull=True,   # Exclude group schedules (handled by /api/group-schedules/)
     ).select_related('contact', 'template', 'group').order_by('-scheduled_time')
@@ -437,7 +433,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
             organisation__clerk_org_id=org_id,
             parent__isnull=True,
             group__isnull=False,
-        ).exclude(status=ScheduleStatus.CANCELLED)
+        )
 
     def list(self, request):
         qs = self.get_queryset().select_related('group', 'template').order_by('-scheduled_time')

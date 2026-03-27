@@ -59,6 +59,45 @@ class TestGroupScheduleList:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['pagination']['total'] == 2
 
+    def test_cancelled_group_schedule_appears_in_list(self, authenticated_client, organisation, user):
+        """Cancelled group schedules remain visible in the list."""
+        group = ContactGroupFactory(organisation=organisation, created_by=user)
+        ScheduleFactory(
+            organisation=organisation,
+            group=group,
+            name='Cancelled Campaign',
+            status=ScheduleStatus.CANCELLED,
+            created_by=user
+        )
+
+        response = authenticated_client.get('/api/group-schedules/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['status'] == ScheduleStatus.CANCELLED
+
+    def test_cancelled_group_schedule_remains_in_list_after_cancel(
+        self, authenticated_client, organisation, user
+    ):
+        """After cancelling a group schedule, it still appears in the list."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+        parent = ScheduleFactory(
+            organisation=organisation,
+            group=group,
+            status=ScheduleStatus.PENDING,
+            created_by=user
+        )
+
+        # Cancel the group schedule
+        cancel_response = authenticated_client.post(f'/api/group-schedules/{parent.id}/cancel/')
+        assert cancel_response.status_code == status.HTTP_200_OK
+
+        # It should still appear in the list
+        list_response = authenticated_client.get('/api/group-schedules/')
+        assert list_response.status_code == status.HTTP_200_OK
+        assert list_response.data['pagination']['total'] == 1
+        assert list_response.data['results'][0]['status'] == ScheduleStatus.CANCELLED
+
     def test_list_only_shows_parent_schedules(self, authenticated_client, organisation, user):
         """List only shows parent schedules (group != None), not children."""
         # Parent with children

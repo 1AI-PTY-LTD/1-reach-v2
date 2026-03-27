@@ -16,6 +16,7 @@ const SCHEDULES = [
   { message: 'Hello Diana',   status: 'retrying',  phone: '0414444444' },
   { message: 'Hello Eve',     status: 'delivered', phone: '0414555555' },
   { message: 'Hello Frank',   status: 'failed',    phone: '0414666666' },
+  { message: 'Hello Grace',   status: 'cancelled', phone: '0414777777' },
 ]
 
 test.beforeAll(async ({ browser }) => {
@@ -111,6 +112,32 @@ test.describe('Schedule Page', () => {
     await page.getByText('Hello Alice').first().click()
     // Expanded detail row should appear with a colspan cell
     await expect(page.locator('td[colspan]').first()).toBeVisible({ timeout: 5000 })
+  })
+
+  test('shows cancelled status badge', async ({ page }) => {
+    await page.goto('/app/schedule')
+    await expect(page.getByText('Hello Grace').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/cancelled/i).first()).toBeVisible()
+  })
+
+  test('cancelling a pending message keeps it visible with cancelled status', async ({ page }) => {
+    await page.goto('/app/schedule')
+    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+
+    // Expand the pending schedule row
+    await page.getByText('Hello Alice').first().click()
+    await expect(page.locator('td[colspan]').first()).toBeVisible({ timeout: 5000 })
+
+    // Click the Cancel button to open confirmation alert
+    await page.getByRole('button', { name: /cancel/i }).click()
+    await expect(page.getByText('Are you sure you want to cancel this message?')).toBeVisible({ timeout: 5000 })
+
+    // Confirm cancellation
+    await page.getByRole('button', { name: /yes, cancel/i }).click()
+
+    // The message should still be visible with cancelled status
+    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/cancelled/i).first()).toBeVisible()
   })
 
   test('shows pagination info text', async ({ page }) => {

@@ -75,6 +75,40 @@ class TestScheduleList:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['pagination']['total'] == 1
 
+    def test_cancelled_schedule_appears_in_list(self, authenticated_client, organisation, user):
+        """Cancelled schedules remain visible in the list."""
+        ScheduleFactory(
+            organisation=organisation,
+            status=ScheduleStatus.CANCELLED,
+            for_contact=True,
+            created_by=user
+        )
+
+        response = authenticated_client.get('/api/schedules/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['status'] == ScheduleStatus.CANCELLED
+
+    def test_delete_schedule_remains_in_list_as_cancelled(self, authenticated_client, organisation, user):
+        """After deleting a pending schedule, it still appears in list with cancelled status."""
+        schedule = ScheduleFactory(
+            organisation=organisation,
+            status=ScheduleStatus.PENDING,
+            for_contact=True,
+            created_by=user
+        )
+
+        # Delete (soft-cancel) the schedule
+        delete_response = authenticated_client.delete(f'/api/schedules/{schedule.id}/')
+        assert delete_response.status_code == status.HTTP_204_NO_CONTENT
+
+        # It should still appear in the list
+        list_response = authenticated_client.get('/api/schedules/')
+        assert list_response.status_code == status.HTTP_200_OK
+        assert list_response.data['pagination']['total'] == 1
+        assert list_response.data['results'][0]['status'] == ScheduleStatus.CANCELLED
+
     def test_list_filter_by_status(self, authenticated_client, organisation, user):
         """Status filter works."""
         schedule1 = ScheduleFactory(
@@ -212,6 +246,21 @@ class TestScheduleDelete:
         response = authenticated_client.delete(f'/api/schedules/{schedule.id}/')
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
+
+    def test_delete_sets_status_to_cancelled(self, authenticated_client, organisation, user):
+        """Deleting a pending schedule sets its status to cancelled."""
+        schedule = ScheduleFactory(
+            organisation=organisation,
+            status=ScheduleStatus.PENDING,
+            for_contact=True,
+            created_by=user
+        )
+
+        response = authenticated_client.delete(f'/api/schedules/{schedule.id}/')
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        schedule.refresh_from_db()
+        assert schedule.status == ScheduleStatus.CANCELLED
 
     def test_cannot_delete_sent_schedule(self, authenticated_client, organisation, user):
         """Cannot delete sent schedule."""
