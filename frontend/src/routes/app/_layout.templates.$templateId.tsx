@@ -8,6 +8,7 @@ import { Heading } from '../../ui/heading'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { getTemplateByIdQueryOptions } from '../../api/templatesApi'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/templates/$templateId')({
   component: TemplateDetails,
@@ -17,6 +18,7 @@ export const Route = createFileRoute('/app/_layout/templates/$templateId')({
     }),
     stringify: ({ templateId }) => ({ templateId: `${templateId}` }),
   },
+  errorComponent: RouteErrorComponent,
 })
 
 function TemplateDetails() {

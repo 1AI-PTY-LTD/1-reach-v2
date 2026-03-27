@@ -10,9 +10,11 @@ import type { ContactGroup } from '../../types/group.types'
 import Logger from '../../utils/logger'
 import { sendSmsToGroup } from '../../api/smsApi'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/import/')({
   component: ImportIndex,
+  errorComponent: RouteErrorComponent,
 })
 
 interface ExcelProcessingState {

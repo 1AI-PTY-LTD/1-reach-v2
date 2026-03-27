@@ -23,23 +23,13 @@ import {
   useToggleUserStatusMutation,
   useInviteUserMutation,
 } from '../../api/usersApi'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/app/_layout/users')({
   component: RouteComponent,
   pendingComponent: () => <LoadingSpinner />,
-  errorComponent: ({ error }) => (
-    <div className="flex flex-col items-center justify-center h-full gap-4 dark:text-white p-8">
-      <p className="text-gray-500 dark:text-gray-400">
-        {error instanceof Error ? error.message : 'Failed to load users.'}
-      </p>
-      <button
-        onClick={() => window.location.reload()}
-        className="px-4 py-2 bg-brand-purple text-white rounded-lg hover:bg-brand-purple/80"
-      >
-        Retry
-      </button>
-    </div>
-  ),
+  errorComponent: RouteErrorComponent,
 })
 
 function InviteUserDialog({
@@ -67,10 +57,12 @@ function InviteUserDialog({
       { email: email.trim() },
       {
         onSuccess: () => {
+          toast.success('Invitation sent')
           setEmail('')
           setIsOpen(false)
         },
         onError: (err) => {
+          toast.error('Failed to send invitation')
           setError(err.message || 'Failed to send invitation.')
         },
       },
@@ -131,7 +123,11 @@ export function UsersContent() {
     setPendingRoleUserId(userId)
     updateRole.mutate(
       { userId, role: newRole },
-      { onSettled: () => setPendingRoleUserId(null) },
+      {
+        onSuccess: () => toast.success(`Role updated to ${newRole === 'org:admin' ? 'Admin' : 'Member'}`),
+        onError: () => toast.error('Failed to update role'),
+        onSettled: () => setPendingRoleUserId(null),
+      },
     )
   }
 
@@ -139,7 +135,11 @@ export function UsersContent() {
     setPendingStatusUserId(userId)
     toggleStatus.mutate(
       { userId, isActive: !currentlyActive },
-      { onSettled: () => setPendingStatusUserId(null) },
+      {
+        onSuccess: () => toast.success(!currentlyActive ? 'User re-invited' : 'User deactivated'),
+        onError: () => toast.error('Failed to update user status'),
+        onSettled: () => setPendingStatusUserId(null),
+      },
     )
   }
 
@@ -165,6 +165,13 @@ export function UsersContent() {
           </TableRow>
         </TableHead>
         <TableBody>
+          {users.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={6} className="text-center py-8 text-zinc-400">
+                No users yet. Invite someone to get started.
+              </TableCell>
+            </TableRow>
+          )}
           {users.map((user) => {
             const isSelf = clerkUser?.id === user.clerk_id
             return (

@@ -15,23 +15,12 @@ import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import { getBillingSummaryQueryOptions } from '../../api/billingApi'
 import type { TransactionType } from '../../types/billing.types'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/billing')({
   component: RouteComponent,
   pendingComponent: () => <LoadingSpinner />,
-  errorComponent: ({ error }) => (
-    <div className="flex flex-col items-center justify-center h-full gap-4 dark:text-white p-8">
-      <p className="text-gray-500 dark:text-gray-400">
-        {error instanceof Error ? error.message : 'Failed to load billing.'}
-      </p>
-      <button
-        onClick={() => window.location.reload()}
-        className="px-4 py-2 bg-brand-purple text-white rounded-lg hover:bg-brand-purple/80"
-      >
-        Retry
-      </button>
-    </div>
-  ),
+  errorComponent: RouteErrorComponent,
 })
 
 const txTypeBadgeColor: Record<TransactionType, 'green' | 'red' | 'blue' | 'indigo'> = {

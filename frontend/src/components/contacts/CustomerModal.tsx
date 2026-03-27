@@ -17,6 +17,7 @@ import { useNavigate } from "@tanstack/react-router";
 import Logger from "../../utils/logger";
 import { useState } from "react";
 import { useApiClient } from "../../lib/ApiClientProvider";
+import { toast } from "sonner";
 
 function formatPhoneNumber(value: string): string {
     const cleaned = value.replace(/\D/g, "");
@@ -96,6 +97,7 @@ export function ContactModal({
                             component: "ContactModal",
                             data: { contactId: updatedContact.id }
                         });
+                        toast.success("Contact updated");
                         setIsOpen(false);
                         form.reset();
                     },
@@ -107,6 +109,7 @@ export function ContactModal({
                                 error
                             }
                         });
+                        toast.error("Failed to update contact");
                         setError(error.message);
                     },
                     onSettled: () => {
@@ -133,6 +136,7 @@ export function ContactModal({
                             component: "ContactModal",
                             data: { contactId: newContact.id }
                         });
+                        toast.success("Contact created");
                         navigate({
                             to: "/app/contacts/$contactId",
                             params: { contactId: newContact.id },
@@ -145,6 +149,7 @@ export function ContactModal({
                             component: "ContactModal",
                             data: { error: error }
                         });
+                        toast.error("Failed to create contact");
                         setError(error.message);
                     },
                     onSettled: () => {

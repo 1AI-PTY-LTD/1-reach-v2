@@ -12,6 +12,7 @@ import { PencilIcon } from '@heroicons/react/16/solid'
 import GroupsModal from '../../components/groups/GroupsModal'
 import GroupSchedulesDetails from '../../components/groups/GroupSchedulesDetails'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 
 export const Route = createFileRoute('/app/_layout/groups/$groupId')({
   component: GroupsComponent,
@@ -21,9 +22,7 @@ export const Route = createFileRoute('/app/_layout/groups/$groupId')({
     }),
     stringify: ({ groupId }) => ({ groupId: `${groupId}` }),
   },
-  errorComponent: ({ error }) => {
-    return <div>Group Not Found {error.message}</div>
-  },
+  errorComponent: RouteErrorComponent,
 })
 
 function GroupsComponent() {

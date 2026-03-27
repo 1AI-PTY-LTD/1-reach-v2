@@ -10,6 +10,7 @@ import { useApiClient } from "../lib/ApiClientProvider";
 import Logger from "../utils/logger";
 import { Alert, AlertTitle, AlertDescription, AlertActions } from "../ui/alert";
 import { useState } from "react";
+import { toast } from "sonner";
 
 export default function TemplateDetails({
     template,
@@ -51,7 +52,12 @@ export default function TemplateDetails({
             name: template.name,
             text: template.text,
         };
-        await updateTemplate.mutateAsync({ ...updateTemplateProps });
+        try {
+            await updateTemplate.mutateAsync({ ...updateTemplateProps });
+            toast.success("Template archived");
+        } catch {
+            toast.error("Failed to archive template");
+        }
     };
 
     return (

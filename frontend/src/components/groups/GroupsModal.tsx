@@ -10,6 +10,7 @@ import { useCreateGroupMutation, useUpdateGroupMutation, getGroupByIdQueryOption
 import { useQuery } from '@tanstack/react-query';
 import type { ContactGroup } from '../../types';
 import { useApiClient } from '../../lib/ApiClientProvider';
+import { toast } from 'sonner';
 
 export default function GroupsModal({
 	groupId,
@@ -63,6 +64,7 @@ export default function GroupsModal({
 								component: 'GroupsModal',
 								data: { groupId },
 							});
+							toast.success('Group updated');
 							setIsOpen(false);
 							form.reset();
 						},
@@ -71,6 +73,7 @@ export default function GroupsModal({
 								component: 'GroupsModal',
 								data: { groupId, error: error.message },
 							});
+							toast.error('Failed to update group');
 						},
 					}
 				);
@@ -87,6 +90,7 @@ export default function GroupsModal({
 								component: 'GroupsModal',
 								data: { groupId: createdGroup.id, groupName: createdGroup.name },
 							});
+							toast.success('Group created');
 							setIsOpen(false);
 							form.reset();
 							// Navigate to the newly created group
@@ -99,6 +103,7 @@ export default function GroupsModal({
 								component: 'GroupsModal',
 								data: { error: error.message },
 							});
+							toast.error('Failed to create group');
 						},
 					}
 				);

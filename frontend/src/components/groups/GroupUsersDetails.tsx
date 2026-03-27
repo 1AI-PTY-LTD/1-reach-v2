@@ -10,6 +10,7 @@ import { PlusIcon } from '@heroicons/react/20/solid'
 import LoadingSpinner from '../shared/LoadingSpinner'
 import TableSkeleton from '../shared/TableSkeleton'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import { toast } from 'sonner'
 
 
 export default function GroupUsersDetails({groupId} : {groupId: number}){
@@ -32,7 +33,13 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
 
     const handleConfirmRemove = () => {
         if (memberToRemove) {
-            removeMembersMutation.mutate({ group_id: groupId, contact_ids: [memberToRemove.id] });
+            removeMembersMutation.mutate(
+                { group_id: groupId, contact_ids: [memberToRemove.id] },
+                {
+                    onSuccess: () => toast.success('Member removed'),
+                    onError: () => toast.error('Failed to remove member'),
+                }
+            );
             setIsConfirmDialogOpen(false);
             setMemberToRemove(null);
         }
