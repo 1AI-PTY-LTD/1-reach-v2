@@ -207,6 +207,7 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ACKS_LATE = True          # Never lose tasks on worker crash
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Fair dispatch
+CELERY_TASK_DEFAULT_QUEUE = 'default'  # Match worker's -Q default,messages
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 5,
     'socket_timeout': 5,
