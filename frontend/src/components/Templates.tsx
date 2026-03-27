@@ -57,7 +57,7 @@ function TemplatesContent() {
                 <TableCell
                     className={
                         isSelected
-                            ? "w-10 rounded-l-md bg-purple-50 m4"
+                            ? "w-10 rounded-l-md bg-purple-50 dark:bg-purple-950/30 m4"
                             : "w-10"
                     }
                 >
@@ -72,7 +72,7 @@ function TemplatesContent() {
                     />
                 </TableCell>
                 <TableCell
-                    className={isSelected ? " rounded-r-lg bg-purple-50" : ""}
+                    className={isSelected ? " rounded-r-lg bg-purple-50 dark:bg-purple-950/30" : ""}
                 >
                     <div className="flex flex-col">
                         <span className="font-medium">{entry.name}</span>

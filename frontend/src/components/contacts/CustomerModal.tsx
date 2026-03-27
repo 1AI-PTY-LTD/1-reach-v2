@@ -234,7 +234,7 @@ export function ContactModal({
             <DialogTitle className="text-center">{heading}</DialogTitle>
             <DialogBody>
                 {error && (
-                    <div className="mb-4 rounded-md bg-red-50 p-4">
+                    <div className="mb-4 rounded-md bg-red-50 dark:bg-red-950/20 p-4">
                         <div className="flex">
                             <div className="flex-shrink-0">
                                 <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -242,7 +242,7 @@ export function ContactModal({
                                 </svg>
                             </div>
                             <div className="ml-3">
-                                <p className="text-sm font-medium text-red-800">{error}</p>
+                                <p className="text-sm font-medium text-red-800 dark:text-red-400">{error}</p>
                             </div>
                         </div>
                     </div>

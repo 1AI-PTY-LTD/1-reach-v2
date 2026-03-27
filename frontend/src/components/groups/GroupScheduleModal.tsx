@@ -289,7 +289,7 @@ export default function GroupScheduleModal({
 			<DialogTitle className="text-center">{heading}</DialogTitle>
 			<DialogBody>
 				{errorMessage && (
-					<div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+					<div className="mb-4 p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-md">
 						<div className="flex items-center">
 							<div className="flex-shrink-0">
 								<svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -297,10 +297,10 @@ export default function GroupScheduleModal({
 								</svg>
 							</div>
 							<div className="ml-3">
-								<h3 className="text-sm font-medium text-red-800">
+								<h3 className="text-sm font-medium text-red-800 dark:text-red-400">
 									Error
 								</h3>
-								<div className="mt-1 text-sm text-red-700">
+								<div className="mt-1 text-sm text-red-700 dark:text-red-400">
 									{errorMessage}
 								</div>
 							</div>
@@ -346,10 +346,10 @@ export default function GroupScheduleModal({
 									{field.state.value && (
 										<div className={`text-sm mt-1 p-2 rounded ${
 											isTimeInPast(field.state.value)
-												? 'bg-red-50 text-red-700 border border-red-200'
+												? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
 												: shouldSendImmediately(field.state.value)
-													? 'bg-orange-50 text-orange-700 border border-orange-200'
-													: 'bg-blue-50 text-blue-700 border border-blue-200'
+													? 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800'
+													: 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800'
 										}`}>
 											{isTimeInPast(field.state.value)
 												? "⚠️ A message can't be scheduled for a time in the past!"

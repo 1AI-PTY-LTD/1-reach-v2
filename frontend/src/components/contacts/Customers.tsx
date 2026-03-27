@@ -83,7 +83,7 @@ export default function ContactsWidget({
                 <TableCell
                     className={
                         isSelected
-                            ? "w-10 rounded-l-md bg-purple-50 m4"
+                            ? "w-10 rounded-l-md bg-purple-50 dark:bg-purple-950/30 m4"
                             : "w-10"
                     }
                 >
@@ -98,7 +98,7 @@ export default function ContactsWidget({
                     ></Avatar>
                 </TableCell>
                 <TableCell
-                    className={isSelected ? " rounded-r-lg bg-purple-50" : ""}
+                    className={isSelected ? " rounded-r-lg bg-purple-50 dark:bg-purple-950/30" : ""}
                 >
                     <div>
                         <div>{entry.first_name} {entry.last_name}</div>
