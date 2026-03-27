@@ -211,6 +211,10 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 5,
     'socket_timeout': 5,
 }
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
+    'socket_connect_timeout': 5,
+    'socket_timeout': 5,
+}
 
 # Message retry policy
 MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
