@@ -402,7 +402,16 @@ Create these resources in a single resource group (a logical container that grou
 5. **Azure Static Web Apps** — Free tier. `frontend/staticwebapp.config.json` handles SPA routing fallback.
 6. **Azure Blob Storage** — Standard LRS. Create a `media` container. Generate a SAS token via Storage Account → Shared access signature (enable Blob service, Container + Object resource types, Read + Write + Create permissions).
 
-#### 2. Configure App Services
+#### 2. Configure Azure Cache for Redis
+
+After provisioning the Redis instance, configure it to accept connections from the App Services:
+
+1. **Enable access key authentication:** Azure Cache for Redis → Authentication → untick "Disable Access Keys Authentication". This is disabled by default on new instances — without it, all password-based connections from Celery are rejected with "invalid username-password pair".
+2. **Enable public network access:** Azure Cache for Redis → Private Endpoint → set Public network access to **Enabled**.
+3. **Add firewall rules:** Whitelist the App Service outbound IPs so Redis accepts connections from your backend services. Find them at: any App Service → Networking → Outbound addresses (all 3 services share the same App Service Plan, so they have identical IPs). Use IP ranges to minimize the number of rules (e.g., `20.46.106.0` – `20.46.110.255` to cover a block).
+4. **Verify the access key:** Copy the Primary key from Azure Cache for Redis → Authentication → Access keys. This must exactly match the password in your `CELERY_BROKER_URL` env var (`rediss://:<this-key>@...`). Do not URL-encode special characters like `=` — see [gotcha below](#azure-cache-for-redis--do-not-url-encode-the-access-key).
+
+#### 3. Configure App Services
 
 For each App Service (API, worker, beat):
 
@@ -410,6 +419,8 @@ For each App Service (API, worker, beat):
 - API: `bash startup.sh`
 - Worker: `bash startup-worker.sh`
 - Beat: `bash startup-beat.sh`
+
+**Settings → Configuration → General settings → Always On:** Set to **On**. Required for worker and beat services to stay alive between requests. Without it, Azure unloads idle processes and Celery tasks stop being consumed.
 
 **Settings → Environment variables** — set the variables listed in the [Environment Variables](#environment-variables) table below.
 
@@ -419,11 +430,11 @@ For each App Service (API, worker, beat):
 **Download publish profiles:**
 - Each App Service → Overview → Download publish profile. You need **Basic authentication** enabled (Settings → Configuration → General settings → Basic Auth Publishing Credentials → On).
 
-#### 3. Configure GitHub Secrets
+#### 4. Configure GitHub Secrets
 
 In your GitHub repo → Settings → Secrets and variables → Actions, set the secrets listed in the [GitHub Secrets](#github-secrets-cd) table below.
 
-#### 4. Configure Clerk for Azure
+#### 5. Configure Clerk for Azure
 
 1. **Clerk Dashboard → Domains:** Add the Static Web App URL (`https://<name>.azurestaticapps.net`) as an allowed origin
 2. **Clerk Dashboard → Webhooks → Add Endpoint:**
@@ -431,11 +442,11 @@ In your GitHub repo → Settings → Secrets and variables → Actions, set the 
    - Subscribe to: `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`, `subscription.active`, `subscriptionItem.canceled`, `subscriptionItem.ended`, `subscription.past_due`
    - Copy the **Signing Secret** (`whsec_...`) → set as `CLERK_WEBHOOK_SIGNING_SECRET` on all backend App Services
 
-#### 5. Deploy
+#### 6. Deploy
 
 Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab.
 
-#### 6. Verify
+#### 7. Verify
 
 - `GET https://<api-app-name>.azurewebsites.net/api/health/` returns 200
 - Frontend loads at the Static Web App URL and Clerk sign-in works
@@ -525,6 +536,15 @@ After redeploying, the Azure Portal log stream may continue showing old logs. **
 
 #### Publish profile requires Basic Auth
 To download a publish profile, Basic Authentication must be enabled: App Service → Settings → Configuration → General settings → Basic Auth Publishing Credentials → On.
+
+#### Azure Cache for Redis — access key authentication disabled by default
+New Azure Redis instances have access key auth disabled. Celery connections fail with "invalid username-password pair" even though the key is correct. Fix: Azure Cache for Redis → Authentication → untick "Disable Access Keys Authentication".
+
+#### Azure Cache for Redis — firewall blocks App Service connections
+By default, Azure Redis blocks all inbound connections. Without firewall rules, Celery's `.delay()` call hangs (or times out after 5s with the broker/result backend transport options in `settings.py`). Fix: enable public network access and add App Service outbound IP ranges as firewall rules. All 3 services (API, worker, beat) share one App Service Plan so they have the same outbound IPs.
+
+#### Azure Cache for Redis — do not URL-encode the access key
+Azure Redis access keys are base64 strings that may end in `=`. Do **not** URL-encode `=` to `%3D` in `CELERY_BROKER_URL` — `redis-py` parses the password using `@` as the delimiter and handles `=` correctly. URL-encoding causes auth failures.
 
 ---
 
