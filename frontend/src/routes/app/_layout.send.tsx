@@ -622,6 +622,14 @@ function SendContent() {
             </div>
 
             <div className="flex justify-end gap-2 mt-4">
+              <Button
+                type="button"
+                outline
+                disabled={isSending || isScheduling}
+                onClick={() => setShowSchedulePicker((prev) => !prev)}
+              >
+                Schedule
+              </Button>
               <Button type="submit" color="purple" disabled={isSending || isScheduling}>
                 {isSending ? (
                   <div className="flex items-center gap-2">
@@ -631,14 +639,6 @@ function SendContent() {
                 ) : (
                   'Send Now'
                 )}
-              </Button>
-              <Button
-                type="button"
-                outline
-                disabled={isSending || isScheduling}
-                onClick={() => setShowSchedulePicker((prev) => !prev)}
-              >
-                Schedule
               </Button>
             </div>
 
