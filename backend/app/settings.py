@@ -207,6 +207,10 @@ CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_ACKS_LATE = True          # Never lose tasks on worker crash
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Fair dispatch
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'socket_connect_timeout': 5,
+    'socket_timeout': 5,
+}
 
 # Message retry policy
 MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
