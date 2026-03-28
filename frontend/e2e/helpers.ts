@@ -27,7 +27,7 @@ export async function authenticatePage(page: Page, userId?: string) {
   if (!userId) {
     // Try fast path: storageState may have pre-loaded a Clerk session.
     if (page.url() === 'about:blank') {
-      await page.goto('/', { timeout: 90_000 })
+      await page.goto('/', { timeout: 45_000 })
     }
     // Wait for Clerk to restore session from storageState (takes a moment to initialize)
     try {
@@ -85,7 +85,7 @@ export async function authenticatePage(page: Page, userId?: string) {
 
   // Navigate to app if not already there (explicit userId path from auth.setup.ts)
   if (page.url() === 'about:blank' || page.url().startsWith('data:')) {
-    await page.goto('/', { timeout: 90_000 })
+    await page.goto('/', { timeout: 45_000 })
   }
 
   // Wait for Clerk JS to appear — retry once for Vite 504 cold-start failures
@@ -96,7 +96,7 @@ export async function authenticatePage(page: Page, userId?: string) {
     )
   } catch {
     console.log('[AUTH] Clerk not found after 30s, reloading once...')
-    await page.goto('/', { timeout: 90_000 })
+    await page.goto('/', { timeout: 45_000 })
     await page.waitForFunction(
       () => (window as any).Clerk != null,
       { timeout: 30_000 }
@@ -105,7 +105,7 @@ export async function authenticatePage(page: Page, userId?: string) {
 
   // Poll until sign-in succeeds — don't rely on Clerk.loaded (unreliable in CI).
   await page.evaluate(async (ticket: string) => {
-    const deadline = Date.now() + 60_000
+    const deadline = Date.now() + 30_000
     while (Date.now() < deadline) {
       try {
         const clerk = (window as any).Clerk
@@ -121,7 +121,7 @@ export async function authenticatePage(page: Page, userId?: string) {
     }
     const c = (window as any).Clerk
     throw new Error(
-      `Clerk sign-in failed after 60s. ` +
+      `Clerk sign-in failed after 30s. ` +
       `Clerk exists: ${!!c}, loaded: ${c?.loaded}, version: ${c?.version}`
     )
   }, ticket)

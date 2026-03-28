@@ -49,9 +49,12 @@ test.beforeAll(async ({ browser }) => {
     }
   }
 
-  contact = await ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' })
-  const groupContact = await ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' })
-  group = await createGroup(page, { name: 'Pipeline Group' })
+  let groupContact: any
+  ;[contact, groupContact, group] = await Promise.all([
+    ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' }),
+    ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' }),
+    createGroup(page, { name: 'Pipeline Group' }),
+  ])
   await addMembers(page, group.id, [groupContact.id])
 
   // Create schedules for pipeline status display tests

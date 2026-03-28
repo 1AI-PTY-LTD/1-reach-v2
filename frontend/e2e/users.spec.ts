@@ -86,61 +86,68 @@ test.beforeAll(async ({ browser }) => {
   })
 
   // Seed Django DB directly (no Svix tunnel in CI — webhooks aren't delivered)
-  await seedWebhook({
-    type: 'user.created',
-    data: {
-      id: adminUserId,
-      primary_email_address_id: 'email_1',
-      email_addresses: [{ id: 'email_1', email_address: `admin-${ts}@test.1reach.com` }],
-      first_name: 'E2E', last_name: 'Admin',
-    },
-  })
-  await seedWebhook({
-    type: 'organization.created',
-    data: { id: specOrgId, name: `E2E Users Org ${slug}`, slug },
-  })
-  await seedWebhook({
-    type: 'organizationMembership.created',
-    data: {
-      organization: { id: specOrgId },
-      public_user_data: { user_id: adminUserId },
-      role: 'org:admin',
-    },
-  })
-  await seedWebhook({
-    type: 'user.created',
-    data: {
-      id: memberUserId,
-      primary_email_address_id: 'email_2',
-      email_addresses: [{ id: 'email_2', email_address: `member-${ts}@test.1reach.com` }],
-      first_name: 'Member', last_name: 'User',
-    },
-  })
-  await seedWebhook({
-    type: 'organizationMembership.created',
-    data: {
-      organization: { id: specOrgId },
-      public_user_data: { user_id: memberUserId },
-      role: 'org:member',
-    },
-  })
-  await seedWebhook({
-    type: 'user.created',
-    data: {
-      id: inactiveUserId,
-      primary_email_address_id: 'email_3',
-      email_addresses: [{ id: 'email_3', email_address: `inactive-${ts}@test.1reach.com` }],
-      first_name: 'Inactive', last_name: 'User',
-    },
-  })
-  await seedWebhook({
-    type: 'organizationMembership.created',
-    data: {
-      organization: { id: specOrgId },
-      public_user_data: { user_id: inactiveUserId },
-      role: 'org:member',
-    },
-  })
+  // Batch 1: users + org (independent)
+  await Promise.all([
+    seedWebhook({
+      type: 'user.created',
+      data: {
+        id: adminUserId,
+        primary_email_address_id: 'email_1',
+        email_addresses: [{ id: 'email_1', email_address: `admin-${ts}@test.1reach.com` }],
+        first_name: 'E2E', last_name: 'Admin',
+      },
+    }),
+    seedWebhook({
+      type: 'organization.created',
+      data: { id: specOrgId, name: `E2E Users Org ${slug}`, slug },
+    }),
+    seedWebhook({
+      type: 'user.created',
+      data: {
+        id: memberUserId,
+        primary_email_address_id: 'email_2',
+        email_addresses: [{ id: 'email_2', email_address: `member-${ts}@test.1reach.com` }],
+        first_name: 'Member', last_name: 'User',
+      },
+    }),
+    seedWebhook({
+      type: 'user.created',
+      data: {
+        id: inactiveUserId,
+        primary_email_address_id: 'email_3',
+        email_addresses: [{ id: 'email_3', email_address: `inactive-${ts}@test.1reach.com` }],
+        first_name: 'Inactive', last_name: 'User',
+      },
+    }),
+  ])
+  // Batch 2: memberships (need users + org to exist)
+  await Promise.all([
+    seedWebhook({
+      type: 'organizationMembership.created',
+      data: {
+        organization: { id: specOrgId },
+        public_user_data: { user_id: adminUserId },
+        role: 'org:admin',
+      },
+    }),
+    seedWebhook({
+      type: 'organizationMembership.created',
+      data: {
+        organization: { id: specOrgId },
+        public_user_data: { user_id: memberUserId },
+        role: 'org:member',
+      },
+    }),
+    seedWebhook({
+      type: 'organizationMembership.created',
+      data: {
+        organization: { id: specOrgId },
+        public_user_data: { user_id: inactiveUserId },
+        role: 'org:member',
+      },
+    }),
+  ])
+  // Batch 3: inactive membership deletion (needs membership to exist)
   await seedWebhook({
     type: 'organizationMembership.deleted',
     data: {
