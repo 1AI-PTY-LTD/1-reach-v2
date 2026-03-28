@@ -103,7 +103,7 @@ async function fillAndSubmitSmsForm(page: Page, message = 'Hello test') {
     }
   }
 
-  const sendBtn = page.getByRole('button', { name: /^send$/i }).first()
+  const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
   await sendBtn.click()
 }
 
@@ -220,7 +220,7 @@ test.describe('Group send — pipeline flow', () => {
       const textarea = page.locator('textarea').first()
       await textarea.fill('Hello group!')
 
-      const sendBtn = page.getByRole('button', { name: /^send$/i }).first()
+      const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
       await sendBtn.click()
 
       // Summary should mention 1 recipient (1 group member from beforeAll)

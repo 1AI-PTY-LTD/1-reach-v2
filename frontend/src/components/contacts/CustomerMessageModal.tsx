@@ -75,7 +75,7 @@ export function ContactMessageModal({
             text: message?.text || "",
             scheduled_time: message
                 ? dayjs(message.scheduled_time).toISOString()
-                : dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute').toISOString(),
+                : dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY || 5), 'minute').toISOString(),
             template_id: message?.template?.toString() || "",
         },
         onSubmit: async ({ value }) => {

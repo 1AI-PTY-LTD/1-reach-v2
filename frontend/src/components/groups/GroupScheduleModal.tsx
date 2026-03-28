@@ -249,7 +249,7 @@ export default function GroupScheduleModal({
 		} else if (!isEditMode) {
 			// Clear form for create mode and set default scheduled time
 			form.reset();
-			form.setFieldValue('scheduled_time', dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute').toISOString());
+			form.setFieldValue('scheduled_time', dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY || 5), 'minute').toISOString());
 		}
 	}, [isOpen, isEditMode]);
 

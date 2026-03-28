@@ -10,7 +10,7 @@ export function isTimeInPast(isoString: string): boolean {
 export function shouldSendImmediately(isoString: string): boolean {
 	const scheduled = dayjs(isoString);
 	const now = dayjs();
-	const minDelayFromNow = now.add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute');
+	const minDelayFromNow = now.add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY || 5), 'minute');
 	return scheduled.isBefore(minDelayFromNow) || scheduled.isBefore(now);
 }
 
@@ -68,7 +68,7 @@ export function ScheduleDateTimePicker({
 					{isPast
 						? "A message can't be scheduled for a time in the past!"
 						: isImmediate
-							? `This message will be sent immediately (scheduled time is within ${import.meta.env.VITE_MIN_MESSAGE_DELAY} minutes)`
+							? `This message will be sent immediately (scheduled time is within ${import.meta.env.VITE_MIN_MESSAGE_DELAY || 5} minutes)`
 							: 'This message will be scheduled for future delivery'
 					}
 				</div>

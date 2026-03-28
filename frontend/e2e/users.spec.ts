@@ -251,7 +251,7 @@ test.describe('Users Page', () => {
     // Both outcomes are valid — Clerk may return 502 in CI environments.
     await Promise.race([
       expect(page.getByPlaceholder('user@example.com')).not.toBeVisible({ timeout: 10000 }),
-      expect(page.getByText(/Failed to send invitation/i)).toBeVisible({ timeout: 10000 }),
+      expect(page.getByText(/Failed to send invitation/i).first()).toBeVisible({ timeout: 10000 }),
     ])
   })
 
