@@ -34,10 +34,11 @@ test.afterAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
-  // Restore balance to a reasonable amount
-  await setOrgBalance(page, 100).catch(() => {})
-  await Promise.all(scheduleIds.map(id => deleteSchedule(page, id).catch(() => {})))
-  await deleteContact(page, contact.id).catch(() => {})
+  await Promise.all([
+    setOrgBalance(page, 100).catch(() => {}),
+    ...scheduleIds.map(id => deleteSchedule(page, id).catch(() => {})),
+    deleteContact(page, contact.id).catch(() => {}),
+  ])
   await page.close()
 })
 

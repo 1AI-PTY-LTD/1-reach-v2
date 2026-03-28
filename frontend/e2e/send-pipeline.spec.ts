@@ -81,9 +81,11 @@ test.afterAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
-  await Promise.all(pipelineScheduleIds.map(id => deleteSchedule(page, id).catch(() => {})))
-  if (group?.id)   await deleteGroup(page, group.id).catch(() => {})
-  if (contact?.id) await deleteContact(page, contact.id).catch(() => {})
+  await Promise.all([
+    ...pipelineScheduleIds.map(id => deleteSchedule(page, id).catch(() => {})),
+    group?.id   ? deleteGroup(page, group.id).catch(() => {})    : Promise.resolve(),
+    contact?.id ? deleteContact(page, contact.id).catch(() => {}) : Promise.resolve(),
+  ])
   await page.close()
 })
 

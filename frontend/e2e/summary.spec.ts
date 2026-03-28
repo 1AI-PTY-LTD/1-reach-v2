@@ -36,9 +36,11 @@ test.afterAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
-  await Promise.all(scheduleIds.map(id => deleteSchedule(page, id).catch(() => {})))
-  await deleteContact(page, contact.id).catch(() => {})
-  if (configId) await deleteConfig(page, configId).catch(() => {})
+  await Promise.all([
+    ...scheduleIds.map(id => deleteSchedule(page, id).catch(() => {})),
+    deleteContact(page, contact.id).catch(() => {}),
+    configId ? deleteConfig(page, configId).catch(() => {}) : Promise.resolve(),
+  ])
   await page.close()
 })
 
