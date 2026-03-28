@@ -26,15 +26,15 @@ test.beforeAll(async ({ browser }) => {
 
   contact = await ensureContact(page, { first_name: 'Schedule', last_name: 'Test', phone: '0414000000' })
 
-  for (const s of SCHEDULES) {
-    const schedule = await apiRequest(page, 'POST', '/api/sms/send/', {
-      message: s.message,
-      recipient: s.phone,
-      contact_id: contact.id,
-    })
-    scheduleIds.push(schedule.schedule_id)
-    await forceStatus(page, schedule.schedule_id, s.status)
-  }
+  const results = await Promise.all(
+    SCHEDULES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
+      message: s.message, recipient: s.phone, contact_id: contact.id,
+    }))
+  )
+  results.forEach(r => scheduleIds.push(r.schedule_id))
+  await Promise.all(
+    SCHEDULES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
+  )
 
   await page.close()
 })

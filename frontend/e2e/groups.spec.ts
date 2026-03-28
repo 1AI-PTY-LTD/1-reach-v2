@@ -26,10 +26,12 @@ test.afterAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
-  if (group?.id)    await deleteGroup(page, group.id).catch(() => {})
-  if (contact1?.id) await deleteContact(page, contact1.id).catch(() => {})
-  if (contact2?.id) await deleteContact(page, contact2.id).catch(() => {})
-  if (contact3?.id) await deleteContact(page, contact3.id).catch(() => {})
+  await Promise.all([
+    group?.id    ? deleteGroup(page, group.id).catch(() => {})    : Promise.resolve(),
+    contact1?.id ? deleteContact(page, contact1.id).catch(() => {}) : Promise.resolve(),
+    contact2?.id ? deleteContact(page, contact2.id).catch(() => {}) : Promise.resolve(),
+    contact3?.id ? deleteContact(page, contact3.id).catch(() => {}) : Promise.resolve(),
+  ])
   await page.close()
 })
 

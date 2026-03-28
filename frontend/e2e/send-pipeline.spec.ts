@@ -64,15 +64,15 @@ test.beforeAll(async ({ browser }) => {
     { message: 'Hello Eve',     status: 'delivered', phone: '0416555555' },
     { message: 'Hello Frank',   status: 'failed',    phone: '0416666666' },
   ]
-  for (const s of PIPELINE_STATES) {
-    const result = await apiRequest(page, 'POST', '/api/sms/send/', {
-      message: s.message,
-      recipient: s.phone,
-      contact_id: contact.id,
-    })
-    pipelineScheduleIds.push(result.schedule_id)
-    await forceStatus(page, result.schedule_id, s.status)
-  }
+  const results = await Promise.all(
+    PIPELINE_STATES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
+      message: s.message, recipient: s.phone, contact_id: contact.id,
+    }))
+  )
+  results.forEach(r => pipelineScheduleIds.push(r.schedule_id))
+  await Promise.all(
+    PIPELINE_STATES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
+  )
 
   await page.close()
 })
