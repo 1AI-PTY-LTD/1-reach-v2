@@ -209,13 +209,16 @@ CELERY_TASK_ACKS_LATE = True          # Never lose tasks on worker crash
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # Fair dispatch
 CELERY_TASK_DEFAULT_QUEUE = 'default'  # Match worker's -Q default,messages
 CELERY_BROKER_TRANSPORT_OPTIONS = {
-    'socket_connect_timeout': 5,
-    'socket_timeout': 5,
+    'socket_connect_timeout': 30,
+    'socket_timeout': 30,
+    'socket_keepalive': True,
 }
 CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
-    'socket_connect_timeout': 5,
-    'socket_timeout': 5,
+    'socket_connect_timeout': 30,
+    'socket_timeout': 30,
+    'socket_keepalive': True,
 }
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 # Message retry policy
 MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
