@@ -97,7 +97,7 @@ function BillingContent() {
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               {isSubscribed || isPastDue ? 'Plan' : 'Trial balance'}
             </p>
-            <p className="text-2xl font-bold mt-1">
+            <p className="text-2xl font-bold mt-1 text-zinc-900 dark:text-white">
               {!isSubscribed && !isPastDue ? (
                 <Badge color={balanceColor}>${data.balance}</Badge>
               ) : (
@@ -116,11 +116,11 @@ function BillingContent() {
           {/* Monthly Spend card */}
           <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
             <p className="text-sm text-zinc-500 dark:text-zinc-400">Monthly spend</p>
-            <p className="text-2xl font-bold mt-1">${data.total_monthly_spend}</p>
+            <p className="text-2xl font-bold mt-1 text-zinc-900 dark:text-white">${data.total_monthly_spend}</p>
             {limit !== null ? (
-              <p className="text-xs text-zinc-400">/ ${data.monthly_limit} limit</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">/ ${data.monthly_limit} limit</p>
             ) : (
-              <p className="text-xs text-zinc-400">no limit set</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">no limit set</p>
             )}
           </div>
 
