@@ -1,4 +1,4 @@
-import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, infiniteQueryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Schedule, CreateSchedule, UpdateSchedule } from '../types/schedule.types'
 import type { PaginatedResponse } from '../types/pagination.types'
 import type { ApiClient } from '../lib/helper'
@@ -70,6 +70,61 @@ export function getSchedulesByContactIdQueryOptions(
     },
     refetchInterval: 60000,
     staleTime: page === 1 ? 0 : 30000,
+    refetchOnWindowFocus: true,
+  })
+}
+
+// Infinite query options
+export function getAllSchedulesInfiniteOptions(client: ApiClient, date: string, limit: number = 50) {
+  return infiniteQueryOptions({
+    queryKey: ['schedules', date, 'infinite', limit],
+    queryFn: async ({ pageParam }): Promise<PaginatedSchedules> => {
+      Logger.debug('Fetching schedules (infinite)', {
+        component: 'schedulesApi.getAllSchedulesInfinite',
+        data: { date, page: pageParam, limit },
+      })
+      const params = new URLSearchParams()
+      params.append('date', date)
+      params.append('page', pageParam.toString())
+      params.append('limit', limit.toString())
+      const data = await client.get<PaginatedSchedules>(`/api/schedules/?${params.toString()}`)
+      return data
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
+    refetchInterval: 60000,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
+  })
+}
+
+export function getSchedulesByContactIdInfiniteOptions(
+  client: ApiClient,
+  contactId: number,
+  limit: number = 50,
+) {
+  return infiniteQueryOptions({
+    queryKey: ['schedules', 'contact', contactId, 'infinite', limit],
+    queryFn: async ({ pageParam }): Promise<PaginatedSchedules> => {
+      Logger.debug('Fetching schedules by contact (infinite)', {
+        component: 'schedulesApi.getSchedulesByContactIdInfinite',
+        data: { contactId, page: pageParam, limit },
+      })
+      const params = new URLSearchParams()
+      params.append('page', pageParam.toString())
+      params.append('limit', limit.toString())
+      const data = await client.get<PaginatedSchedules>(
+        `/api/contacts/${contactId}/schedules/?${params.toString()}`
+      )
+      return data
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
+    refetchInterval: 60000,
+    staleTime: 0,
     refetchOnWindowFocus: true,
   })
 }

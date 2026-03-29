@@ -1,4 +1,4 @@
-import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, infiniteQueryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { GroupSchedule, CreateGroupSchedule, UpdateGroupSchedule } from '../types/groupSchedule.types'
 import type { PaginatedResponse } from '../types/pagination.types'
 import type { ApiClient } from '../lib/helper'
@@ -38,6 +38,33 @@ export function getAllGroupSchedulesQueryOptions(
       })
       return data
     },
+    refetchInterval: 60 * 1000,
+    staleTime: 30 * 1000,
+  })
+}
+
+export function getGroupSchedulesInfiniteOptions(
+  client: ApiClient,
+  groupId: number,
+  limit: number = 20,
+) {
+  return infiniteQueryOptions({
+    queryKey: ['group-schedules', 'group', groupId, 'infinite', limit],
+    queryFn: async ({ pageParam }): Promise<PaginatedGroupSchedules> => {
+      Logger.debug('Fetching group schedules (infinite)', {
+        component: 'groupSchedulesApi.getGroupSchedulesInfinite',
+        data: { groupId, page: pageParam, limit },
+      })
+      const params = new URLSearchParams()
+      params.append('group_id', groupId.toString())
+      params.append('page', pageParam.toString())
+      params.append('limit', limit.toString())
+      const data = await client.get<PaginatedGroupSchedules>(`/api/group-schedules/?${params.toString()}`)
+      return data
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
     refetchInterval: 60 * 1000,
     staleTime: 30 * 1000,
   })

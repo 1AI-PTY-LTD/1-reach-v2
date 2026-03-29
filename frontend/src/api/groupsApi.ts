@@ -1,4 +1,4 @@
-import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, infiniteQueryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { ContactGroup, CreateGroup, UpdateGroup } from '../types/group.types'
 import type { PaginatedResponse, Pagination } from '../types/pagination.types'
 import type { Contact } from '../types/contact.types'
@@ -65,6 +65,28 @@ export function getGroupByIdQueryOptions(client: ApiClient, groupId: number, pag
     staleTime: 30 * 1000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
+  })
+}
+
+export function getGroupMembersInfiniteOptions(client: ApiClient, groupId: number, limit: number = 10) {
+  return infiniteQueryOptions({
+    queryKey: ['groups', groupId, 'members', 'infinite', limit],
+    queryFn: async ({ pageParam }): Promise<GroupDetailResponse> => {
+      Logger.debug('Fetching group members (infinite)', {
+        component: 'groupsApi.getGroupMembersInfinite',
+        data: { groupId, page: pageParam, limit },
+      })
+      const params = new URLSearchParams()
+      params.append('page', pageParam.toString())
+      params.append('limit', limit.toString())
+      const data = await client.get<GroupDetailResponse>(`/api/groups/${groupId}/?${params.toString()}`)
+      return data
+    },
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.pagination?.hasNext ? lastPage.pagination.page + 1 : undefined,
+    staleTime: 30 * 1000,
+    refetchOnWindowFocus: true,
   })
 }
 

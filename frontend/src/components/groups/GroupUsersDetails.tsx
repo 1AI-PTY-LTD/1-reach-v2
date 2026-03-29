@@ -1,16 +1,17 @@
-import { useQuery } from '@tanstack/react-query'
-import { getGroupByIdQueryOptions, useRemoveMembersFromGroupMutation } from '../../api/groupsApi'
-import { useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { getGroupMembersInfiniteOptions, useRemoveMembersFromGroupMutation } from '../../api/groupsApi'
+import { useState, useRef } from 'react'
 import AddContactsToGroupModal from './AddContactsToGroupModal'
 import { Button } from '../../ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../ui/table'
-import { TrashIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/16/solid'
+import { TrashIcon } from '@heroicons/react/16/solid'
 import { Dialog, DialogTitle, DialogDescription, DialogBody, DialogActions } from '../../ui/dialog'
 import { PlusIcon } from '@heroicons/react/20/solid'
 import LoadingSpinner from '../shared/LoadingSpinner'
 import TableSkeleton from '../shared/TableSkeleton'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import { toast } from 'sonner'
+import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 
 
 export default function GroupUsersDetails({groupId} : {groupId: number}){
@@ -18,13 +19,19 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false)
     const [memberToRemove, setMemberToRemove] = useState<{id: number, name: string} | null>(null)
-    const [currentPage, setCurrentPage] = useState(1)
-    const [pageSize] = useState(10)
-    const groupQuery = useQuery({
-        ...getGroupByIdQueryOptions(client, groupId, currentPage, pageSize),
-        placeholderData: (previousData) => previousData, // Keep previous data during refetch
-    })
+    const scrollContainerRef = useRef<HTMLDivElement>(null)
+    const groupQuery = useInfiniteQuery(getGroupMembersInfiniteOptions(client, groupId, 10))
     const removeMembersMutation = useRemoveMembersFromGroupMutation(client);
+
+    const sentinelRef = useInfiniteScroll({
+        scrollContainerRef,
+        hasNextPage: groupQuery.hasNextPage,
+        isFetchingNextPage: groupQuery.isFetchingNextPage,
+        fetchNextPage: groupQuery.fetchNextPage,
+    })
+
+    const allMembers = groupQuery.data?.pages.flatMap((page) => page.members) ?? [];
+    const totalCount = groupQuery.data?.pages[0]?.pagination?.total ?? 0;
 
     const handleRemoveMemberClick = (memberId: number, memberName: string) => {
         setMemberToRemove({ id: memberId, name: memberName });
@@ -84,8 +91,7 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
             );
         }
 
-        const members = groupQuery.data?.members || [];
-        return members.map((member) => (
+        return allMembers.map((member) => (
             <TableRow key={member.id} className="cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-800">
                 <TableCell className="w-1/4">{member.first_name}</TableCell>
                 <TableCell className="w-1/4">{member.last_name}</TableCell>
@@ -114,63 +120,12 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
 
     return (
         <div>
-            {/* Pagination Controls and Add Button - Top */}
-            <div className="flex items-center px-2 py-4 border-b border-zinc-950/10 dark:border-white/10 mb-4">
-                {groupQuery.data && 'pagination' in groupQuery.data && groupQuery.data.pagination ? (
-                    <div className="flex items-center justify-between flex-1 mr-4">
-                        <div className="text-sm text-gray-700 dark:text-gray-300">
-                            Showing {(groupQuery.data as any).pagination.total === 0 ? 0 : (((groupQuery.data as any).pagination.page - 1) * (groupQuery.data as any).pagination.limit) + 1} to{" "}
-                            {Math.min((groupQuery.data as any).pagination.page * (groupQuery.data as any).pagination.limit, (groupQuery.data as any).pagination.total)} of{" "}
-                            {(groupQuery.data as any).pagination.total} members
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Button
-                                outline
-                                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                                disabled={groupQuery.isFetching || !(groupQuery.data as any).pagination.hasPrev}
-                                className="flex items-center gap-1 px-3 py-1.5 text-sm"
-                            >
-                                <ChevronLeftIcon className="h-4 w-4" />
-                                Previous
-                            </Button>
-
-                            <div className="flex items-center space-x-1">
-                                {/* Page numbers */}
-                                {Array.from({ length: Math.min(5, (groupQuery.data as any).pagination.totalPages) }, (_, i) => {
-                                    const pageNum = Math.max(1, Math.min(
-                                        (groupQuery.data as any).pagination.totalPages - 4,
-                                        (groupQuery.data as any).pagination.page - 2
-                                    )) + i;
-
-                                    if (pageNum > (groupQuery.data as any).pagination.totalPages) return null;
-
-                                    return (
-                                        <Button
-                                            key={pageNum}
-                                            {...(pageNum === (groupQuery.data as any).pagination.page ? { color: 'emerald' } : { outline: true })}
-                                            onClick={() => setCurrentPage(pageNum)}
-                                            disabled={groupQuery.isFetching}
-                                            className="min-w-[2rem] px-2 py-1.5 text-sm"
-                                        >
-                                            {pageNum}
-                                        </Button>
-                                    );
-                                })}
-                            </div>
-
-                            <Button
-                                outline
-                                onClick={() => setCurrentPage(prev => Math.min((groupQuery.data as any).pagination.totalPages, prev + 1))}
-                                disabled={groupQuery.isFetching || !(groupQuery.data as any).pagination.hasNext}
-                                className="flex items-center gap-1 px-3 py-1.5 text-sm"
-                            >
-                                Next
-                                <ChevronRightIcon className="h-4 w-4" />
-                            </Button>
-                        </div>
+            {/* Header with count and Add button */}
+            <div className="flex items-center justify-between px-2 py-4 border-b border-zinc-950/10 dark:border-white/10 mb-4">
+                {totalCount > 0 && (
+                    <div className="text-sm text-gray-700 dark:text-gray-300">
+                        Showing {allMembers.length} of {totalCount} members
                     </div>
-                ) : (
-                    <div className="flex-1 mr-4"></div>
                 )}
                 <Button
                     color="emerald"
@@ -184,7 +139,7 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
                 isOpen={isModalOpen}
                 setIsOpen={setIsModalOpen}
             />
-            <div className="relative">
+            <div className="relative overflow-auto" ref={scrollContainerRef} style={{ maxHeight: 'calc(85vh - 200px)' }}>
                 <Table dense>
                     <TableHead>
                         <TableRow>
@@ -196,10 +151,9 @@ export default function GroupUsersDetails({groupId} : {groupId: number}){
                     </TableHead>
                     <TableBody>{renderTableContent()}</TableBody>
                 </Table>
-
-                {/* Loading Overlay */}
-                {groupQuery.isFetching && (
-                    <div className="absolute inset-0 bg-white/80 dark:bg-zinc-900/80 flex items-center justify-center backdrop-blur-sm z-10">
+                <div ref={sentinelRef} className="h-1" />
+                {groupQuery.isFetchingNextPage && (
+                    <div className="flex justify-center py-4">
                         <LoadingSpinner />
                     </div>
                 )}

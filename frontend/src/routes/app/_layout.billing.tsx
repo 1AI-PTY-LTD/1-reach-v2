@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useSuspenseQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { useOrganization } from '@clerk/clerk-react'
-import { Suspense } from 'react'
+import { Suspense, useRef } from 'react'
 import { Badge } from '../../ui/badge'
 import {
   Table,
@@ -13,9 +13,10 @@ import {
 } from '../../ui/table'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
-import { getBillingSummaryQueryOptions } from '../../api/billingApi'
+import { getBillingTransactionsInfiniteOptions } from '../../api/billingApi'
 import type { TransactionType } from '../../types/billing.types'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
+import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 
 export const Route = createFileRoute('/app/_layout/billing')({
   component: RouteComponent,
@@ -34,13 +35,36 @@ function BillingContent() {
   const client = useApiClient()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  const { data } = useSuspenseQuery(getBillingSummaryQueryOptions(client))
+  const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
+
+  const sentinelRef = useInfiniteScroll({
+    scrollContainerRef,
+    hasNextPage: billingQuery.hasNextPage,
+    isFetchingNextPage: billingQuery.isFetchingNextPage,
+    fetchNextPage: billingQuery.fetchNextPage,
+  })
+
+  const data = billingQuery.data?.pages[0]
+  const allTransactions = billingQuery.data?.pages.flatMap((page) => page.results) ?? []
 
   if (!isAdmin) {
     return (
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-8 text-center">
         <p className="text-zinc-500 dark:text-zinc-400">Access restricted to organisation admins.</p>
+      </div>
+    )
+  }
+
+  if (billingQuery.isLoading) {
+    return <LoadingSpinner />
+  }
+
+  if (billingQuery.isError || !data) {
+    return (
+      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-8 text-center">
+        <p className="text-red-600">Failed to load billing data.</p>
       </div>
     )
   }
@@ -147,46 +171,59 @@ function BillingContent() {
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
         <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">
           Transaction history
+          {data.pagination.total > 0 && (
+            <span className="text-sm font-normal text-zinc-500 ml-2">
+              Showing {allTransactions.length} of {data.pagination.total}
+            </span>
+          )}
         </h3>
-        {data.results.length === 0 ? (
+        {allTransactions.length === 0 ? (
           <p className="text-sm text-zinc-400 text-center py-4">No transactions yet.</p>
         ) : (
-          <Table>
-            <TableHead>
-              <TableRow>
-                <TableHeader>Date</TableHeader>
-                <TableHeader>Type</TableHeader>
-                <TableHeader>Format</TableHeader>
-                <TableHeader>Description</TableHeader>
-                <TableHeader className="text-right">Amount</TableHeader>
-                <TableHeader className="text-right">Balance after</TableHeader>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {data.results.map((tx) => (
-                <TableRow key={tx.id}>
-                  <TableCell className="whitespace-nowrap text-sm text-zinc-500">
-                    {new Date(tx.created_at).toLocaleString()}
-                  </TableCell>
-                  <TableCell>
-                    <Badge color={txTypeBadgeColor[tx.transaction_type]}>
-                      {tx.transaction_type}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {tx.format ? (
-                      <Badge color="zinc">{tx.format.toUpperCase()}</Badge>
-                    ) : (
-                      <span className="text-zinc-400">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">{tx.description}</TableCell>
-                  <TableCell className="text-right font-mono">${tx.amount}</TableCell>
-                  <TableCell className="text-right font-mono">${tx.balance_after}</TableCell>
+          <div ref={scrollContainerRef} className="overflow-auto" style={{ maxHeight: '400px' }}>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeader>Date</TableHeader>
+                  <TableHeader>Type</TableHeader>
+                  <TableHeader>Format</TableHeader>
+                  <TableHeader>Description</TableHeader>
+                  <TableHeader className="text-right">Amount</TableHeader>
+                  <TableHeader className="text-right">Balance after</TableHeader>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHead>
+              <TableBody>
+                {allTransactions.map((tx) => (
+                  <TableRow key={tx.id}>
+                    <TableCell className="whitespace-nowrap text-sm text-zinc-500">
+                      {new Date(tx.created_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge color={txTypeBadgeColor[tx.transaction_type]}>
+                        {tx.transaction_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {tx.format ? (
+                        <Badge color="zinc">{tx.format.toUpperCase()}</Badge>
+                      ) : (
+                        <span className="text-zinc-400">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-sm">{tx.description}</TableCell>
+                    <TableCell className="text-right font-mono">${tx.amount}</TableCell>
+                    <TableCell className="text-right font-mono">${tx.balance_after}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div ref={sentinelRef} className="h-1" />
+            {billingQuery.isFetchingNextPage && (
+              <div className="flex justify-center py-4">
+                <LoadingSpinner />
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
