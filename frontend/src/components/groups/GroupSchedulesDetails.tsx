@@ -7,7 +7,7 @@ import { getGroupSchedulesInfiniteOptions } from '../../api/groupSchedulesApi';
 import type { GroupSchedule } from '../../types/groupSchedule.types';
 import dayjs from 'dayjs';
 import GroupScheduleChildrenList from './GroupScheduleChildrenList';
-import { ChevronDownIcon } from '@heroicons/react/16/solid';
+import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/16/solid';
 import { PlusIcon } from '@heroicons/react/16/solid';
 import LoadingSpinner from '../shared/LoadingSpinner';
 import TableSkeleton from '../shared/TableSkeleton';
