@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +22,22 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend
+          path: backend
+
+  deploy-api:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend
+          path: backend
+
       - name: Deploy to Azure App Service — backend
         uses: azure/webapps-deploy@v3
         with:
@@ -29,12 +45,32 @@ jobs:
           publish-profile: ${{ secrets.AZURE_BACKEND_PUBLISH_PROFILE }}
           package: backend
 
+  deploy-worker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend
+          path: backend
+
       - name: Deploy to Azure App Service — celery-worker
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WORKER_APP_NAME }}
           publish-profile: ${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}
           package: backend
+
+  deploy-beat:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend
+          path: backend
 
       - name: Deploy to Azure App Service — celery-beat
         uses: azure/webapps-deploy@v3
