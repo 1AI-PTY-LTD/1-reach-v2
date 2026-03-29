@@ -78,7 +78,7 @@ function BillingContent() {
   const balanceColor = balance <= 0 ? 'red' : balance < 1 ? 'yellow' : 'green'
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 h-[calc(100svh-9.5rem)]">
       {/* Mode + Balance */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
         <div className="flex items-center justify-between mb-4">
@@ -168,7 +168,7 @@ function BillingContent() {
       </div>
 
       {/* Transaction history */}
-      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
+      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6 flex-1 min-h-0 flex flex-col">
         <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">
           Transaction history
           {data.pagination.total > 0 && (
@@ -180,7 +180,7 @@ function BillingContent() {
         {allTransactions.length === 0 ? (
           <p className="text-sm text-zinc-400 text-center py-4">No transactions yet.</p>
         ) : (
-          <div ref={scrollContainerRef} className="overflow-auto max-h-[60vh]">
+          <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
             <Table>
               <TableHead>
                 <TableRow>
