@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { getBillingSummaryQueryOptions } from '../billingApi'
+import { getBillingSummaryQueryOptions, getBillingTransactionsInfiniteOptions } from '../billingApi'
 import { createMockApiClient } from '../../test/test-utils'
 import { server } from '../../test/handlers'
 
@@ -69,6 +69,56 @@ describe('billingApi', () => {
       await options.queryFn({} as never)
 
       expect(capturedUrl).toBe('/api/billing/summary/?page=3&page_size=10')
+    })
+  })
+
+  describe('getBillingTransactionsInfiniteOptions', () => {
+    it('returns correct query key', () => {
+      const options = getBillingTransactionsInfiniteOptions(client, 50)
+      expect(options.queryKey).toEqual(['billing', 'summary', 'infinite', 50])
+    })
+
+    it('uses default pageSize of 50', () => {
+      const options = getBillingTransactionsInfiniteOptions(client)
+      expect(options.queryKey).toEqual(['billing', 'summary', 'infinite', 50])
+    })
+
+    it('has initialPageParam of 1', () => {
+      const options = getBillingTransactionsInfiniteOptions(client)
+      expect(options.initialPageParam).toBe(1)
+    })
+
+    it('getNextPageParam returns next page when hasNext is true', () => {
+      const options = getBillingTransactionsInfiniteOptions(client)
+      const result = options.getNextPageParam!({
+        billing_mode: 'trial', balance: '10.00', monthly_limit: null,
+        total_monthly_spend: '0.00', monthly_usage_by_format: {}, results: [],
+        pagination: { total: 100, page: 1, limit: 50, totalPages: 2, hasNext: true, hasPrev: false },
+      } as any, [] as any, 1, [] as any)
+      expect(result).toBe(2)
+    })
+
+    it('getNextPageParam returns undefined when hasNext is false', () => {
+      const options = getBillingTransactionsInfiniteOptions(client)
+      const result = options.getNextPageParam!({
+        billing_mode: 'trial', balance: '10.00', monthly_limit: null,
+        total_monthly_spend: '0.00', monthly_usage_by_format: {}, results: [],
+        pagination: { total: 5, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
+      } as any, [] as any, 1, [] as any)
+      expect(result).toBeUndefined()
+    })
+
+    it('fetches billing summary data with pageParam', async () => {
+      const options = getBillingTransactionsInfiniteOptions(client)
+      const result = await options.queryFn!({ pageParam: 1, meta: undefined, signal: new AbortController().signal, direction: 'forward', queryKey: options.queryKey })
+      expect(result).toHaveProperty('billing_mode')
+      expect(result).toHaveProperty('results')
+      expect(result).toHaveProperty('pagination')
+    })
+
+    it('sets staleTime to 0', () => {
+      const options = getBillingTransactionsInfiniteOptions(client)
+      expect(options.staleTime).toBe(0)
     })
   })
 

@@ -4,19 +4,20 @@ import { Heading } from '../../ui/heading'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../ui/table'
 import dayjs from 'dayjs'
 import { StatusBadge } from '../../components/StatusBadge'
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useRef } from 'react'
 import { MessageDetails } from '../../components/contacts/MessageDetails'
 import { Button } from '../../ui/button'
-import { PencilIcon, PlusIcon, ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon, ChevronRightIcon as ChevronRightExpandIcon } from '@heroicons/react/16/solid'
+import { PencilIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon as ChevronRightExpandIcon } from '@heroicons/react/16/solid'
 import { Divider } from '../../ui/divider'
 import { ContactModal } from '../../components/contacts/CustomerModal'
-import { getSchedulesByContactIdQueryOptions } from '../../api/schedulesApi'
+import { getSchedulesByContactIdInfiniteOptions } from '../../api/schedulesApi'
 import { ContactMessageModal } from '../../components/contacts/CustomerMessageModal'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import Logger from '../../utils/logger'
 import { getAllContactsQueryOptions, getContactByIdQueryOptions } from '../../api/contactsApi'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
+import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 
 export const Route = createFileRoute('/app/_layout/contacts/$contactId')({
   component: ContactDetails,
@@ -45,35 +46,21 @@ function ContactDetails() {
 
   const contact = contactFromList || individualContactQuery.data
 
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize] = useState(50)
-  const contactMessagesQuery = useQuery({
-    ...getSchedulesByContactIdQueryOptions(client, contactId, currentPage, pageSize),
-    placeholderData: (previousData) => previousData,
-  })
+  const contactMessagesQuery = useInfiniteQuery(
+    getSchedulesByContactIdInfiniteOptions(client, contactId, 50)
+  )
 
   const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
   const [isEditContactOpen, setIsEditContactOpen] = useState<boolean>(false)
   const [isCreateMessageOpen, setIsCreateMessageOpen] = useState<boolean>(false)
-  const [showLoader, setShowLoader] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (contactMessagesQuery.isFetching) {
-      setShowLoader(true)
-    } else {
-      const timer = setTimeout(() => {
-        setShowLoader(false)
-      }, 150)
-      return () => clearTimeout(timer)
-    }
-  }, [contactMessagesQuery.isFetching])
-
-  useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0
-    }
-  }, [currentPage])
+  const sentinelRef = useInfiniteScroll({
+    scrollContainerRef,
+    hasNextPage: contactMessagesQuery.hasNextPage,
+    isFetchingNextPage: contactMessagesQuery.isFetchingNextPage,
+    fetchNextPage: contactMessagesQuery.fetchNextPage,
+  })
 
   if (contactsQuery.status === 'error' || (individualContactQuery.isEnabled && individualContactQuery.status === 'error')) {
     return (
@@ -128,13 +115,12 @@ function ContactDetails() {
       )
     }
 
-    const { data: paginatedData } = contactMessagesQuery
-    if (!paginatedData) return null
+    if (!contactMessagesQuery.data) return null
 
-    const messages = paginatedData.results
+    const messages = contactMessagesQuery.data.pages.flatMap((page) => page.results)
     Logger.debug('Rendering message table content', {
       component: 'ContactDetails.renderMessageTableContent',
-      data: { messages, pagination: paginatedData.pagination },
+      data: { messageCount: messages.length, totalPages: contactMessagesQuery.data.pages.length },
     })
 
     if (messages.length === 0) {
@@ -200,62 +186,17 @@ function ContactDetails() {
             Phone: {contact.phone.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3')}
           </Heading>
         </div>
-        {contactMessagesQuery.data?.pagination && (
+        {contactMessagesQuery.data?.pages[0]?.pagination && (
           <div className="flex items-center justify-between px-2 py-4 border-b border-zinc-950/10 dark:border-white/10">
             <div className="text-sm text-gray-700 dark:text-gray-300">
-              Showing {contactMessagesQuery.data.pagination.total === 0 ? 0 : ((contactMessagesQuery.data.pagination.page - 1) * contactMessagesQuery.data.pagination.limit) + 1} to{' '}
-              {Math.min(contactMessagesQuery.data.pagination.page * contactMessagesQuery.data.pagination.limit, contactMessagesQuery.data.pagination.total)} of{' '}
-              {contactMessagesQuery.data.pagination.total} results
+              Showing {contactMessagesQuery.data.pages.flatMap((p) => p.results).length} of{' '}
+              {contactMessagesQuery.data.pages[0].pagination.total} messages
             </div>
-            {showLoader && (
+            {contactMessagesQuery.isLoading && (
               <div className="flex items-center">
                 <LoadingSpinner />
               </div>
             )}
-            <div className="flex items-center space-x-2">
-              <Button
-                outline
-                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                disabled={contactMessagesQuery.isFetching || !contactMessagesQuery.data.pagination.hasPrev}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm"
-              >
-                <ChevronLeftIcon className="h-4 w-4" />
-                Previous
-              </Button>
-
-              <div className="flex items-center space-x-1">
-                {Array.from({ length: Math.min(5, contactMessagesQuery.data.pagination.totalPages) }, (_, i) => {
-                  const pageNum = Math.max(1, Math.min(
-                    contactMessagesQuery.data.pagination.totalPages - 4,
-                    contactMessagesQuery.data.pagination.page - 2,
-                  )) + i
-
-                  if (pageNum > contactMessagesQuery.data.pagination.totalPages) return null
-
-                  return (
-                    <Button
-                      key={pageNum}
-                      {...(pageNum === contactMessagesQuery.data.pagination.page ? { color: 'emerald' as const } : { outline: true })}
-                      onClick={() => setCurrentPage(pageNum)}
-                      disabled={contactMessagesQuery.isFetching}
-                      className="min-w-[2rem] px-2 py-1.5 text-sm"
-                    >
-                      {pageNum}
-                    </Button>
-                  )
-                })}
-              </div>
-
-              <Button
-                outline
-                onClick={() => setCurrentPage((prev) => Math.min(contactMessagesQuery.data.pagination.totalPages, prev + 1))}
-                disabled={contactMessagesQuery.isFetching || !contactMessagesQuery.data.pagination.hasNext}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm"
-              >
-                Next
-                <ChevronRightIcon className="h-4 w-4" />
-              </Button>
-            </div>
           </div>
         )}
 
@@ -274,6 +215,12 @@ function ContactDetails() {
               </TableHead>
               <TableBody>{messageTableContent}</TableBody>
             </Table>
+            <div ref={sentinelRef} className="h-1" />
+            {contactMessagesQuery.isFetchingNextPage && (
+              <div className="flex justify-center py-4">
+                <LoadingSpinner />
+              </div>
+            )}
           </div>
         </div>
 

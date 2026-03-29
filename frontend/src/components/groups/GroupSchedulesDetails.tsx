@@ -1,27 +1,26 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState, useRef } from 'react';
 import GroupScheduleModal from './GroupScheduleModal';
 import { Button } from '../../ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../ui/table';
-import { useQuery } from '@tanstack/react-query';
-import { getAllGroupSchedulesQueryOptions } from '../../api/groupSchedulesApi';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { getGroupSchedulesInfiniteOptions } from '../../api/groupSchedulesApi';
 import type { GroupSchedule } from '../../types/groupSchedule.types';
 import dayjs from 'dayjs';
 import GroupScheduleChildrenList from './GroupScheduleChildrenList';
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/16/solid';
+import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/16/solid';
 import { PlusIcon } from '@heroicons/react/16/solid';
 import LoadingSpinner from '../shared/LoadingSpinner';
 import TableSkeleton from '../shared/TableSkeleton';
 import Logger from '../../utils/logger';
 import { useApiClient } from '../../lib/ApiClientProvider';
+import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
 
 export default function GroupSchedulesDetails({ groupId }: { groupId: number }) {
 	const client = useApiClient();
 	const [isModalOpen, setIsModalOpen] = useState(false);
 	const [expandedRow, setExpandedRow] = useState<number | null>(null);
-	const [currentPage, setCurrentPage] = useState(1);
-	const [pageSize] = useState(20);
-	const [showLoader, setShowLoader] = useState(false);
 	const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
+	const scrollContainerRef = useRef<HTMLDivElement>(null);
 
 	const handleToggleRow = (groupScheduleId: number) => {
 		if (expandedRow === groupScheduleId) {
@@ -31,7 +30,14 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 		}
 	};
 
-	const groupQuery = useQuery(getAllGroupSchedulesQueryOptions(client, undefined, groupId, currentPage, pageSize));
+	const groupQuery = useInfiniteQuery(getGroupSchedulesInfiniteOptions(client, groupId, 20));
+
+	const sentinelRef = useInfiniteScroll({
+		scrollContainerRef,
+		hasNextPage: groupQuery.hasNextPage,
+		isFetchingNextPage: groupQuery.isFetchingNextPage,
+		fetchNextPage: groupQuery.fetchNextPage,
+	});
 
 	const handleEditSchedule = (groupSchedule: GroupSchedule) => {
 		Logger.info('Opening edit modal for group schedule', {
@@ -41,18 +47,6 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 		setEditingScheduleId(groupSchedule.id);
 		setIsModalOpen(true);
 	};
-
-	// Handle loading spinner with minimum display time to prevent blinking
-	useEffect(() => {
-		if (groupQuery.isFetching) {
-			setShowLoader(true);
-		} else {
-			const timer = setTimeout(() => {
-				setShowLoader(false);
-			}, 150); // Minimum 150 display time
-			return () => clearTimeout(timer);
-		}
-	}, [groupQuery.isFetching]);
 
 	// Show skeleton loading while data is loading
 	if (groupQuery.status === 'pending') {
@@ -76,7 +70,10 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 		);
 	}
 
-	const renderedGroupSchedules = groupQuery?.data?.results?.map((groupSchedule) => {
+	const allGroupSchedules = groupQuery.data?.pages.flatMap((page) => page.results) ?? [];
+	const totalCount = groupQuery.data?.pages[0]?.pagination.total ?? 0;
+
+	const renderedGroupSchedules = allGroupSchedules.map((groupSchedule) => {
 		const isExpanded = expandedRow === groupSchedule.id;
 
 		// Calculate sent/total message counts
@@ -124,89 +121,24 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 
 	return (
 		<div className="h-full flex flex-col">
-			{/* Pagination Controls and Add Button - Top */}
+			{/* Header with count and Add button */}
 			<div className="px-2 py-2 border-b border-zinc-950/10 dark:border-white/10 mb-2 flex-shrink-0">
-				{groupQuery?.data?.pagination ? (
-					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-1">
-						<div className="text-sm text-gray-700 dark:text-gray-300 flex-shrink-0 min-w-0">
-							<span className="whitespace-nowrap">
-								Showing{' '}
-								{groupQuery.data.pagination.total === 0
-									? 0
-									: (groupQuery.data.pagination.page - 1) * groupQuery.data.pagination.limit + 1}{' '}
-								to{' '}
-								{Math.min(
-									groupQuery.data.pagination.page * groupQuery.data.pagination.limit,
-									groupQuery.data.pagination.total
-								)}{' '}
-								of {groupQuery.data.pagination.total} results
-							</span>
+				<div className="flex items-center justify-between">
+					{totalCount > 0 && (
+						<div className="text-sm text-gray-700 dark:text-gray-300">
+							Showing {allGroupSchedules.length} of {totalCount} results
 						</div>
-						{showLoader && <LoadingSpinner />}
-						<div className="flex items-center space-x-1 flex-wrap gap-1 min-w-0">
-							<Button
-								outline
-								onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-								disabled={groupQuery.isFetching || !groupQuery.data.pagination.hasPrev}
-								className="flex items-center gap-1 px-3 py-1.5 text-sm"
-							>
-								<ChevronLeftIcon className="h-4 w-4" />
-								Previous
-							</Button>
-
-							<div className="flex items-center space-x-1">
-								{/* Page numbers */}
-								{Array.from({ length: Math.min(5, groupQuery.data.pagination.totalPages) }, (_, i) => {
-									const pageNum =
-										Math.max(
-											1,
-											Math.min(
-												groupQuery.data.pagination.totalPages - 4,
-												groupQuery.data.pagination.page - 2
-											)
-										) + i;
-
-									if (pageNum > groupQuery.data.pagination.totalPages) return null;
-
-									return (
-										<Button
-											key={pageNum}
-											{...(pageNum === groupQuery.data.pagination.page
-												? { color: 'emerald' }
-												: { outline: true })}
-											onClick={() => setCurrentPage(pageNum)}
-											disabled={groupQuery.isFetching}
-											className="min-w-[2rem] px-2 py-1.5 text-sm"
-										>
-											{pageNum}
-										</Button>
-									);
-								})}
-							</div>
-
-							<Button
-								outline
-								onClick={() =>
-									setCurrentPage((prev) => Math.min(groupQuery.data.pagination.totalPages, prev + 1))
-								}
-								disabled={groupQuery.isFetching || !groupQuery.data.pagination.hasNext}
-								className="flex items-center gap-1 px-3 py-1.5 text-sm"
-							>
-								Next
-								<ChevronRightIcon className="h-4 w-4" />
-							</Button>
-							<Button
-								color="emerald"
-								onClick={() => setIsModalOpen(true)}
-							>
-								<PlusIcon />
-							</Button>
-						</div>
-					</div>
-				) : null}
+					)}
+					<Button
+						color="emerald"
+						onClick={() => setIsModalOpen(true)}
+					>
+						<PlusIcon />
+					</Button>
+				</div>
 			</div>
 
-			<div className="flex-1 min-h-0 overflow-auto relative">
+			<div className="flex-1 min-h-0 overflow-auto relative" ref={scrollContainerRef}>
 				<Table className="w-full table-fixed">
 					<TableHead>
 						<TableRow>
@@ -217,7 +149,12 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 					</TableHead>
 					<TableBody>{renderedGroupSchedules}</TableBody>
 				</Table>
-
+				<div ref={sentinelRef} className="h-1" />
+				{groupQuery.isFetchingNextPage && (
+					<div className="flex justify-center py-4">
+						<LoadingSpinner />
+					</div>
+				)}
 			</div>
 			<GroupScheduleModal 
 				groupId={groupId} 

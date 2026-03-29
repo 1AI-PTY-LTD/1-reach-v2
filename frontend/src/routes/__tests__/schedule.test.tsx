@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderWithProviders, screen, waitFor, userEvent } from '../../test/test-utils'
 import { http, HttpResponse } from 'msw'
 import { server } from '../../test/handlers'
-import { createSchedule, paginate } from '../../test/factories'
+import { paginate } from '../../test/factories'
 import dayjs from 'dayjs'
 
 // Mock TanStack Router
@@ -33,35 +33,20 @@ vi.mock('../../components/shared/LoadingSpinner', () => ({
   default: () => <div data-testid="loading-spinner">Loading...</div>,
 }))
 
-// Re-create ScheduleContent for testing
-import { useQuery } from '@tanstack/react-query'
-import { getAllSchedulesQueryOptions } from '../../api/schedulesApi'
+// Re-create ScheduleContent for testing (mirrors infinite scroll version)
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { getAllSchedulesInfiniteOptions } from '../../api/schedulesApi'
 import { useApiClient } from '../../lib/ApiClientProvider'
-import { useState, useEffect, useRef } from 'react'
-import type { Schedule } from '../../types'
+import { useState } from 'react'
 
 function ScheduleContentTest() {
   const client = useApiClient()
   const [date, setDate] = useState(dayjs())
-  const [currentPage, setCurrentPage] = useState(1)
-  const [displayedMessages, setDisplayedMessages] = useState<Schedule[]>([])
   const [selectedMessageId, setSelectedMessageId] = useState<undefined | number>()
 
-  const messagesQuery = useQuery({
-    ...getAllSchedulesQueryOptions(client, date.format('YYYY-MM-DD'), currentPage, 50),
-    placeholderData: (previousData: any) => previousData,
-  })
-
-  useEffect(() => {
-    if (messagesQuery.data) {
-      setDisplayedMessages(messagesQuery.data.results)
-    }
-  }, [messagesQuery.data])
-
-  useEffect(() => {
-    setCurrentPage(1)
-    setSelectedMessageId(undefined)
-  }, [date])
+  const messagesQuery = useInfiniteQuery(
+    getAllSchedulesInfiniteOptions(client, date.format('YYYY-MM-DD'), 50)
+  )
 
   if (messagesQuery.status === 'pending') {
     return <div data-testid="loading-spinner">Loading...</div>
@@ -71,7 +56,8 @@ function ScheduleContentTest() {
     return <div className="text-center py-8 text-red-600">Failed to load messages</div>
   }
 
-  const messages = displayedMessages ?? []
+  const messages = messagesQuery.data?.pages.flatMap((page) => page.results) ?? []
+  const totalCount = messagesQuery.data?.pages[0]?.pagination.total ?? 0
 
   if (!selectedMessageId && messages.length !== 0) {
     setSelectedMessageId(messages[0].id)
@@ -94,11 +80,9 @@ function ScheduleContentTest() {
         <h2 data-testid="current-date">{date.format('DD/MM/YYYY')}</h2>
         <button onClick={goToNextDay} data-testid="next-day">Next</button>
       </div>
-      {messagesQuery?.data?.pagination && (
+      {totalCount > 0 && (
         <div data-testid="pagination-info">
-          Showing {messagesQuery.data.pagination.total === 0 ? 0 : ((messagesQuery.data.pagination.page - 1) * messagesQuery.data.pagination.limit) + 1} to{' '}
-          {Math.min(messagesQuery.data.pagination.page * messagesQuery.data.pagination.limit, messagesQuery.data.pagination.total)} of{' '}
-          {messagesQuery.data.pagination.total} results
+          Showing {messages.length} of {totalCount} results
         </div>
       )}
       <div data-testid="schedule-table-container">
@@ -206,7 +190,7 @@ describe('ScheduleLayout', () => {
       expect(screen.getByTestId('pagination-info')).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId('pagination-info')).toHaveTextContent(/Showing 1 to/)
+    expect(screen.getByTestId('pagination-info')).toHaveTextContent(/Showing 2 of 2 results/)
   })
 
   it('shows error state when API fails', async () => {
@@ -237,5 +221,21 @@ describe('ScheduleLayout', () => {
     })
 
     expect(screen.queryByTestId(/^schedule-row-/)).not.toBeInTheDocument()
+  })
+
+  it('does not show pagination info when no results', async () => {
+    server.use(
+      http.get('http://localhost:8000/api/schedules/', () => {
+        return HttpResponse.json(paginate([]))
+      })
+    )
+
+    renderWithProviders(<ScheduleContentTest />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('schedule-table')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByTestId('pagination-info')).not.toBeInTheDocument()
   })
 })

@@ -1,17 +1,17 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/16/solid'
 import { Button } from '../../ui/button'
-import { useState, useEffect, Suspense, useRef } from 'react'
+import { useState, useRef, Suspense } from 'react'
 import dayjs from 'dayjs'
 import ScheduleTable from '../../components/ScheduleTable'
-import { getAllSchedulesQueryOptions } from '../../api/schedulesApi'
-import { useQuery } from '@tanstack/react-query'
+import { getAllSchedulesInfiniteOptions } from '../../api/schedulesApi'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import Logger from '../../utils/logger'
 import LoadingSpinner from '../../components/shared/LoadingSpinner'
 import DatePicker from '../../components/DatePicker'
-import type { Schedule } from '../../types'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
+import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
 
 export const Route = createFileRoute('/app/_layout/schedule')({
   component: ScheduleLayout,
@@ -23,41 +23,19 @@ function ScheduleContent() {
   const client = useApiClient()
 
   const [date, setDate] = useState(dayjs())
-  const [currentPage, setCurrentPage] = useState(1)
-  const [displayedMessages, setDisplayedMessages] = useState<Schedule[]>([])
   const [selectedMessageId, setSelectedMessageId] = useState<undefined | number>()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
-  const messagesQuery = useQuery({
-    ...getAllSchedulesQueryOptions(client, date.format('YYYY-MM-DD'), currentPage, 50),
-    placeholderData: (previousData) => previousData,
+  const messagesQuery = useInfiniteQuery(
+    getAllSchedulesInfiniteOptions(client, date.format('YYYY-MM-DD'), 50)
+  )
+
+  const sentinelRef = useInfiniteScroll({
+    scrollContainerRef,
+    hasNextPage: messagesQuery.hasNextPage,
+    isFetchingNextPage: messagesQuery.isFetchingNextPage,
+    fetchNextPage: messagesQuery.fetchNextPage,
   })
-
-  useEffect(() => {
-    if (messagesQuery.data) {
-      Logger.debug('Updating displayed messages', {
-        component: 'ScheduleLayout',
-        data: {
-          messageCount: messagesQuery.data.results.length,
-          totalCount: messagesQuery.data.pagination.total,
-          page: messagesQuery.data.pagination.page,
-          date: date.format('YYYY-MM-DD'),
-        },
-      })
-      setDisplayedMessages(messagesQuery.data.results)
-    }
-  }, [messagesQuery.data])
-
-  useEffect(() => {
-    setCurrentPage(1)
-    setSelectedMessageId(undefined)
-  }, [date])
-
-  useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0
-    }
-  }, [currentPage])
 
   if (messagesQuery.status === 'pending') {
     return <LoadingSpinner />
@@ -67,9 +45,10 @@ function ScheduleContent() {
     return <div className="text-center py-8 text-red-600">Failed to load messages</div>
   }
 
-  const messages = displayedMessages ?? []
+  const messages = messagesQuery.data?.pages.flatMap((page) => page.results) ?? []
+  const totalCount = messagesQuery.data?.pages[0]?.pagination.total ?? 0
 
-  if (!selectedMessageId && messages && messages.length !== 0) {
+  if (!selectedMessageId && messages.length !== 0) {
     Logger.info('Setting initial selected message', {
       component: 'ScheduleLayout',
       data: { messageId: messages[0].id },
@@ -100,61 +79,13 @@ function ScheduleContent() {
           <ChevronRightIcon />
         </Button>
       </div>
-      {messagesQuery?.data?.pagination && (
+      {totalCount > 0 && (
         <div className="flex items-center justify-between px-2 py-4 border-b dark:border-white/10">
           <div className="text-sm text-gray-700 dark:text-gray-300">
-            Showing {messagesQuery.data.pagination.total === 0 ? 0 : ((messagesQuery.data.pagination.page - 1) * messagesQuery.data.pagination.limit) + 1} to{' '}
-            {Math.min(messagesQuery.data.pagination.page * messagesQuery.data.pagination.limit, messagesQuery.data.pagination.total)} of{' '}
-            {messagesQuery.data.pagination.total} results
+            Showing {messages.length} of {totalCount} results
           </div>
-
           <div className="h-6 flex items-center justify-center">
-            {messagesQuery.isFetching && <LoadingSpinner />}
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <Button
-              outline
-              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-              disabled={messagesQuery.isFetching || !messagesQuery.data.pagination.hasPrev}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm"
-            >
-              <ChevronLeftIcon className="h-4 w-4" />
-              Previous
-            </Button>
-
-            <div className="flex items-center space-x-1">
-              {Array.from({ length: Math.min(5, messagesQuery.data.pagination.totalPages) }, (_, i) => {
-                const pageNum = Math.max(1, Math.min(
-                  messagesQuery.data.pagination.totalPages - 4,
-                  messagesQuery.data.pagination.page - 2,
-                )) + i
-
-                if (pageNum > messagesQuery.data.pagination.totalPages) return null
-
-                return (
-                  <Button
-                    key={pageNum}
-                    {...(pageNum === messagesQuery.data.pagination.page ? { color: 'emerald' as const } : { outline: true })}
-                    onClick={() => setCurrentPage(pageNum)}
-                    disabled={messagesQuery.isFetching}
-                    className="min-w-[2rem] px-2 py-1.5 text-sm"
-                  >
-                    {pageNum}
-                  </Button>
-                )
-              })}
-            </div>
-
-            <Button
-              outline
-              onClick={() => setCurrentPage((prev) => Math.min(messagesQuery.data.pagination.totalPages, prev + 1))}
-              disabled={messagesQuery.isFetching || !messagesQuery.data.pagination.hasNext}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm"
-            >
-              Next
-              <ChevronRightIcon className="h-4 w-4" />
-            </Button>
+            {messagesQuery.isLoading && <LoadingSpinner />}
           </div>
         </div>
       )}
@@ -169,6 +100,12 @@ function ScheduleContent() {
             selectedMessageId={selectedMessageId}
             setSelectedMessageId={setSelectedMessageId}
           />
+        )}
+        <div ref={sentinelRef} className="h-1" />
+        {messagesQuery.isFetchingNextPage && (
+          <div className="flex justify-center py-4">
+            <LoadingSpinner />
+          </div>
         )}
       </div>
     </div>
