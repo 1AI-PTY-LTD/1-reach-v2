@@ -21,7 +21,7 @@ export default defineConfig({
       testMatch: '**/auth.setup.ts',
       use: {
         ...devices['Desktop Chrome'],
-        launchOptions: { args: ['--no-sandbox', '--disable-setuid-sandbox'] },
+        launchOptions: { args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] },
       },
     },
     {
@@ -31,7 +31,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         launchOptions: {
           executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
         },
         ...(process.env.CLERK_SECRET_KEY ? { storageState: '/tmp/e2e-auth-state.json' } : {}),
       },

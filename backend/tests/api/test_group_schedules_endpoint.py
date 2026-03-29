@@ -98,6 +98,46 @@ class TestGroupScheduleList:
         assert list_response.data['pagination']['total'] == 1
         assert list_response.data['results'][0]['status'] == ScheduleStatus.CANCELLED
 
+    def test_list_with_group_id_returns_all_dates(self, authenticated_client, organisation, user):
+        """Filtering by group_id skips the today-only default and returns all dates."""
+        group = ContactGroupFactory(organisation=organisation, created_by=user)
+        now = timezone.now()
+
+        today_schedule = ScheduleFactory(
+            organisation=organisation, group=group, name='Today', scheduled_time=now, created_by=user
+        )
+        tomorrow_schedule = ScheduleFactory(
+            organisation=organisation, group=group, name='Tomorrow',
+            scheduled_time=now + timedelta(days=1), created_by=user
+        )
+
+        response = authenticated_client.get(f'/api/group-schedules/?group_id={group.id}')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 2
+        ids = {r['id'] for r in response.data['results']}
+        assert today_schedule.id in ids
+        assert tomorrow_schedule.id in ids
+
+    def test_list_without_group_id_returns_only_today(self, authenticated_client, organisation, user):
+        """Without group_id param, only today's group schedules are returned."""
+        group = ContactGroupFactory(organisation=organisation, created_by=user)
+        now = timezone.now()
+
+        ScheduleFactory(
+            organisation=organisation, group=group, name='Today', scheduled_time=now, created_by=user
+        )
+        ScheduleFactory(
+            organisation=organisation, group=group, name='Tomorrow',
+            scheduled_time=now + timedelta(days=1), created_by=user
+        )
+
+        response = authenticated_client.get('/api/group-schedules/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['name'] == 'Today'
+
     def test_list_only_shows_parent_schedules(self, authenticated_client, organisation, user):
         """List only shows parent schedules (group != None), not children."""
         # Parent with children

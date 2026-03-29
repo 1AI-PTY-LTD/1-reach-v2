@@ -91,6 +91,9 @@ class GroupScheduleFilter(filters.FilterSet):
     @property
     def qs(self):
         queryset = super().qs
+        # When filtering by group_id, show all dates (group messages tab)
+        if 'group_id' in self.data:
+            return queryset
         # Only apply default today filter if no date filter provided
         if 'date' not in self.data:
             if self.request:

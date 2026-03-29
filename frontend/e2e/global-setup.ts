@@ -57,21 +57,23 @@ export default async function globalSetup(_config: FullConfig) {
     }
   }
 
-  await post({
-    type: 'user.created',
-    data: {
-      id: user.id,
-      primary_email_address_id: 'email_1',
-      email_addresses: [{ id: 'email_1', email_address: email }],
-      first_name: 'E2E',
-      last_name: 'Test',
-    },
-  })
-
-  await post({
-    type: 'organization.created',
-    data: { id: org.id, name: `E2E Test Org ${slug}`, slug },
-  })
+  // Seed user + org in parallel, then membership (which references both)
+  await Promise.all([
+    post({
+      type: 'user.created',
+      data: {
+        id: user.id,
+        primary_email_address_id: 'email_1',
+        email_addresses: [{ id: 'email_1', email_address: email }],
+        first_name: 'E2E',
+        last_name: 'Test',
+      },
+    }),
+    post({
+      type: 'organization.created',
+      data: { id: org.id, name: `E2E Test Org ${slug}`, slug },
+    }),
+  ])
 
   await post({
     type: 'organizationMembership.created',

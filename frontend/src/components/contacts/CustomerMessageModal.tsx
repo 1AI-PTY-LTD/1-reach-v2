@@ -1,8 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import type { Contact } from "../../types/contact.types";
 import { Dialog, DialogActions, DialogBody, DialogTitle } from "../../ui/dialog";
-import { ErrorMessage, Field, Label } from "../../ui/fieldset";
-import { Input } from "../../ui/input";
+import { Field, Label } from "../../ui/fieldset";
 import { Button } from "../../ui/button";
 import {
     useCreateScheduleMutation,
@@ -13,15 +12,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAllTemplatesQueryOptions } from "../../api/templatesApi";
 import { Select } from "../../ui/select";
 import dayjs from "dayjs";
-import customParseFormat from "dayjs/plugin/customParseFormat";
 import { Textarea } from "../../ui/textarea";
 import Logger from "../../utils/logger";
 import { sendSms } from "../../api/smsApi";
 import type { SendSmsRequest } from "../../types/sms.types";
 import { useState } from "react";
 import { useApiClient } from "../../lib/ApiClientProvider";
+import { ScheduleDateTimePicker, isTimeInPast, shouldSendImmediately } from '../ScheduleDateTimePicker';
 
-dayjs.extend(customParseFormat);
 
 
 export function ContactMessageModal({
@@ -72,27 +70,12 @@ export function ContactMessageModal({
         return "An unexpected error occurred. Please try again.";
     };
 
-    // Helper function to determine if message should be sent immediately
-    const shouldSendImmediately = (scheduled_time: string): boolean => {
-        const scheduled = dayjs(scheduled_time);
-        const now = dayjs();
-        const minDelayFromNow = now.add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute');
-
-        return scheduled.isBefore(minDelayFromNow) || scheduled.isBefore(now);
-    };
-
-    const isTimeInPast = (scheduled_time: string): boolean => {
-        const scheduled = dayjs(scheduled_time);
-        const now = dayjs();
-        return scheduled.isBefore(now);
-    };
-
     const form = useForm({
         defaultValues: {
             text: message?.text || "",
             scheduled_time: message
-                ? dayjs(message.scheduled_time).format("YYYY-MM-DDTHH:mm")
-                : dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute').format("YYYY-MM-DDTHH:mm"),
+                ? dayjs(message.scheduled_time).toISOString()
+                : dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY || 5), 'minute').toISOString(),
             template_id: message?.template?.toString() || "",
         },
         onSubmit: async ({ value }) => {
@@ -309,62 +292,18 @@ export function ContactMessageModal({
                         validators={{
                             onSubmit: ({ value }) => {
                                 if (!value) {
-                                    Logger.warn("Scheduled time validation failed", {
-                                        component: "ContactMessageModal",
-                                        data: { value }
-                                    });
                                     return "Please select a date and time";
                                 }
                             },
-                            onChange: ({ value }) => {
-                                // In edit mode, don't allow past times. In create mode, allow them (they'll be sent immediately)
-                                if (!dayjs(value).isValid()) {
-                                    return "Please enter a valid date and time";
-                                }
-                            }
                         }}
                         children={(field) => (
-                            <Field>
-                                <Label>Scheduled Time *</Label>
-                                <Input
-                                    type="datetime-local"
-                                    name={field.name}
-                                    value={field.state.value}
-                                    min={isEditMode ? dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute').format("YYYY-MM-DDTHH:mm") : undefined}
-                                    onChange={(e) => {
-                                        Logger.debug("Scheduled time changed", {
-                                            component: "ContactMessageModal",
-                                            data: {
-                                                newTime: e.target.value,
-                                                willSendImmediately: shouldSendImmediately(e.target.value)
-                                            }
-                                        });
-                                        field.handleChange(e.target.value);
-                                        setCurrentScheduledTime(e.target.value);
-                                    }}
-                                />
-                                {field.state.value && (
-                                    <div className={`text-sm mt-1 p-2 rounded ${
-                                        isTimeInPast(field.state.value)
-                                            ? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
-                                            : shouldSendImmediately(field.state.value)
-                                                ? 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800'
-                                                : 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800'
-                                    }`}>
-                                        {isTimeInPast(field.state.value)
-                                            ? "A message can't be scheduled for a time in the past!"
-                                            : shouldSendImmediately(field.state.value)
-                                                ? `This message will be sent immediately (scheduled time is within ${import.meta.env.VITE_MIN_MESSAGE_DELAY} minutes)`
-                                                : 'This message will be scheduled for future delivery'
-                                        }
-                                    </div>
-                                )}
-                                {field.state.meta.errors && (
-                                    <ErrorMessage>
-                                        {field.state.meta.errors}
-                                    </ErrorMessage>
-                                )}
-                            </Field>
+                            <ScheduleDateTimePicker
+                                value={field.state.value}
+                                onChange={(isoString) => {
+                                    field.handleChange(isoString);
+                                    setCurrentScheduledTime(isoString);
+                                }}
+                            />
                         )}
                     />
                     <form.Field
@@ -468,7 +407,7 @@ export function ContactMessageModal({
                             type="submit"
                             form="create-message-form"
                             color="emerald"
-                            disabled={isSubmitting || (isEditMode && isPastTime)}
+                            disabled={isSubmitting || isPastTime}
                             onClick={() => {
                                 Logger.debug(`${isEditMode ? 'Update' : 'Create'} button clicked`, {
                                     component: "ContactMessageModal",

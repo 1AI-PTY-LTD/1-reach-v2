@@ -49,9 +49,12 @@ test.beforeAll(async ({ browser }) => {
     }
   }
 
-  contact = await ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' })
-  const groupContact = await ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' })
-  group = await createGroup(page, { name: 'Pipeline Group' })
+  let groupContact: any
+  ;[contact, groupContact, group] = await Promise.all([
+    ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' }),
+    ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' }),
+    createGroup(page, { name: 'Pipeline Group' }),
+  ])
   await addMembers(page, group.id, [groupContact.id])
 
   // Create schedules for pipeline status display tests
@@ -61,15 +64,15 @@ test.beforeAll(async ({ browser }) => {
     { message: 'Hello Eve',     status: 'delivered', phone: '0416555555' },
     { message: 'Hello Frank',   status: 'failed',    phone: '0416666666' },
   ]
-  for (const s of PIPELINE_STATES) {
-    const result = await apiRequest(page, 'POST', '/api/sms/send/', {
-      message: s.message,
-      recipient: s.phone,
-      contact_id: contact.id,
-    })
-    pipelineScheduleIds.push(result.schedule_id)
-    await forceStatus(page, result.schedule_id, s.status)
-  }
+  const results = await Promise.all(
+    PIPELINE_STATES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
+      message: s.message, recipient: s.phone, contact_id: contact.id,
+    }))
+  )
+  results.forEach(r => pipelineScheduleIds.push(r.schedule_id))
+  await Promise.all(
+    PIPELINE_STATES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
+  )
 
   await page.close()
 })
@@ -78,9 +81,11 @@ test.afterAll(async ({ browser }) => {
   if (!process.env.CLERK_SECRET_KEY) return
   const page = await browser.newPage()
   await authenticatePage(page)
-  await Promise.all(pipelineScheduleIds.map(id => deleteSchedule(page, id).catch(() => {})))
-  if (group?.id)   await deleteGroup(page, group.id).catch(() => {})
-  if (contact?.id) await deleteContact(page, contact.id).catch(() => {})
+  await Promise.all([
+    ...pipelineScheduleIds.map(id => deleteSchedule(page, id).catch(() => {})),
+    group?.id   ? deleteGroup(page, group.id).catch(() => {})    : Promise.resolve(),
+    contact?.id ? deleteContact(page, contact.id).catch(() => {}) : Promise.resolve(),
+  ])
   await page.close()
 })
 
@@ -103,7 +108,7 @@ async function fillAndSubmitSmsForm(page: Page, message = 'Hello test') {
     }
   }
 
-  const sendBtn = page.getByRole('button', { name: /^send$/i }).first()
+  const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
   await sendBtn.click()
 }
 
@@ -220,7 +225,7 @@ test.describe('Group send — pipeline flow', () => {
       const textarea = page.locator('textarea').first()
       await textarea.fill('Hello group!')
 
-      const sendBtn = page.getByRole('button', { name: /^send$/i }).first()
+      const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
       await sendBtn.click()
 
       // Summary should mention 1 recipient (1 group member from beforeAll)

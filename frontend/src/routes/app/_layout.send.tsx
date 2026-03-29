@@ -15,7 +15,7 @@ import { getAllTemplatesQueryOptions } from '../../api/templatesApi'
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
 import { sendSms, sendMms, uploadImageFile } from '../../api/smsApi'
 import { useCreateScheduleMutation } from '../../api/schedulesApi'
-import { DateSelect } from '../../components/DateSelect'
+import { ScheduleDateTimePicker, isTimeInPast } from '../../components/ScheduleDateTimePicker'
 import { useForm } from '@tanstack/react-form'
 import {
   Combobox,
@@ -644,11 +644,9 @@ function SendContent() {
 
             {showSchedulePicker && (
               <div className="mt-4 border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-zinc-50 dark:bg-zinc-800/50">
-                <DateSelect
-                  field={{
-                    state: { value: scheduledTime },
-                    handleChange: setScheduledTime,
-                  }}
+                <ScheduleDateTimePicker
+                  value={scheduledTime}
+                  onChange={setScheduledTime}
                 />
                 <div className="flex justify-end gap-2 mt-4">
                   <Button
@@ -665,7 +663,7 @@ function SendContent() {
                   <Button
                     type="button"
                     color="purple"
-                    disabled={isScheduling || !scheduledTime}
+                    disabled={isScheduling || !scheduledTime || isTimeInPast(scheduledTime)}
                     onClick={handleSchedule}
                   >
                     {isScheduling ? (

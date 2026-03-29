@@ -13,7 +13,7 @@ from datetime import timedelta
 from django.utils import timezone
 import freezegun
 
-from app.filters import ContactFilter, ContactGroupFilter, ScheduleFilter
+from app.filters import ContactFilter, ContactGroupFilter, GroupScheduleFilter, ScheduleFilter
 from app.models import Contact, ContactGroup, Schedule, ScheduleStatus
 from tests.factories import (
     ContactFactory,
@@ -276,3 +276,102 @@ class TestScheduleFilter:
 
             # Should work with request timezone
             assert today in filterset.qs
+
+
+# ============================================================================
+# GroupScheduleFilter Tests
+# ============================================================================
+
+@pytest.mark.django_db
+class TestGroupScheduleFilter:
+    """Tests for GroupScheduleFilter — group_id bypasses today default."""
+
+    def test_skip_today_filter_when_group_id_provided(self):
+        """When group_id is in data, all dates are returned (no today filter)."""
+        with freezegun.freeze_time('2024-01-15 10:00:00', tz_offset=-10.5):
+            org = OrganisationFactory()
+            group = ContactGroupFactory(organisation=org)
+            now = timezone.now()
+
+            today_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=now
+            )
+            tomorrow_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=now + timedelta(days=1)
+            )
+
+            filterset = GroupScheduleFilter(
+                data={'group_id': group.id},
+                queryset=Schedule.objects.filter(organisation=org, parent=None),
+            )
+
+            assert today_schedule in filterset.qs
+            assert tomorrow_schedule in filterset.qs
+
+    def test_apply_today_filter_when_no_group_id(self):
+        """Without group_id, defaults to today-only filter."""
+        with freezegun.freeze_time('2024-01-15 10:00:00', tz_offset=-10.5):
+            org = OrganisationFactory()
+            group = ContactGroupFactory(organisation=org)
+            now = timezone.now()
+
+            today_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=now
+            )
+            tomorrow_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=now + timedelta(days=1)
+            )
+
+            filterset = GroupScheduleFilter(
+                data={},
+                queryset=Schedule.objects.filter(organisation=org, parent=None),
+            )
+
+            assert today_schedule in filterset.qs
+            assert tomorrow_schedule not in filterset.qs
+
+    def test_date_filter_still_works_with_group_id(self):
+        """When both group_id and date are provided, date filter is applied."""
+        with freezegun.freeze_time('2024-01-15 10:00:00', tz_offset=-10.5):
+            org = OrganisationFactory()
+            group = ContactGroupFactory(organisation=org)
+            now = timezone.now()
+            tomorrow = now + timedelta(days=1)
+
+            today_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=now
+            )
+            tomorrow_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=tomorrow
+            )
+
+            filterset = GroupScheduleFilter(
+                data={'group_id': group.id, 'date': tomorrow.date().isoformat()},
+                queryset=Schedule.objects.filter(organisation=org, parent=None),
+            )
+
+            assert today_schedule not in filterset.qs
+            assert tomorrow_schedule in filterset.qs
+
+    def test_date_filter_without_group_id(self):
+        """When date is provided without group_id, date filter overrides today default."""
+        with freezegun.freeze_time('2024-01-15 10:00:00', tz_offset=-10.5):
+            org = OrganisationFactory()
+            group = ContactGroupFactory(organisation=org)
+            now = timezone.now()
+            tomorrow = now + timedelta(days=1)
+
+            today_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=now
+            )
+            tomorrow_schedule = ScheduleFactory(
+                organisation=org, group=group, scheduled_time=tomorrow
+            )
+
+            filterset = GroupScheduleFilter(
+                data={'date': tomorrow.date().isoformat()},
+                queryset=Schedule.objects.filter(organisation=org, parent=None),
+            )
+
+            assert today_schedule not in filterset.qs
+            assert tomorrow_schedule in filterset.qs

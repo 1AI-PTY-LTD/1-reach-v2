@@ -184,7 +184,8 @@ frontend/
 │   │   ├── landing/       # Landing page sections (Navbar, Hero, Features, Pricing, etc.)
 │   │   ├── contacts/      # Contact-related components
 │   │   ├── groups/        # Group-related components
-│   │   └── shared/        # Shared components (LoadingSpinner, etc.)
+│   │   ├── shared/        # Shared components (LoadingSpinner, etc.)
+│   │   └── ScheduleDateTimePicker.tsx  # Unified datetime picker (Send page, Contact modal, Group modal)
 │   ├── routes/app/        # File-based route components (TanStack Router)
 │   ├── ui/                # HeadlessUI + Tailwind component library
 │   ├── types/             # TypeScript types matching backend snake_case fields
@@ -192,6 +193,8 @@ frontend/
 │   └── test/              # Vitest setup, MSW handlers, factories
 └── e2e/                   # Playwright tests
 ```
+
+**Scheduling UI:** All scheduling flows (Send page, Contact message modal, Group schedule modal) use a unified `ScheduleDateTimePicker` component. It renders a `datetime-local` input with a `min` attribute set to the current time (preventing past-time selection), outputs UTC ISO strings, and shows contextual status messages (past time warning, immediate send notice, or scheduled confirmation).
 
 **Landing page:** Unauthenticated visitors see a marketing landing page (`src/components/landing/`) rendered via Clerk's `<SignedOut>` gate in `__root.tsx`. It includes a hero section with animated canvas background, features grid, pricing tiers, and CTA sections. Sign In / Sign Up buttons open Clerk modals. Once authenticated, users are redirected to `/app/send`.
 
@@ -243,7 +246,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-517 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+523 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -255,7 +258,7 @@ docker compose exec backend python -m pytest --create-db tests/ -q
 docker compose exec frontend npx vitest run
 ```
 
-322 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+324 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 

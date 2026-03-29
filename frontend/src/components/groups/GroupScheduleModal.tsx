@@ -1,6 +1,5 @@
 import { Dialog, DialogActions, DialogBody, DialogTitle } from '../../ui/dialog';
 import { Field, Label } from '../../ui/fieldset';
-import { Input } from '../../ui/input';
 import { Button } from '../../ui/button';
 import { useForm } from '@tanstack/react-form';
 import Logger from '../../utils/logger';
@@ -15,6 +14,7 @@ import { sendSmsToGroup } from '../../api/smsApi';
 import type { SendGroupSmsRequest } from '../../types/sms.types';
 import { useApiClient } from '../../lib/ApiClientProvider';
 import { toast } from 'sonner';
+import { ScheduleDateTimePicker, isTimeInPast, shouldSendImmediately } from '../ScheduleDateTimePicker';
 
 export default function GroupScheduleModal({
 	groupId,
@@ -48,20 +48,6 @@ export default function GroupScheduleModal({
 			return error.message;
 		}
 		return "An unexpected error occurred. Please try again.";
-	};
-
-	const shouldSendImmediately = (scheduledTime: string): boolean => {
-		const scheduled = dayjs(scheduledTime);
-		const now = dayjs();
-		const minDelayFromNow = now.add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute');
-
-		return scheduled.isBefore(minDelayFromNow) || scheduled.isBefore(now);
-	};
-
-	const isTimeInPast = (scheduledTime: string): boolean => {
-		const scheduled = dayjs(scheduledTime);
-		const now = dayjs();
-		return scheduled.isBefore(now);
 	};
 
 	// Load existing group schedule data if editing
@@ -123,9 +109,7 @@ export default function GroupScheduleModal({
 
 					const updateData: any = {
 						id: groupScheduleId,
-						scheduled_time: value.scheduled_time.includes(':') && value.scheduled_time.split(':').length === 2
-							? value.scheduled_time + ':00'
-							: value.scheduled_time,
+						scheduled_time: value.scheduled_time,
 					};
 
 					// Add message content with mutual exclusivity
@@ -187,10 +171,7 @@ export default function GroupScheduleModal({
 						const submissionData = {
 							name: generatedName,
 							group_id: groupId,
-							scheduled_time:
-								value.scheduled_time.includes(':') && value.scheduled_time.split(':').length === 2
-									? value.scheduled_time + ':00'
-									: value.scheduled_time,
+							scheduled_time: value.scheduled_time,
 							...(value.template_id ? { template_id: parseInt(value.template_id) } : {}),
 							...(value.text.trim() ? { text: value.text.trim() } : {}),
 						};
@@ -256,7 +237,7 @@ export default function GroupScheduleModal({
 
 			form.setFieldValue('template_id', existingGroupSchedule.template?.toString() || '');
 			form.setFieldValue('text', existingGroupSchedule.text || '');
-			form.setFieldValue('scheduled_time', dayjs(existingGroupSchedule.scheduled_time).format('YYYY-MM-DDTHH:mm'));
+			form.setFieldValue('scheduled_time', dayjs(existingGroupSchedule.scheduled_time).toISOString());
 		}
 	}, [existingGroupSchedule, isEditMode, groupScheduleId]);
 
@@ -268,7 +249,7 @@ export default function GroupScheduleModal({
 		} else if (!isEditMode) {
 			// Clear form for create mode and set default scheduled time
 			form.reset();
-			form.setFieldValue('scheduled_time', dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY), 'minute').format('YYYY-MM-DDTHH:mm'));
+			form.setFieldValue('scheduled_time', dayjs().add(Number(import.meta.env.VITE_MIN_MESSAGE_DELAY || 5), 'minute').toISOString());
 		}
 	}, [isOpen, isEditMode]);
 
@@ -325,41 +306,13 @@ export default function GroupScheduleModal({
 						<form.Field
 							name="scheduled_time"
 							children={(field) => (
-								<Field>
-									<Label>Scheduled Time *</Label>
-									<Input
-										type="datetime-local"
-										name={field.name}
-										value={field.state.value}
-										onChange={(e) => {
-											Logger.debug('Scheduled time changed', {
-												component: 'GroupScheduleModal',
-												data: {
-													newTime: e.target.value,
-													willSendImmediately: shouldSendImmediately(e.target.value)
-												},
-											});
-											field.handleChange(e.target.value);
-											setCurrentScheduledTime(e.target.value);
-										}}
-									/>
-									{field.state.value && (
-										<div className={`text-sm mt-1 p-2 rounded ${
-											isTimeInPast(field.state.value)
-												? 'bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
-												: shouldSendImmediately(field.state.value)
-													? 'bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800'
-													: 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800'
-										}`}>
-											{isTimeInPast(field.state.value)
-												? "⚠️ A message can't be scheduled for a time in the past!"
-												: shouldSendImmediately(field.state.value)
-													? `⚡ This message will be sent immediately to all group members (scheduled time is within ${import.meta.env.VITE_MIN_MESSAGE_DELAY} minutes)`
-													: '📅 This message will be scheduled for future delivery to all group members'
-											}
-										</div>
-									)}
-								</Field>
+								<ScheduleDateTimePicker
+									value={field.state.value}
+									onChange={(isoString) => {
+										field.handleChange(isoString);
+										setCurrentScheduledTime(isoString);
+									}}
+								/>
 							)}
 						/>
 
@@ -494,7 +447,7 @@ export default function GroupScheduleModal({
 						type="submit"
 						form="group-schedule-form"
 						color="emerald"
-						disabled={isSubmitting || isLoading || (isEditMode && isPastTime)}
+						disabled={isSubmitting || isLoading || isPastTime}
 					>
 						{isSubmitting ? (
 							<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />

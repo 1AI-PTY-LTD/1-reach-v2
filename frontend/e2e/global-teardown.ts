@@ -11,9 +11,11 @@ export default async function globalTeardown() {
   const { clerkOrgId, clerkUserId } = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
   const clerk = createClerkClient({ secretKey })
 
-  // Delete org first, then user (Clerk-side cleanup only — no webhook delivery needed)
-  if (clerkOrgId)  await clerk.organizations.deleteOrganization(clerkOrgId).catch(() => {})
-  if (clerkUserId) await clerk.users.deleteUser(clerkUserId).catch(() => {})
+  // Clerk-side cleanup only — no webhook delivery needed
+  await Promise.all([
+    clerkOrgId  ? clerk.organizations.deleteOrganization(clerkOrgId).catch(() => {})  : Promise.resolve(),
+    clerkUserId ? clerk.users.deleteUser(clerkUserId).catch(() => {}) : Promise.resolve(),
+  ])
 
   fs.unlinkSync(stateFile)
 }
