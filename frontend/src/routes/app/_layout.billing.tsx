@@ -72,7 +72,6 @@ function BillingContent() {
   const isPastDue = data.billing_mode === 'past_due'
   const isSubscribed = data.billing_mode === 'subscribed'
   const balance = parseFloat(data.balance)
-  const spend = parseFloat(data.total_monthly_spend)
   const limit = data.monthly_limit ? parseFloat(data.monthly_limit) : null
 
   const balanceColor = balance <= 0 ? 'red' : balance < 1 ? 'yellow' : 'green'
@@ -81,12 +80,7 @@ function BillingContent() {
     <div className="flex flex-col gap-6 h-[calc(100svh-9.5rem)]">
       {/* Mode + Balance */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Billing</h2>
-          <Badge color={isPastDue ? 'red' : isSubscribed ? 'green' : 'zinc'}>
-            {isPastDue ? 'Past Due' : isSubscribed ? 'Subscribed' : 'Trial'}
-          </Badge>
-        </div>
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Billing</h2>
 
         {isPastDue && (
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -97,72 +91,60 @@ function BillingContent() {
           </div>
         )}
 
-        {!isSubscribed && !isPastDue && (
-          <div className="mb-4">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-1">Trial balance</p>
-            <p className="text-3xl font-bold">
-              <Badge color={balanceColor}>${data.balance}</Badge>
+        <div className="grid grid-cols-3 gap-4">
+          {/* Balance / Plan card */}
+          <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              {isSubscribed || isPastDue ? 'Plan' : 'Trial balance'}
             </p>
-            {balance <= 0 && (
-              <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+            <p className="text-2xl font-bold mt-1">
+              {!isSubscribed && !isPastDue ? (
+                <Badge color={balanceColor}>${data.balance}</Badge>
+              ) : (
+                <Badge color={isPastDue ? 'red' : 'green'}>
+                  {isPastDue ? 'Past Due' : 'Subscribed'}
+                </Badge>
+              )}
+            </p>
+            {!isSubscribed && !isPastDue && balance <= 0 && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">
                 Balance exhausted. Subscribe to continue sending.
               </p>
             )}
           </div>
-        )}
 
-        {isSubscribed && (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            Active subscription — usage is tracked and billed at end of month via Clerk Billing.
-          </p>
-        )}
-
-        {/* Monthly spend vs limit */}
-        <div className="mt-4 p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
-          <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            Monthly spend: <span className="font-bold">${data.total_monthly_spend}</span>
+          {/* Monthly Spend card */}
+          <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">Monthly spend</p>
+            <p className="text-2xl font-bold mt-1">${data.total_monthly_spend}</p>
             {limit !== null ? (
-              <span className="text-zinc-500"> / ${data.monthly_limit} limit</span>
+              <p className="text-xs text-zinc-400">/ ${data.monthly_limit} limit</p>
             ) : (
-              <span className="text-zinc-400"> (no spending limit set)</span>
+              <p className="text-xs text-zinc-400">no limit set</p>
             )}
-          </p>
-          {limit !== null && (
-            <div className="mt-2 h-2 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-brand-purple rounded-full"
-                style={{ width: `${Math.min((spend / limit) * 100, 100)}%` }}
-              />
+          </div>
+
+          {/* Mode card */}
+          <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">Mode</p>
+            <div className="mt-1">
+              <Badge color={isPastDue ? 'red' : isSubscribed ? 'green' : 'zinc'}>
+                {isPastDue ? 'Past Due' : isSubscribed ? 'Subscribed' : 'Trial'}
+              </Badge>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Per-format usage */}
+        {/* Per-format usage inline */}
         {Object.keys(data.monthly_usage_by_format).length > 0 && (
-          <div className="mt-4">
-            <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">
-              This month's usage
-            </h3>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableHeader>Format</TableHeader>
-                  <TableHeader className="text-right">Spend</TableHeader>
-                  <TableHeader className="text-right">Rate</TableHeader>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {Object.entries(data.monthly_usage_by_format).map(([fmt, info]) => (
-                  <TableRow key={fmt}>
-                    <TableCell>
-                      <Badge color="zinc">{fmt.toUpperCase()}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right">${info.spend}</TableCell>
-                    <TableCell className="text-right">${info.rate}/msg</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className="mt-3 flex items-center gap-4 text-sm text-zinc-500 dark:text-zinc-400">
+            <span className="font-medium text-zinc-700 dark:text-zinc-300">Usage:</span>
+            {Object.entries(data.monthly_usage_by_format).map(([fmt, info]) => (
+              <span key={fmt}>
+                <Badge color="zinc">{fmt.toUpperCase()}</Badge>{' '}
+                ${info.spend} (${info.rate}/msg)
+              </span>
+            ))}
           </div>
         )}
       </div>

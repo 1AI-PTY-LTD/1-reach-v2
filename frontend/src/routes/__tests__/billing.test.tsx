@@ -268,7 +268,8 @@ describe('past_due billing mode', () => {
   it('shows Past Due badge in the UI', async () => {
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
-    await screen.findByText('Past Due')
+    const badges = await screen.findAllByText('Past Due')
+    expect(badges.length).toBeGreaterThan(0)
   })
 
   it('shows past due warning banner', async () => {
@@ -280,7 +281,7 @@ describe('past_due billing mode', () => {
   it('does not show trial balance when past due', async () => {
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
-    await screen.findByText('Past Due')
+    await screen.findAllByText('Past Due')
     expect(screen.queryByText(/Trial balance/i)).not.toBeInTheDocument()
   })
 })
