@@ -198,7 +198,7 @@ export const handlers = [
         id: Number(params.id),
         schedules: schedules.map((s) => ({
           id: s.id,
-          contact: { id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' },
+          contact_detail: { id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' },
           phone: s.phone!,
           status: s.status,
         })),

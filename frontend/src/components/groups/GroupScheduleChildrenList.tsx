@@ -127,7 +127,7 @@ export default function GroupScheduleChildrenList({ groupScheduleId, onEdit }: G
 										<StatusBadge status={schedule.status as ScheduleStatus} />
 									</TableCell>
 									<TableCell className="text-sm text-gray-600 dark:text-gray-400">
-										{schedule.contact ? `${schedule.contact.first_name} ${schedule.contact.last_name}` : 'Unknown Contact'}
+										{schedule.contact_detail ? `${schedule.contact_detail.first_name} ${schedule.contact_detail.last_name}` : 'Unknown Contact'}
 									</TableCell>
 									<TableCell className="text-sm text-gray-600 dark:text-gray-400">
 										{dayjs(schedule.scheduled_time).format('hh:mmA DD/MM/YYYY')}

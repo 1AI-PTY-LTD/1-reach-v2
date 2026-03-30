@@ -14,7 +14,7 @@ export type GroupSchedule = {
   child_count: number
   schedules?: {
     id: number
-    contact?: { id: number; first_name: string; last_name: string; phone: string } | null
+    contact_detail?: { id: number; first_name: string; last_name: string; phone: string } | null
     phone: string
     status: string
     scheduled_time?: string | null

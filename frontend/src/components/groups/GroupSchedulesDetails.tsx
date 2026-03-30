@@ -7,6 +7,8 @@ import { getGroupSchedulesInfiniteOptions } from '../../api/groupSchedulesApi';
 import type { GroupSchedule } from '../../types/groupSchedule.types';
 import dayjs from 'dayjs';
 import GroupScheduleChildrenList from './GroupScheduleChildrenList';
+import { StatusBadge } from '../StatusBadge';
+import type { ScheduleStatus } from '../../types/schedule.types';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/16/solid';
 import { PlusIcon } from '@heroicons/react/16/solid';
 import LoadingSpinner from '../shared/LoadingSpinner';
@@ -76,13 +78,6 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 	const renderedGroupSchedules = allGroupSchedules.map((groupSchedule) => {
 		const isExpanded = expandedRow === groupSchedule.id;
 
-		// Calculate sent/total message counts
-		const totalMessages = groupSchedule.child_count;
-		const sentMessages =
-			groupSchedule.schedules?.filter(
-				(schedule) => schedule.status === 'sent' || schedule.status === 'delivered'
-			).length || 0;
-
 		const scheduleText = groupSchedule.text || groupSchedule.name;
 
 		return (
@@ -109,9 +104,7 @@ export default function GroupSchedulesDetails({ groupId }: { groupId: number }) 
 						{dayjs(groupSchedule.scheduled_time).format('hh:mmA DD/MM/YYYY')}
 					</TableCell>
 					<TableCell onClick={() => handleToggleRow(groupSchedule.id)}>
-						<span className="text-sm font-medium">
-							{sentMessages}/{totalMessages}
-						</span>
+						<StatusBadge status={groupSchedule.status as ScheduleStatus} />
 					</TableCell>
 				</TableRow>
 				{isExpanded && <GroupScheduleChildrenList groupScheduleId={groupSchedule.id} onEdit={handleEditSchedule} />}
