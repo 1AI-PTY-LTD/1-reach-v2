@@ -358,3 +358,80 @@ class TestEstimateParts:
     def test_sms_none_message_is_one_part(self):
         from app.celery import _estimate_parts
         assert _estimate_parts(None, 'sms') == 1
+
+
+# ---------------------------------------------------------------------------
+# Parent group schedule status sync
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestParentStatusSync:
+    def test_parent_status_sent_when_all_children_sent(
+        self, group_schedule_with_children, mock_sms_provider
+    ):
+        parent = group_schedule_with_children
+        children = list(Schedule.objects.filter(parent=parent))
+
+        # Queue all children
+        Schedule.objects.filter(parent=parent).update(status=ScheduleStatus.QUEUED)
+
+        for child in children:
+            child.refresh_from_db()
+            send_message(child.pk)
+
+        parent.refresh_from_db()
+        assert parent.status == ScheduleStatus.SENT
+
+    def test_parent_status_failed_when_child_fails(
+        self, group_schedule_with_children, mock_sms_provider, mock_sms_provider_permanent_fail
+    ):
+        parent = group_schedule_with_children
+        children = list(Schedule.objects.filter(parent=parent))
+
+        # Queue all children
+        Schedule.objects.filter(parent=parent).update(status=ScheduleStatus.QUEUED)
+
+        # Send first child successfully
+        send_message(children[0].pk)
+
+        # Fail the rest permanently
+        with patch('app.celery.get_sms_provider') as mock:
+            from unittest.mock import Mock
+            provider = Mock()
+            provider.send_sms.return_value = {
+                'success': False, 'message_id': None,
+                'error': 'Invalid number', 'message_parts': 1,
+                'error_code': '21211', 'http_status': 400,
+                'retryable': False, 'failure_category': 'invalid_number',
+            }
+            mock.return_value = provider
+            for child in children[1:]:
+                child.refresh_from_db()
+                send_message(child.pk)
+
+        parent.refresh_from_db()
+        assert parent.status == ScheduleStatus.FAILED
+
+    def test_parent_status_processing_while_children_pending(
+        self, group_schedule_with_children, mock_sms_provider
+    ):
+        parent = group_schedule_with_children
+        children = list(Schedule.objects.filter(parent=parent))
+
+        # Queue and send only the first child
+        children[0].status = ScheduleStatus.QUEUED
+        children[0].save()
+        send_message(children[0].pk)
+
+        parent.refresh_from_db()
+        assert parent.status == ScheduleStatus.PROCESSING
+
+    def test_no_error_for_schedule_without_parent(
+        self, schedule_queued, mock_sms_provider
+    ):
+        """Schedules without a parent should not error during sync."""
+        assert schedule_queued.parent is None
+        send_message(schedule_queued.pk)
+
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.SENT

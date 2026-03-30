@@ -111,6 +111,8 @@ def _handle_success(schedule: Schedule, result: dict) -> None:
                 schedule=schedule,
             )
 
+    _sync_parent_status(schedule)
+
 
 def _schedule_retry(schedule: Schedule, result: dict, failure_category: str) -> None:
     delay = _compute_backoff_delay(schedule.retry_count)
@@ -147,6 +149,39 @@ def _mark_permanently_failed(schedule: Schedule, result: dict, failure_category:
         'Schedule %d permanently failed (%s): %s',
         schedule.pk, failure_category, result.get('error'),
     )
+
+    _sync_parent_status(schedule)
+
+
+def _sync_parent_status(schedule: Schedule) -> None:
+    """Update parent group schedule status based on children's statuses."""
+    parent = schedule.parent
+    if not parent:
+        return
+
+    terminal = {ScheduleStatus.SENT, ScheduleStatus.DELIVERED, ScheduleStatus.FAILED, ScheduleStatus.CANCELLED}
+    children_statuses = set(
+        Schedule.objects.filter(parent=parent).values_list('status', flat=True)
+    )
+
+    if not children_statuses:
+        return
+
+    all_terminal = children_statuses.issubset(terminal)
+
+    if all_terminal:
+        if children_statuses <= {ScheduleStatus.CANCELLED}:
+            new_status = ScheduleStatus.CANCELLED
+        elif ScheduleStatus.FAILED in children_statuses:
+            new_status = ScheduleStatus.FAILED
+        else:
+            new_status = ScheduleStatus.SENT
+    else:
+        new_status = ScheduleStatus.PROCESSING
+
+    if parent.status != new_status:
+        parent.status = new_status
+        parent.save(update_fields=['status', 'updated_at'])
 
 
 def _handle_failure(schedule: Schedule, result: dict) -> None:
@@ -277,6 +312,16 @@ def dispatch_due_messages() -> dict:
         Schedule.objects.filter(pk__in=due).update(
             status=ScheduleStatus.QUEUED,
         )
+
+        # Update parent statuses for dispatched group children
+        parent_ids = set(
+            Schedule.objects.filter(pk__in=due, parent__isnull=False)
+            .values_list('parent_id', flat=True)
+        )
+        if parent_ids:
+            Schedule.objects.filter(
+                pk__in=parent_ids, status=ScheduleStatus.PENDING
+            ).update(status=ScheduleStatus.PROCESSING)
 
     for schedule_id in due:
         send_message.delay(schedule_id)
