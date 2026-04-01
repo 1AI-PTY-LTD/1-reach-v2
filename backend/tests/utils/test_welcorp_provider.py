@@ -72,6 +72,8 @@ class TestWelcorpInit:
         p = WelcorpSMSProvider()
         assert p.session.auth == ('user', 'pass')
         assert p.base_url == 'https://api.message-service.org/api/v1'
+        assert p.session.headers['Content-Type'] == 'application/json'
+        assert p.session.headers['Accept'] == 'application/json'
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +114,20 @@ class TestSendSMS:
         provider._send_sms_impl('0412345678', 'Test message')
 
         call_args = provider.session.post.call_args
+        assert call_args.args[0] == 'https://api.message-service.org/api/v1/jobs'
         payload = call_args.kwargs['json']
         assert payload['job_type'] == 'sms'
         assert payload['message'] == 'Test message'
         assert payload['recipients'] == [{'destination': '+61412345678'}]
+
+    def test_url_construction_with_trailing_slash(self, provider):
+        provider.base_url = 'https://api.example.com/api/v1/'
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi')
+
+        url = provider.session.post.call_args.args[0]
+        assert url == 'https://api.example.com/api/v1/jobs'
 
     def test_phone_converted_to_international(self, provider):
         provider.session.post.return_value = _ok_response()

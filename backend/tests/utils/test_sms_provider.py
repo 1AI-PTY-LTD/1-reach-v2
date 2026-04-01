@@ -10,7 +10,55 @@ Tests:
 import pytest
 from rest_framework.exceptions import ValidationError
 
-from app.utils.sms import MockSMSProvider, _ProviderCache, get_sms_provider
+from app.utils.sms import MockSMSProvider, SendResult, _ProviderCache, get_sms_provider
+
+
+class TestSendResult:
+    """Tests for SendResult dataclass defaults."""
+
+    def test_defaults_on_success(self):
+        result = SendResult(success=True)
+        assert result.success is True
+        assert result.message_id is None
+        assert result.error is None
+        assert result.message_parts == 0
+        assert result.error_code is None
+        assert result.http_status is None
+        assert result.retryable is False
+        assert result.failure_category is None
+
+    def test_all_fields_settable(self):
+        result = SendResult(
+            success=False,
+            message_id='msg-1',
+            error='Something broke',
+            message_parts=3,
+            error_code='21211',
+            http_status=400,
+            retryable=True,
+            failure_category='invalid_number',
+        )
+        assert result.success is False
+        assert result.message_id == 'msg-1'
+        assert result.error == 'Something broke'
+        assert result.message_parts == 3
+        assert result.error_code == '21211'
+        assert result.http_status == 400
+        assert result.retryable is True
+        assert result.failure_category == 'invalid_number'
+
+
+class TestPhoneInternationalConversion:
+    """Tests for _to_international on SMSProvider base class."""
+
+    def test_converts_04_to_plus_61(self):
+        assert MockSMSProvider._to_international('0412345678') == '+61412345678'
+
+    def test_leaves_plus_61_unchanged(self):
+        assert MockSMSProvider._to_international('+61412345678') == '+61412345678'
+
+    def test_leaves_non_australian_unchanged(self):
+        assert MockSMSProvider._to_international('+1555123456') == '+1555123456'
 
 
 class TestSMSProviderValidation:
@@ -271,3 +319,16 @@ class TestGetSMSProvider:
         provider1 = get_sms_provider()
         provider2 = get_sms_provider()
         assert provider1 is provider2
+
+    def test_resolves_welcorp_provider(self, settings):
+        """get_sms_provider can resolve WelcorpSMSProvider."""
+        from app.utils.welcorp import WelcorpSMSProvider
+
+        _ProviderCache.instance = None
+        settings.SMS_PROVIDER_CLASS = 'app.utils.welcorp.WelcorpSMSProvider'
+        settings.WELCORP_USERNAME = 'test'
+        settings.WELCORP_PASSWORD = 'test'
+        settings.WELCORP_BASE_URL = 'https://api.example.com'
+
+        provider = get_sms_provider()
+        assert isinstance(provider, WelcorpSMSProvider)

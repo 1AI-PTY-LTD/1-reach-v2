@@ -97,3 +97,23 @@ class TestClassifyFailure:
         cat, retryable = classify_failure(21211, None, None)  # type: ignore[arg-type]
         assert cat == FailureCategory.INVALID_NUMBER
         assert retryable is False
+
+
+class TestWelcorpErrorCodes:
+    """Tests for Welcorp SMS status codes in the classifier."""
+
+    @pytest.mark.parametrize('code,expected_category,expected_retryable', [
+        ('INVN', FailureCategory.INVALID_NUMBER, False),
+        ('BARR', FailureCategory.BLACKLISTED, False),
+        ('OPTO', FailureCategory.OPT_OUT, False),
+        ('BADS', FailureCategory.ACCOUNT_ERROR, False),
+        ('RECE', FailureCategory.INVALID_NUMBER, False),
+        ('SVRE', FailureCategory.SERVER_ERROR, True),
+        ('EXPD', FailureCategory.UNKNOWN_TRANSIENT, True),
+        ('FAIL', FailureCategory.UNKNOWN_TRANSIENT, True),
+        ('QUED', FailureCategory.UNKNOWN_TRANSIENT, True),
+    ])
+    def test_welcorp_error_code(self, code, expected_category, expected_retryable):
+        cat, retryable = classify_failure(code, None, None)
+        assert cat == expected_category
+        assert retryable is expected_retryable
