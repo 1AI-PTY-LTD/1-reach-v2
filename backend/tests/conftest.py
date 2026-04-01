@@ -31,6 +31,7 @@ from app.models import (
     Template,
     User,
 )
+from app.utils.sms import SendResult
 
 
 # ============================================================================
@@ -328,27 +329,17 @@ def config_mms_limit(db, organisation):
 # Mock Fixtures
 # ============================================================================
 
-_SMS_SUCCESS = {
-    'success': True,
-    'message_id': 'mock-sms-123',
-    'error': None,
-    'message_parts': 1,
-    'error_code': None,
-    'http_status': None,
-    'retryable': False,
-    'failure_category': None,
-}
+_SMS_SUCCESS = SendResult(
+    success=True,
+    message_id='mock-sms-123',
+    message_parts=1,
+)
 
-_MMS_SUCCESS = {
-    'success': True,
-    'message_id': 'mock-mms-123',
-    'error': None,
-    'message_parts': 1,
-    'error_code': None,
-    'http_status': None,
-    'retryable': False,
-    'failure_category': None,
-}
+_MMS_SUCCESS = SendResult(
+    success=True,
+    message_id='mock-mms-123',
+    message_parts=1,
+)
 
 
 @pytest.fixture
@@ -356,14 +347,18 @@ def mock_sms_provider():
     """Mock the SMS provider (patched at app.celery where it is imported)."""
     with patch('app.celery.get_sms_provider') as mock:
         provider = Mock()
-        provider.send_sms.return_value = _SMS_SUCCESS.copy()
-        provider.send_mms.return_value = _MMS_SUCCESS.copy()
+        provider.send_sms.return_value = SendResult(
+            success=True, message_id='mock-sms-123', message_parts=1,
+        )
+        provider.send_mms.return_value = SendResult(
+            success=True, message_id='mock-mms-123', message_parts=1,
+        )
 
         def mock_bulk_send(recipients):
             return {
                 'success': True,
                 'results': [
-                    {**_SMS_SUCCESS, 'to': r['to']}
+                    {'success': True, 'message_id': 'mock-sms-123', 'to': r['to']}
                     for r in recipients
                 ],
                 'error': None,
@@ -378,17 +373,16 @@ def mock_sms_provider_transient_fail():
     """Mock provider that always returns a transient (retryable) failure."""
     with patch('app.celery.get_sms_provider') as mock:
         provider = Mock()
-        provider.send_sms.return_value = {
-            'success': False,
-            'message_id': None,
-            'error': 'Service Unavailable',
-            'message_parts': 1,
-            'error_code': None,
-            'http_status': 503,
-            'retryable': True,
-            'failure_category': 'server_error',
-        }
-        provider.send_mms.return_value = provider.send_sms.return_value.copy()
+        result = SendResult(
+            success=False,
+            error='Service Unavailable',
+            message_parts=1,
+            http_status=503,
+            retryable=True,
+            failure_category='server_error',
+        )
+        provider.send_sms.return_value = result
+        provider.send_mms.return_value = result
         mock.return_value = provider
         yield provider
 
@@ -398,17 +392,16 @@ def mock_sms_provider_permanent_fail():
     """Mock provider that always returns a permanent (non-retryable) failure."""
     with patch('app.celery.get_sms_provider') as mock:
         provider = Mock()
-        provider.send_sms.return_value = {
-            'success': False,
-            'message_id': None,
-            'error': 'Invalid phone number',
-            'message_parts': 1,
-            'error_code': '21211',
-            'http_status': 400,
-            'retryable': False,
-            'failure_category': 'invalid_number',
-        }
-        provider.send_mms.return_value = provider.send_sms.return_value.copy()
+        result = SendResult(
+            success=False,
+            error='Invalid phone number',
+            message_parts=1,
+            error_code='21211',
+            http_status=400,
+            failure_category='invalid_number',
+        )
+        provider.send_sms.return_value = result
+        provider.send_mms.return_value = result
         mock.return_value = provider
         yield provider
 

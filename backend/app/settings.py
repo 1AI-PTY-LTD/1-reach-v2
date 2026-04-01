@@ -254,6 +254,11 @@ if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
 # SMS Provider
 SMS_PROVIDER_CLASS = 'app.utils.sms.MockSMSProvider'
 
+# Welcorp SMS provider settings
+WELCORP_BASE_URL = os.environ.get('WELCORP_BASE_URL', 'https://api.message-service.org/api/v1')
+WELCORP_USERNAME = os.environ.get('WELCORP_USERNAME', '')
+WELCORP_PASSWORD = os.environ.get('WELCORP_PASSWORD', '')
+
 
 # Storage Provider Configuration
 STORAGE_PROVIDER_CLASS = os.environ.get(

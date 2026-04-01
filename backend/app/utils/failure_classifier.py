@@ -40,6 +40,16 @@ _KNOWN_ERROR_CODES: dict[str, tuple[FailureCategory, bool]] = {
     '20429': (FailureCategory.RATE_LIMITED, True),      # Too many requests
     '20003': (FailureCategory.ACCOUNT_ERROR, False),    # Permission denied
     '20004': (FailureCategory.ACCOUNT_ERROR, False),    # Method not allowed
+    # Welcorp SMS status codes
+    'INVN': (FailureCategory.INVALID_NUMBER, False),    # Invalid number
+    'BARR': (FailureCategory.BLACKLISTED, False),       # Blocked/forbidden
+    'OPTO': (FailureCategory.OPT_OUT, False),           # Opted out
+    'BADS': (FailureCategory.ACCOUNT_ERROR, False),     # Invalid sender ID
+    'RECE': (FailureCategory.INVALID_NUMBER, False),    # Invalid destination
+    'SVRE': (FailureCategory.SERVER_ERROR, True),       # SMS delivery pathway error
+    'EXPD': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Could not deliver in time
+    'FAIL': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Destination unavailable
+    'QUED': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Still queued (not terminal)
 }
 
 # ---------------------------------------------------------------------------
@@ -76,6 +86,8 @@ def classify_failure(
 
     # 2. HTTP status code
     if http_status is not None:
+        if http_status == 401:
+            return FailureCategory.ACCOUNT_ERROR, False
         if http_status == 429:
             return FailureCategory.RATE_LIMITED, True
         if http_status >= 500:

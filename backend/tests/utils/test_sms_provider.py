@@ -140,10 +140,10 @@ class TestMockSMSProvider:
         provider = MockSMSProvider()
         result = provider.send_sms(to='0412345678', message='Test message')
 
-        assert result['success'] is True
-        assert result['message_id'].startswith('mock-sms-')
-        assert result['error'] is None
-        assert result['message_parts'] == 1
+        assert result.success is True
+        assert result.message_id.startswith('mock-sms-')
+        assert result.error is None
+        assert result.message_parts == 1
 
     def test_send_sms_validates_phone(self):
         """send_sms validates phone number."""
@@ -151,9 +151,9 @@ class TestMockSMSProvider:
 
         # Invalid phone
         result = provider.send_sms(to='invalid', message='Test')
-        assert result['success'] is False
-        assert 'Invalid phone' in result['error']
-        assert result['message_id'] is None
+        assert result.success is False
+        assert 'Invalid phone' in result.error
+        assert result.message_id is None
 
     def test_send_sms_normalizes_phone(self):
         """send_sms normalizes phone before sending."""
@@ -161,7 +161,7 @@ class TestMockSMSProvider:
 
         # +614 format normalized to 04
         result = provider.send_sms(to='+61412345678', message='Test')
-        assert result['success'] is True
+        assert result.success is True
 
     def test_send_sms_calculates_parts(self):
         """send_sms calculates message parts correctly."""
@@ -169,11 +169,11 @@ class TestMockSMSProvider:
 
         # Single part
         result = provider.send_sms(to='0412345678', message='A' * 160)
-        assert result['message_parts'] == 1
+        assert result.message_parts == 1
 
         # Multiple parts
         result = provider.send_sms(to='0412345678', message='A' * 307)
-        assert result['message_parts'] == 3
+        assert result.message_parts == 3
 
     def test_send_bulk_sms_processes_all_recipients(self):
         """send_bulk_sms processes all valid recipients."""
@@ -219,10 +219,10 @@ class TestMockSMSProvider:
             subject='Photo'
         )
 
-        assert result['success'] is True
-        assert result['message_id'].startswith('mock-mms-')
-        assert result['error'] is None
-        assert result['message_parts'] == 1  # MMS always 1 part
+        assert result.success is True
+        assert result.message_id.startswith('mock-mms-')
+        assert result.error is None
+        assert result.message_parts == 1  # MMS always 1 part
 
     def test_send_mms_validates_phone(self):
         """send_mms validates phone number."""
@@ -234,8 +234,8 @@ class TestMockSMSProvider:
             media_url='https://example.com/image.jpg'
         )
 
-        assert result['success'] is False
-        assert 'Invalid phone' in result['error']
+        assert result.success is False
+        assert 'Invalid phone' in result.error
 
     def test_send_mms_accepts_empty_message(self):
         """send_mms accepts empty message (image-only MMS)."""
@@ -247,7 +247,7 @@ class TestMockSMSProvider:
             media_url='https://example.com/image.jpg'
         )
 
-        assert result['success'] is True
+        assert result.success is True
 
 
 class TestGetSMSProvider:

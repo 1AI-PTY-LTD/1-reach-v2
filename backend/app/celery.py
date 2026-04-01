@@ -35,7 +35,7 @@ django.setup()
 from app.models import MessageFormat, Schedule, ScheduleStatus
 from app.utils.billing import record_usage, refund_usage
 from app.utils.failure_classifier import classify_failure
-from app.utils.sms import get_sms_provider
+from app.utils.sms import SendResult, get_sms_provider
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def _compute_backoff_delay(retry_count: int) -> int:
     return max(1, int(delay))
 
 
-def _dispatch_to_provider(provider, schedule: Schedule) -> dict:
+def _dispatch_to_provider(provider, schedule: Schedule) -> SendResult:
     """Route to the correct provider method based on schedule.format.
 
     Format-agnostic: adding a new format requires only a new elif branch here
@@ -86,12 +86,12 @@ def _dispatch_to_provider(provider, schedule: Schedule) -> dict:
     return provider.send_sms(to=schedule.phone, message=schedule.text or '')
 
 
-def _handle_success(schedule: Schedule, result: dict) -> None:
+def _handle_success(schedule: Schedule, result: SendResult) -> None:
     org = schedule.organisation
     with transaction.atomic():
         schedule.status = ScheduleStatus.SENT
         schedule.sent_time = timezone.now()
-        schedule.provider_message_id = result.get('message_id')
+        schedule.provider_message_id = result.message_id
         schedule.error = None
         schedule.failure_category = None
         schedule.save(update_fields=[
@@ -114,7 +114,7 @@ def _handle_success(schedule: Schedule, result: dict) -> None:
     _sync_parent_status(schedule)
 
 
-def _schedule_retry(schedule: Schedule, result: dict, failure_category: str) -> None:
+def _schedule_retry(schedule: Schedule, result: SendResult, failure_category: str) -> None:
     delay = _compute_backoff_delay(schedule.retry_count)
     next_retry_at = timezone.now() + timedelta(seconds=delay)
 
@@ -123,7 +123,7 @@ def _schedule_retry(schedule: Schedule, result: dict, failure_category: str) -> 
         schedule.retry_count += 1
         schedule.next_retry_at = next_retry_at
         schedule.failure_category = failure_category
-        schedule.error = result.get('error')
+        schedule.error = result.error
         schedule.save(update_fields=[
             'status', 'retry_count', 'next_retry_at',
             'failure_category', 'error', 'updated_at',
@@ -136,18 +136,18 @@ def _schedule_retry(schedule: Schedule, result: dict, failure_category: str) -> 
     )
 
 
-def _mark_permanently_failed(schedule: Schedule, result: dict, failure_category: str) -> None:
+def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_category: str) -> None:
     org = schedule.organisation
     with transaction.atomic():
         schedule.status = ScheduleStatus.FAILED
         schedule.failure_category = failure_category
-        schedule.error = result.get('error')
+        schedule.error = result.error
         schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
         refund_usage(org, schedule)
 
     logger.warning(
         'Schedule %d permanently failed (%s): %s',
-        schedule.pk, failure_category, result.get('error'),
+        schedule.pk, failure_category, result.error,
     )
 
     _sync_parent_status(schedule)
@@ -184,15 +184,15 @@ def _sync_parent_status(schedule: Schedule) -> None:
         parent.save(update_fields=['status', 'updated_at'])
 
 
-def _handle_failure(schedule: Schedule, result: dict) -> None:
-    failure_category_value = result.get('failure_category')
-    is_retryable = result.get('retryable', False)
+def _handle_failure(schedule: Schedule, result: SendResult) -> None:
+    failure_category_value = result.failure_category
+    is_retryable = result.retryable
 
     if not failure_category_value:
         failure_category_obj, is_retryable = classify_failure(
-            result.get('error_code'),
-            result.get('http_status'),
-            result.get('error'),
+            result.error_code,
+            result.http_status,
+            result.error,
         )
         failure_category_value = failure_category_obj.value
 
@@ -246,12 +246,12 @@ def send_message(self, schedule_id: int) -> dict:
     provider = get_sms_provider()
     result = _dispatch_to_provider(provider, schedule)
 
-    if result['success']:
+    if result.success:
         _handle_success(schedule, result)
     else:
         _handle_failure(schedule, result)
 
-    return {'schedule_id': schedule_id, 'success': result['success']}
+    return {'schedule_id': schedule_id, 'success': result.success}
 
 
 # ---------------------------------------------------------------------------

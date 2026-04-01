@@ -18,6 +18,7 @@ from app.models import (
     ScheduleStatus,
 )
 from app.celery import send_message
+from app.utils.sms import SendResult
 from app.utils.billing import get_balance, grant_credits
 
 
@@ -276,16 +277,13 @@ class TestHandleFailureClassification:
         schedule = _make_queued(db, organisation, user, contact, max_retries=0)
 
         # Provider returns raw error fields only — no pre-classified failure_category
-        raw_result = {
-            'success': False,
-            'message_id': None,
-            'error': 'Invalid phone number',
-            'message_parts': 1,
-            'error_code': '21211',   # Twilio "invalid number" code
-            'http_status': 400,
-            'retryable': None,       # absent / falsy — classifier decides
-            'failure_category': None,
-        }
+        raw_result = SendResult(
+            success=False,
+            error='Invalid phone number',
+            message_parts=1,
+            error_code='21211',   # Twilio "invalid number" code
+            http_status=400,
+        )
         with patch('app.celery.get_sms_provider') as mock_provider_factory:
             mock_provider = mock_provider_factory.return_value
             mock_provider.send_sms.return_value = raw_result
@@ -302,16 +300,12 @@ class TestHandleFailureClassification:
         """When no error_code, classify_failure() falls back to http_status heuristic."""
         schedule = _make_queued(db, organisation, user, contact, max_retries=0)
 
-        raw_result = {
-            'success': False,
-            'message_id': None,
-            'error': 'Service temporarily unavailable',
-            'message_parts': 1,
-            'error_code': None,
-            'http_status': 503,      # server-side transient — would retry if max_retries > 0
-            'retryable': None,
-            'failure_category': None,
-        }
+        raw_result = SendResult(
+            success=False,
+            error='Service temporarily unavailable',
+            message_parts=1,
+            http_status=503,      # server-side transient — would retry if max_retries > 0
+        )
         with patch('app.celery.get_sms_provider') as mock_provider_factory:
             mock_provider = mock_provider_factory.return_value
             mock_provider.send_sms.return_value = raw_result
@@ -398,12 +392,11 @@ class TestParentStatusSync:
         with patch('app.celery.get_sms_provider') as mock:
             from unittest.mock import Mock
             provider = Mock()
-            provider.send_sms.return_value = {
-                'success': False, 'message_id': None,
-                'error': 'Invalid number', 'message_parts': 1,
-                'error_code': '21211', 'http_status': 400,
-                'retryable': False, 'failure_category': 'invalid_number',
-            }
+            provider.send_sms.return_value = SendResult(
+                success=False, error='Invalid number', message_parts=1,
+                error_code='21211', http_status=400,
+                failure_category='invalid_number',
+            )
             mock.return_value = provider
             for child in children[1:]:
                 child.refresh_from_db()

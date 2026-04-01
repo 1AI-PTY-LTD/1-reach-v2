@@ -42,6 +42,11 @@ class TestClassifyFailure:
         assert cat == FailureCategory.SERVER_ERROR
         assert retryable is True
 
+    def test_http_401_is_account_error(self):
+        cat, retryable = classify_failure(None, 401, 'Invalid credentials')
+        assert cat == FailureCategory.ACCOUNT_ERROR
+        assert retryable is False
+
     def test_http_400_is_permanent(self):
         cat, retryable = classify_failure(None, 400, 'Bad Request')
         assert retryable is False

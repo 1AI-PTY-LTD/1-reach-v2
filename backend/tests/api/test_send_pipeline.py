@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from app.models import CreditTransaction, Organisation, Schedule, ScheduleStatus
 from app.utils.billing import grant_credits
+from app.utils.sms import SendResult
 from tests.factories import create_contact_group_with_members
 
 
@@ -102,13 +103,15 @@ class TestSendSMSPipeline:
             provider = Mock()
             provider.send_sms.side_effect = [
                 # First call: transient failure
-                {'success': False, 'error': 'Timeout', 'http_status': 503,
-                 'retryable': True, 'failure_category': 'server_error',
-                 'message_id': None, 'error_code': None, 'message_parts': 1},
+                SendResult(
+                    success=False, error='Timeout', http_status=503,
+                    retryable=True, failure_category='server_error',
+                    message_parts=1,
+                ),
                 # Second call (retry): success
-                {'success': True, 'message_id': 'mock-ok', 'error': None,
-                 'message_parts': 1, 'error_code': None, 'http_status': None,
-                 'retryable': False, 'failure_category': None},
+                SendResult(
+                    success=True, message_id='mock-ok', message_parts=1,
+                ),
             ]
             mock_get.return_value = provider
 
