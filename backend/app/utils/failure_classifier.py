@@ -50,6 +50,9 @@ _KNOWN_ERROR_CODES: dict[str, tuple[FailureCategory, bool]] = {
     'EXPD': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Could not deliver in time
     'FAIL': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Destination unavailable
     'QUED': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Still queued (not terminal)
+    # Network-level errors (provider-agnostic)
+    'TIMEOUT': (FailureCategory.SERVER_ERROR, True),       # Request timed out
+    'CONN_ERROR': (FailureCategory.SERVER_ERROR, True),    # Connection refused/reset/DNS failure
 }
 
 # ---------------------------------------------------------------------------

@@ -165,7 +165,8 @@ class TestSendSMS:
         assert result.success is False
         assert result.retryable is True
         assert 'timed out' in result.error
-        assert result.failure_category is not None
+        assert result.error_code == 'TIMEOUT'
+        assert result.failure_category == FailureCategory.SERVER_ERROR.value
 
     def test_connection_error_is_retryable(self, provider):
         provider.session.post.side_effect = requests.ConnectionError('refused')
@@ -175,7 +176,8 @@ class TestSendSMS:
         assert result.success is False
         assert result.retryable is True
         assert 'connection error' in result.error.lower()
-        assert result.failure_category is not None
+        assert result.error_code == 'CONN_ERROR'
+        assert result.failure_category == FailureCategory.SERVER_ERROR.value
 
     def test_non_json_response(self, provider):
         provider.session.post.return_value = _non_json_response(502)

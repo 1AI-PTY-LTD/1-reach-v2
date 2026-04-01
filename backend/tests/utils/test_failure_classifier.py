@@ -82,6 +82,16 @@ class TestClassifyFailure:
         assert cat == FailureCategory.INVALID_NUMBER
         assert retryable is False
 
+    def test_timeout_error_code_is_server_error(self):
+        cat, retryable = classify_failure('TIMEOUT', None, None)
+        assert cat == FailureCategory.SERVER_ERROR
+        assert retryable is True
+
+    def test_conn_error_code_is_server_error(self):
+        cat, retryable = classify_failure('CONN_ERROR', None, None)
+        assert cat == FailureCategory.SERVER_ERROR
+        assert retryable is True
+
     def test_error_code_string_coercion(self):
         """Integer error codes are coerced to string for lookup."""
         cat, retryable = classify_failure(21211, None, None)  # type: ignore[arg-type]

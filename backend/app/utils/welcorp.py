@@ -59,20 +59,22 @@ class WelcorpSMSProvider(SMSProvider):
         except requests.Timeout:
             error_msg = 'Welcorp API request timed out'
             logger.warning(error_msg, extra={'payload_type': payload.get('job_type')})
-            fc, retryable = classify_failure(None, None, error_msg)
+            fc, retryable = classify_failure('TIMEOUT', None, error_msg)
             return SendResult(
                 success=False,
                 error=error_msg,
+                error_code='TIMEOUT',
                 retryable=retryable,
                 failure_category=fc.value,
             )
         except requests.RequestException as exc:
             error_msg = f'Welcorp API connection error: {exc}'
             logger.warning(error_msg, extra={'payload_type': payload.get('job_type')})
-            fc, retryable = classify_failure(None, None, error_msg)
+            fc, retryable = classify_failure('CONN_ERROR', None, error_msg)
             return SendResult(
                 success=False,
                 error=error_msg,
+                error_code='CONN_ERROR',
                 retryable=retryable,
                 failure_category=fc.value,
             )

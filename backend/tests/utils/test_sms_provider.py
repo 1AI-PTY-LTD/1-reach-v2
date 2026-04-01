@@ -10,7 +10,7 @@ Tests:
 import pytest
 from rest_framework.exceptions import ValidationError
 
-from app.utils.sms import MockSMSProvider, get_sms_provider
+from app.utils.sms import MockSMSProvider, _ProviderCache, get_sms_provider
 
 
 class TestSMSProviderValidation:
@@ -252,6 +252,14 @@ class TestMockSMSProvider:
 
 class TestGetSMSProvider:
     """Tests for get_sms_provider factory function."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self, settings):
+        """Clear the provider singleton cache and set MockSMSProvider."""
+        _ProviderCache.instance = None
+        settings.SMS_PROVIDER_CLASS = 'app.utils.sms.MockSMSProvider'
+        yield
+        _ProviderCache.instance = None
 
     def test_returns_configured_provider(self):
         """get_sms_provider returns configured provider class."""
