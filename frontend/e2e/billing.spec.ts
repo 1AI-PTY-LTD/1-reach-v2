@@ -61,7 +61,7 @@ test.describe('Billing Page', () => {
 
   test('shows monthly spend section', async ({ page }) => {
     await page.goto('/app/billing')
-    await expect(page.getByText(/Monthly spend:/).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Monthly spend/).first()).toBeVisible({ timeout: 10000 })
   })
 
   test('displays transaction history', async ({ page }) => {

@@ -128,7 +128,7 @@ test.describe('Send SMS — success flow', () => {
   test('202 response treated as success — summary dialog shows 1 successful', async ({ page }) => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page)
-    await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
     await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('Unsuccessful').first()).toBeVisible()
   })
@@ -136,7 +136,7 @@ test.describe('Send SMS — success flow', () => {
   test('success clears the message input', async ({ page }) => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page, 'This should be cleared after send')
-    await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
   })
 })
 
@@ -144,7 +144,7 @@ test.describe('Send MMS — success flow', () => {
   test('MMS send returns 202 and shows success summary', async ({ page }) => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page, 'Check this out!')
-    await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
     await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
   })
 })
@@ -188,7 +188,7 @@ test.describe('Billing gate — error surfaces in UI', () => {
     try {
       await page.goto('/app/send')
       await fillAndSubmitSmsForm(page)
-      await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
+      await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
       await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
       await expect(page.getByText('Unsuccessful').first()).toBeVisible()
       await expect(
