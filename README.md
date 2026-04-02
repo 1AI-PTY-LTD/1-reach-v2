@@ -177,7 +177,7 @@ Celery worker (both paths):
 
 Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults to ~1m → 2m → 4m → 8m, capped at 1h. A `dispatch_due_messages` beat task runs every 60 s to pick up scheduled sends and recover stuck RETRYING/PROCESSING schedules.
 
-**Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED.
+**Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED. All three startup scripts (`startup.sh`, `startup-worker.sh`, `startup-beat.sh`) include dependency wait loops that poll DB (and Redis for worker/beat) for up to 2.5 minutes before proceeding, preventing crash loops during Azure App Service restarts.
 
 **Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
 
@@ -283,7 +283,7 @@ docker compose exec frontend npx playwright test
 
 **Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 
-1. `global-setup.ts` creates a fresh Clerk user + org per CI run, then seeds the Django DB by posting simulated webhook events directly to the backend (in `TEST` mode, Svix signature verification is skipped).
+1. `global-setup.ts` creates a fresh Clerk user + org per CI run, waits for the backend health endpoint to return 200 (up to 2.5 minutes), then seeds the Django DB by posting simulated webhook events directly to the backend with retry logic (in `TEST` mode, Svix signature verification is skipped).
 2. `auth.setup.ts` (Playwright setup project) signs in via Clerk's ticket strategy and saves browser `storageState` to `/tmp/e2e-auth-state.json`.
 3. All chromium tests inherit the pre-authenticated state. `beforeAll` blocks that need API access (e.g., `send-pipeline.spec.ts`) use `authenticatePage()` which falls back to a full sign-in from the state file.
 4. `global-teardown.ts` deletes the Clerk user + org.
@@ -394,9 +394,9 @@ The app deploys to Azure as five services. GitHub Actions workflows (`.github/wo
 
 | Component | Azure Service | Startup |
 |-----------|---------------|---------|
-| Backend API | App Service (Python 3.12, Linux) | `bash startup.sh` — migrations, collectstatic, gunicorn + uvicorn ASGI workers |
-| Celery Worker | App Service (same plan) | `bash startup-worker.sh` — processes `messages` queue |
-| Celery Beat | App Service (same plan) | `bash startup-beat.sh` — `DatabaseScheduler`, dispatches due messages every 60s |
+| Backend API | App Service (Python 3.12, Linux) | `bash startup.sh` — waits for DB, migrations, collectstatic, gunicorn + uvicorn ASGI workers |
+| Celery Worker | App Service (same plan) | `bash startup-worker.sh` — waits for DB + Redis, processes `messages` queue |
+| Celery Beat | App Service (same plan) | `bash startup-beat.sh` — waits for DB + Redis, `DatabaseScheduler`, dispatches due messages every 60s |
 | Frontend | Azure Static Web Apps | Vite build → `dist/` uploaded via `Azure/static-web-apps-deploy` |
 | Database | Azure Database for PostgreSQL | Flexible Server |
 | Redis | Azure Cache for Redis | Celery broker + result backend |
@@ -459,7 +459,7 @@ In your GitHub repo → Settings → Secrets and variables → Actions, set the 
 
 #### 6. Deploy
 
-Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab.
+Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab. The backend deploy workflow includes a `verify-health` job that polls `/api/health/` for up to 5 minutes after deployment, failing the workflow if the API does not become healthy.
 
 #### 7. Verify
 
@@ -516,7 +516,7 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_BEAT_PUBLISH_PROFILE` | Beat App Service → Download publish profile |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
-| `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` |
+| `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` (also used by backend deploy's post-deploy health check) |
 
 ### Database Connection Pooling
 

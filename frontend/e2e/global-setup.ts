@@ -45,15 +45,43 @@ export default async function globalSetup(_config: FullConfig) {
   // In TEST mode the backend skips Svix signature verification.
   const apiBase = process.env.E2E_API_BASE_URL || 'http://localhost:8000'
   const webhookUrl = `${apiBase}/api/webhooks/clerk/`
-  const post = async (body: object) => {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Webhook seed failed (${res.status}): ${text}`)
+
+  // Wait for backend to be healthy before seeding (handles Azure restart delays)
+  const healthUrl = `${apiBase}/api/health/`
+  console.log(`Waiting for backend at ${healthUrl}...`)
+  for (let i = 1; i <= 30; i++) {
+    try {
+      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) })
+      if (res.ok) {
+        console.log(`Backend healthy after ${i} attempt(s).`)
+        break
+      }
+    } catch {
+      // connection refused or timeout — expected during startup
+    }
+    if (i === 30) throw new Error('Backend did not become healthy within 150s')
+    await new Promise(r => setTimeout(r, 5000))
+  }
+
+  const post = async (body: object, retries = 3) => {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10000),
+        })
+        if (!res.ok) {
+          const text = await res.text()
+          throw new Error(`Webhook seed failed (${res.status}): ${text}`)
+        }
+        return
+      } catch (err) {
+        if (attempt === retries) throw err
+        console.log(`Webhook POST failed (attempt ${attempt}/${retries}), retrying in 3s...`)
+        await new Promise(r => setTimeout(r, 3000))
+      }
     }
   }
 

@@ -101,10 +101,19 @@ jobs:
           EOF
 
       - name: Start services
-        run: docker compose up -d db redis backend frontend --wait --wait-timeout 120
+        run: docker compose up -d db redis backend frontend --wait --wait-timeout 180
 
       - name: Run migrations
         run: docker compose exec -T backend python manage.py migrate --noinput
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health/ 2>/dev/null) || true
+            echo "Backend health attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && break
+            sleep 3
+          done
 
       - name: Pre-warm Vite dev server
         run: |
