@@ -88,8 +88,10 @@ jobs:
           URL="${{ secrets.VITE_API_BASE_URL }}/api/health/"
           echo "Polling $URL for healthy response..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$URL" 2>/dev/null) || true
-            echo "Attempt $i/30: HTTP $STATUS"
+            RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$URL" 2>/dev/null) || true
+            STATUS=$(echo "$RESP" | tail -1)
+            BODY=$(echo "$RESP" | sed '$d')
+            echo "Attempt $i/30: HTTP $STATUS — $BODY"
             if [ "$STATUS" = "200" ]; then
               echo "API is healthy."
               exit 0

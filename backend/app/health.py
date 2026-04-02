@@ -1,3 +1,4 @@
+import logging
 import ssl
 
 import redis
@@ -6,6 +7,8 @@ from django.db import connection
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+logger = logging.getLogger(__name__)
 
 
 class HealthCheckView(APIView):
@@ -29,6 +32,7 @@ class HealthCheckView(APIView):
             r.ping()
             checks['redis'] = 'ok'
         except Exception as e:
+            logger.warning('Redis health check failed: %s', e, exc_info=True)
             checks['redis'] = str(e)
 
         all_ok = all(v == 'ok' for v in checks.values())
