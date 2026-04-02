@@ -44,7 +44,7 @@ def celery_eager():
 class TestSendSMSPipeline:
     """Full pipeline tests for POST /api/sms/send/."""
 
-    _PAYLOAD = {'recipient': '+61412345678', 'message': 'Hello pipeline'}
+    _PAYLOAD = {'recipients': [{'phone': '+61412345678'}], 'message': 'Hello pipeline'}
 
     def test_direct_send_processes_to_sent(
         self, authenticated_client, organisation, mock_sms_provider
@@ -53,7 +53,7 @@ class TestSendSMSPipeline:
         organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
         organisation.save()
 
-        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD)
+        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD, format='json')
 
         assert response.status_code == 202
         schedule = Schedule.objects.get(pk=response.data['schedule_id'])
@@ -67,7 +67,7 @@ class TestSendSMSPipeline:
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
-        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD)
+        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD, format='json')
 
         assert response.status_code == 202
         # Credits reserved at view time (before task), balance already reduced
@@ -84,7 +84,7 @@ class TestSendSMSPipeline:
         organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
         organisation.save()
 
-        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD)
+        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD, format='json')
 
         assert response.status_code == 202
         schedule = Schedule.objects.get(pk=response.data['schedule_id'])
@@ -115,7 +115,7 @@ class TestSendSMSPipeline:
             ]
             mock_get.return_value = provider
 
-            response = authenticated_client.post('/api/sms/send/', self._PAYLOAD)
+            response = authenticated_client.post('/api/sms/send/', self._PAYLOAD, format='json')
 
         assert response.status_code == 202
         schedule = Schedule.objects.get(pk=response.data['schedule_id'])
@@ -130,7 +130,7 @@ class TestSendSMSPipeline:
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
-        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD)
+        response = authenticated_client.post('/api/sms/send/', self._PAYLOAD, format='json')
 
         assert response.status_code == 202
         schedule = Schedule.objects.get(pk=response.data['schedule_id'])
@@ -173,16 +173,16 @@ class TestGroupSendPipeline:
 
         assert response.status_code == 201
 
-        # Backdate children so dispatch_due_messages() picks them up
-        Schedule.objects.filter(parent_id=response.data['id']).update(
-            scheduled_time=timezone.now() - timezone.timedelta(minutes=5)
-        )
+        # Backdate parent and children so dispatch_due_messages() picks up the parent
+        past = timezone.now() - timezone.timedelta(minutes=5)
+        Schedule.objects.filter(pk=response.data['id']).update(scheduled_time=past)
+        Schedule.objects.filter(parent_id=response.data['id']).update(scheduled_time=past)
 
-        # Beat task picks up PENDING children with scheduled_time <= now
+        # Beat task picks up parent (batch) with scheduled_time <= now
         result = dispatch_due_messages()
 
-        assert result['dispatched'] == 2
-        # With eager mode, all tasks ran synchronously
+        assert result['dispatched'] == 1  # parent only
+        # With eager mode, batch task ran synchronously — children are SENT
         children = Schedule.objects.filter(
             parent_id=response.data['id'], status=ScheduleStatus.SENT
         )
@@ -217,10 +217,10 @@ class TestGroupSendPipeline:
 
         assert response.status_code == 201
 
-        # Backdate children so dispatch_due_messages() picks them up
-        Schedule.objects.filter(parent_id=response.data['id']).update(
-            scheduled_time=timezone.now() - timezone.timedelta(minutes=5)
-        )
+        # Backdate parent and children so dispatch_due_messages() picks up the parent
+        past = timezone.now() - timezone.timedelta(minutes=5)
+        Schedule.objects.filter(pk=response.data['id']).update(scheduled_time=past)
+        Schedule.objects.filter(parent_id=response.data['id']).update(scheduled_time=past)
 
         organisation.refresh_from_db()
         expected_after_create = Decimal('10.00') - (member_count * 1 * sms_rate)

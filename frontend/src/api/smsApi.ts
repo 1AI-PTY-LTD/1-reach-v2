@@ -13,21 +13,19 @@ export async function sendSms(client: ApiClient, props: SendSmsRequest): Promise
   Logger.debug('Sending SMS', {
     component: 'smsApi.sendSms',
     data: {
-      contactId: props.contact_id,
-      recipient: props.recipient.slice(-4),
+      recipientCount: props.recipients.length,
       messageLength: props.message.length,
     },
   })
 
   const data = await client.post<SendSmsResponse>('/api/sms/send/', {
     message: props.message,
-    recipient: props.recipient,
-    contact_id: props.contact_id,
+    recipients: props.recipients,
   })
 
   Logger.info('SMS sent successfully', {
     component: 'smsApi.sendSms',
-    data: { contactId: props.contact_id },
+    data: { recipientCount: props.recipients.length },
   })
 
   return data
@@ -62,8 +60,7 @@ export async function sendMms(client: ApiClient, props: SendMmsRequest): Promise
   Logger.debug('Sending MMS', {
     component: 'smsApi.sendMms',
     data: {
-      contactId: props.contact_id,
-      recipient: props.recipient.slice(-4),
+      recipientCount: props.recipients.length,
       messageLength: props.message.length,
       hasMediaUrl: !!props.media_url,
       hasSubject: !!props.subject,
@@ -72,15 +69,14 @@ export async function sendMms(client: ApiClient, props: SendMmsRequest): Promise
 
   const data = await client.post<SendSmsResponse>('/api/sms/send-mms/', {
     message: props.message,
-    recipient: props.recipient,
-    contact_id: props.contact_id,
+    recipients: props.recipients,
     media_url: props.media_url,
     ...(props.subject && { subject: props.subject }),
   })
 
   Logger.info('MMS sent successfully', {
     component: 'smsApi.sendMms',
-    data: { contactId: props.contact_id },
+    data: { recipientCount: props.recipients.length },
   })
 
   return data

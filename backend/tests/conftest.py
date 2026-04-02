@@ -364,6 +364,17 @@ def mock_sms_provider():
                 'error': None,
             }
         provider.send_bulk_sms.side_effect = mock_bulk_send
+
+        def mock_bulk_mms_send(recipients):
+            return {
+                'success': True,
+                'results': [
+                    {'success': True, 'message_id': 'mock-mms-123', 'to': r['to']}
+                    for r in recipients
+                ],
+                'error': None,
+            }
+        provider.send_bulk_mms.side_effect = mock_bulk_mms_send
         mock.return_value = provider
         yield provider
 
@@ -410,6 +421,14 @@ def mock_sms_provider_permanent_fail():
 def mock_send_message_task():
     """Prevent Celery tasks from being dispatched in endpoint tests."""
     with patch('app.views.send_message_task') as mock:
+        mock.delay = Mock()
+        yield mock
+
+
+@pytest.fixture
+def mock_send_batch_message_task():
+    """Prevent batch Celery tasks from being dispatched in endpoint tests."""
+    with patch('app.views.send_batch_message_task') as mock:
         mock.delay = Mock()
         yield mock
 

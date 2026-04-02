@@ -22,8 +22,7 @@ test.beforeAll(async ({ browser }) => {
   contact = await ensureContact(page, { first_name: 'Billing', last_name: 'Test', phone: '0416111111' })
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
     message: 'Billing test message',
-    recipient: '0416111111',
-    contact_id: contact.id,
+    recipients: [{ phone: '0416111111', contact_id: contact.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
 

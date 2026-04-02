@@ -11,8 +11,7 @@ describe('smsApi', () => {
     it('queues SMS and returns 202 with schedule_id', async () => {
       const result = await sendSms(client, {
         message: 'Hello world',
-        recipient: '0412345678',
-        contact_id: 1,
+        recipients: [{ phone: '0412345678', contact_id: 1 }],
       })
 
       expect(result).toHaveProperty('success', true)
@@ -25,8 +24,7 @@ describe('smsApi', () => {
     it('queues MMS and returns 202 with schedule_id', async () => {
       const result = await sendMms(client, {
         message: 'Hello with image',
-        recipient: '0412345678',
-        contact_id: 1,
+        recipients: [{ phone: '0412345678', contact_id: 1 }],
         media_url: 'https://storage.example.com/image.jpg',
       })
 
@@ -68,7 +66,7 @@ describe('smsApi', () => {
         )
       )
       await expect(
-        sendSms(client, { message: 'Hello', recipient: '0412345678', contact_id: 1 })
+        sendSms(client, { message: 'Hello', recipients: [{ phone: '0412345678', contact_id: 1 }] })
       ).rejects.toThrow()
     })
   })

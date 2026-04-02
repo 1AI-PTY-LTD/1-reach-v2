@@ -294,44 +294,32 @@ function SendContent() {
       try {
         const { messageText, recipientsList } = result
 
-        let successCount = 0
-        let errorCount = 0
-        const errorMessages: string[] = []
-        for (const r of recipientsList) {
-          try {
-            if (uploadedFileUrl) {
-              await sendMms(client, {
-                message: messageText,
-                recipient: r.phone,
-                contact_id: r.contactId ?? null,
-                media_url: uploadedFileUrl,
-              })
-            } else {
-              await sendSms(client, {
-                message: messageText,
-                recipient: r.phone,
-                contact_id: r.contactId ?? null,
-              })
-            }
-            successCount += 1
-          } catch (e) {
-            errorCount += 1
-            const errorMsg = extractErrorMessage(e)
-            errorMessages.push(errorMsg)
-          }
-        }
+        const total = recipientsList.length
 
+        const mappedRecipients = recipientsList.map(r => ({
+          phone: r.phone,
+          contact_id: r.contactId ?? null,
+        }))
+
+        if (uploadedFileUrl) {
+          // MMS: single batch API call for all recipients
+          await sendMms(client, {
+            message: messageText,
+            recipients: mappedRecipients,
+            media_url: uploadedFileUrl,
+          })
+        } else {
+          // SMS: single batch API call for all recipients
+          await sendSms(client, {
+            message: messageText,
+            recipients: mappedRecipients,
+          })
+        }
         resetForm()
         setLastActionWasSchedule(false)
-        setSummaryCounts({ total: recipientsList.length, success: successCount, error: errorCount, errors: errorMessages })
+        setSummaryCounts({ total, success: total, error: 0, errors: [] })
         setSummaryOpen(true)
-        if (errorCount === 0) {
-          toast.success(`${successCount} message${successCount !== 1 ? 's' : ''} sent`)
-        } else if (successCount > 0) {
-          toast.warning(`${successCount} sent, ${errorCount} failed`)
-        } else {
-          toast.error('All messages failed to send')
-        }
+        toast.success(`${total} message${total !== 1 ? 's' : ''} sent`)
       } catch (error) {
         const errorMsg = extractErrorMessage(error)
         toast.error(errorMsg)

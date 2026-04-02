@@ -215,56 +215,66 @@ class TestSendSMSSerializer:
         """Valid SMS data passes validation."""
         data = {
             'message': 'Hello!',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
         serializer = SendSMSSerializer(data=data)
         assert serializer.is_valid()
 
     def test_message_required(self):
         """Message is required."""
-        data = {'recipient': '0412345678'}
+        data = {'recipients': [{'phone': '0412345678'}]}
         serializer = SendSMSSerializer(data=data)
         assert not serializer.is_valid()
         assert 'message' in serializer.errors
 
-    def test_recipient_required(self):
-        """Recipient is required."""
+    def test_recipients_required(self):
+        """Recipients is required."""
         data = {'message': 'Hello'}
         serializer = SendSMSSerializer(data=data)
         assert not serializer.is_valid()
-        assert 'recipient' in serializer.errors
+        assert 'recipients' in serializer.errors
 
-    def test_recipient_validated(self):
+    def test_recipient_phone_validated(self):
         """Recipient phone validated."""
         data = {
             'message': 'Hello',
-            'recipient': 'invalid-phone'
+            'recipients': [{'phone': 'invalid-phone'}],
         }
         serializer = SendSMSSerializer(data=data)
         assert not serializer.is_valid()
-        assert 'recipient' in serializer.errors
 
     def test_message_cleaned(self):
         """Message whitespace is cleaned."""
         data = {
             'message': '  Hello World  ',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
         serializer = SendSMSSerializer(data=data)
         assert serializer.is_valid()
-        # Whitespace is stripped
         assert serializer.validated_data['message'] == 'Hello World'
 
     def test_contact_id_optional(self):
-        """contact_id is optional."""
+        """contact_id is optional per recipient."""
         data = {
             'message': 'Hello',
-            'recipient': '0412345678',
-            'contact_id': 123
+            'recipients': [{'phone': '0412345678', 'contact_id': 123}],
         }
         serializer = SendSMSSerializer(data=data)
         assert serializer.is_valid()
-        assert serializer.validated_data['contact_id'] == 123
+        assert serializer.validated_data['recipients'][0]['contact_id'] == 123
+
+    def test_multiple_recipients(self):
+        """Multiple recipients accepted."""
+        data = {
+            'message': 'Hello',
+            'recipients': [
+                {'phone': '0412345678'},
+                {'phone': '0400000000', 'contact_id': 5},
+            ],
+        }
+        serializer = SendSMSSerializer(data=data)
+        assert serializer.is_valid()
+        assert len(serializer.validated_data['recipients']) == 2
 
 
 # ============================================================================
@@ -315,7 +325,7 @@ class TestSendMMSSerializer:
         data = {
             'message': 'Check this out',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
         serializer = SendMMSSerializer(data=data)
         assert serializer.is_valid()
@@ -324,7 +334,7 @@ class TestSendMMSSerializer:
         """media_url is required for MMS."""
         data = {
             'message': 'Test',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
         serializer = SendMMSSerializer(data=data)
         assert not serializer.is_valid()
@@ -335,7 +345,7 @@ class TestSendMMSSerializer:
         data = {
             'message': '',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
         serializer = SendMMSSerializer(data=data)
         assert serializer.is_valid()
@@ -346,12 +356,26 @@ class TestSendMMSSerializer:
         data = {
             'message': 'Test',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678',
-            'subject': 'Photo'
+            'recipients': [{'phone': '0412345678'}],
+            'subject': 'Photo',
         }
         serializer = SendMMSSerializer(data=data)
         assert serializer.is_valid()
         assert serializer.validated_data['subject'] == 'Photo'
+
+    def test_multiple_recipients(self):
+        """Multiple recipients accepted."""
+        data = {
+            'message': 'Check this out',
+            'media_url': 'https://example.com/image.jpg',
+            'recipients': [
+                {'phone': '0412345678'},
+                {'phone': '0400000000', 'contact_id': 5},
+            ],
+        }
+        serializer = SendMMSSerializer(data=data)
+        assert serializer.is_valid()
+        assert len(serializer.validated_data['recipients']) == 2
 
 
 # ============================================================================

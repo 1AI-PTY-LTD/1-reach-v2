@@ -187,6 +187,8 @@ class WelcorpSMSProvider(SMSProvider):
             'success': False,
             'results': per_recipient,
             'error': result.error,
+            'retryable': result.retryable,
+            'failure_category': result.failure_category,
         }
 
     def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
@@ -200,3 +202,63 @@ class WelcorpSMSProvider(SMSProvider):
             payload['subject'] = subject
 
         return self._post_job(payload)
+
+    def _send_bulk_mms_impl(self, recipients: list[dict]) -> dict:
+        welcorp_recipients = [
+            {
+                'destination': self._to_international(r['to']),
+                'reference': str(i),
+            }
+            for i, r in enumerate(recipients)
+        ]
+
+        # All recipients share the same media and message.
+        media_url = recipients[0]['media_url'] if recipients else ''
+        message = recipients[0]['message'] if recipients else ''
+        subject = recipients[0].get('subject') if recipients else None
+
+        payload: dict = {
+            'job_type': 'mms',
+            'message': message,
+            'files': [{'name': 'media', 'url': media_url}],
+            'recipients': welcorp_recipients,
+        }
+        if subject:
+            payload['subject'] = subject
+
+        result = self._post_job(payload)
+
+        if result.success:
+            per_recipient = [
+                {
+                    'to': r['to'],
+                    'message_parts': 1,
+                    'success': True,
+                    'message_id': result.message_id,
+                    'error': None,
+                }
+                for r in recipients
+            ]
+            return {
+                'success': True,
+                'results': per_recipient,
+                'error': None,
+            }
+
+        per_recipient = [
+            {
+                'to': r['to'],
+                'message_parts': 1,
+                'success': False,
+                'message_id': None,
+                'error': result.error,
+            }
+            for r in recipients
+        ]
+        return {
+            'success': False,
+            'results': per_recipient,
+            'error': result.error,
+            'retryable': result.retryable,
+            'failure_category': result.failure_category,
+        }

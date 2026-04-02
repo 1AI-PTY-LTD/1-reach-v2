@@ -28,7 +28,7 @@ test.beforeAll(async ({ browser }) => {
 
   const results = await Promise.all(
     SCHEDULES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
-      message: s.message, recipient: s.phone, contact_id: contact.id,
+      message: s.message, recipients: [{ phone: s.phone, contact_id: contact.id }],
     }))
   )
   results.forEach(r => scheduleIds.push(r.schedule_id))

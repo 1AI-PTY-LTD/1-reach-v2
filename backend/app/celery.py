@@ -25,7 +25,7 @@ import django
 from celery import Celery, shared_task
 from django.conf import settings
 from django.db import OperationalError, transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 app = Celery('reach')
@@ -255,6 +255,182 @@ def send_message(self, schedule_id: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Batch send task (group sends / multi-recipient sends)
+# ---------------------------------------------------------------------------
+
+@shared_task(
+    bind=True,
+    name='app.celery.send_batch_message',
+    queue='messages',
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def send_batch_message(self, parent_schedule_id: int) -> dict:
+    """Send a batch of messages via a single provider API call.
+
+    Used for group sends and multi-recipient sends. All children share the
+    same Welcorp job. On failure the whole batch is retried or failed together.
+    """
+    # Acquire lock on parent schedule
+    try:
+        with transaction.atomic():
+            parent = Schedule.objects.select_for_update(nowait=True).get(
+                pk=parent_schedule_id,
+                status__in=[ScheduleStatus.QUEUED, ScheduleStatus.RETRYING],
+            )
+            parent.status = ScheduleStatus.PROCESSING
+            parent.save(update_fields=['status', 'updated_at'])
+    except Schedule.DoesNotExist:
+        logger.warning(
+            'send_batch_message: parent %d not found or wrong status — skipping',
+            parent_schedule_id,
+        )
+        return {'skipped': True, 'reason': 'not_found_or_wrong_status'}
+    except OperationalError:
+        logger.warning(
+            'send_batch_message: parent %d locked by another worker — discarding',
+            parent_schedule_id,
+        )
+        return {'skipped': True, 'reason': 'concurrent_lock'}
+
+    # Load children that need sending (PENDING from scheduled creates, QUEUED/RETRYING from dispatch)
+    children = list(
+        Schedule.objects.filter(parent=parent)
+        .filter(status__in=[ScheduleStatus.PENDING, ScheduleStatus.QUEUED, ScheduleStatus.RETRYING])
+        .order_by('pk')
+    )
+
+    if not children:
+        parent.status = ScheduleStatus.SENT
+        parent.save(update_fields=['status', 'updated_at'])
+        logger.info('send_batch_message: parent %d has no pending children', parent_schedule_id)
+        return {'parent_id': parent_schedule_id, 'no_children': True}
+
+    # Mark children as PROCESSING
+    child_pks = [c.pk for c in children]
+    Schedule.objects.filter(pk__in=child_pks).update(status=ScheduleStatus.PROCESSING)
+
+    # Build recipients and call provider
+    provider = get_sms_provider()
+    recipients = [
+        {'to': child.phone, 'message': child.text or '', 'message_parts': child.message_parts}
+        for child in children
+    ]
+    if parent.format == MessageFormat.MMS:
+        for i, child in enumerate(children):
+            recipients[i]['media_url'] = child.media_url or ''
+            recipients[i]['subject'] = child.subject
+            recipients[i]['message_parts'] = 1
+        result = provider.send_bulk_mms(recipients)
+    else:
+        result = provider.send_bulk_sms(recipients)
+
+    if result['success']:
+        _handle_batch_success(parent, children, result)
+        return {'parent_id': parent_schedule_id, 'success': True, 'sent': len(children)}
+
+    _handle_batch_failure(parent, children, result)
+    return {'parent_id': parent_schedule_id, 'success': False, 'error': result.get('error')}
+
+
+def _handle_batch_success(parent: Schedule, children: list[Schedule], result: dict) -> None:
+    """Mark all children as SENT and record billing."""
+    now = timezone.now()
+    org = parent.organisation
+    per_recipient = result.get('results', [])
+
+    for i, child in enumerate(children):
+        child_result = per_recipient[i] if i < len(per_recipient) else {}
+        with transaction.atomic():
+            child.status = ScheduleStatus.SENT
+            child.sent_time = now
+            child.provider_message_id = child_result.get('message_id')
+            child.error = None
+            child.failure_category = None
+            child.save(update_fields=[
+                'status', 'sent_time', 'provider_message_id',
+                'error', 'failure_category', 'updated_at',
+            ])
+
+            if org.billing_mode == org.BILLING_SUBSCRIBED:
+                record_usage(
+                    org,
+                    units=child.message_parts,
+                    format=child.format or 'sms',
+                    description=f'{(child.format or "sms").upper()} to {child.phone}',
+                    user=None,
+                    schedule=child,
+                )
+
+    parent.status = ScheduleStatus.SENT
+    parent.sent_time = now
+    parent.save(update_fields=['status', 'sent_time', 'updated_at'])
+
+    logger.info(
+        'Batch send succeeded: parent %d, %d children sent',
+        parent.pk, len(children),
+    )
+
+
+def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: dict) -> None:
+    """Handle batch send failure — retry or mark permanently failed."""
+    error = result.get('error', 'Batch send failed')
+    is_retryable = result.get('retryable', True)
+    failure_category = result.get('failure_category')
+
+    if not failure_category:
+        fc, is_retryable = classify_failure(None, None, error)
+        failure_category = fc.value
+
+    can_retry = is_retryable and parent.retry_count < parent.max_retries
+
+    if can_retry:
+        # Reset children to QUEUED so the retry picks them up
+        child_pks = [c.pk for c in children]
+        Schedule.objects.filter(pk__in=child_pks).update(status=ScheduleStatus.QUEUED)
+
+        delay = _compute_backoff_delay(parent.retry_count)
+        next_retry_at = timezone.now() + timedelta(seconds=delay)
+
+        with transaction.atomic():
+            parent.status = ScheduleStatus.RETRYING
+            parent.retry_count += 1
+            parent.next_retry_at = next_retry_at
+            parent.failure_category = failure_category
+            parent.error = error
+            parent.save(update_fields=[
+                'status', 'retry_count', 'next_retry_at',
+                'failure_category', 'error', 'updated_at',
+            ])
+
+        send_batch_message.apply_async(args=[parent.pk], countdown=delay)
+        logger.info(
+            'Scheduled batch retry %d/%d for parent %d in %ds (%s)',
+            parent.retry_count, parent.max_retries, parent.pk, delay, failure_category,
+        )
+    else:
+        # Permanently fail all children and refund credits
+        org = parent.organisation
+        for child in children:
+            with transaction.atomic():
+                child.status = ScheduleStatus.FAILED
+                child.failure_category = failure_category
+                child.error = error
+                child.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+                refund_usage(org, child)
+
+        parent.status = ScheduleStatus.FAILED
+        parent.failure_category = failure_category
+        parent.error = error
+        parent.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+
+        logger.warning(
+            'Batch send permanently failed: parent %d (%s): %s',
+            parent.pk, failure_category, error,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Beat task: dispatch due PENDING schedules
 # ---------------------------------------------------------------------------
 
@@ -271,38 +447,55 @@ def dispatch_due_messages() -> dict:
     processing_timeout = getattr(settings, 'MESSAGE_PROCESSING_TIMEOUT_MINUTES', 10)
     stale_cutoff = now - timedelta(minutes=processing_timeout)
 
-    # Gap 3: Recover stale PROCESSING schedules (worker crashed between PROCESSING and completion).
+    # Recover stale PROCESSING schedules (worker crashed between PROCESSING and completion).
     # acks_late + reject_on_worker_lost re-queues the Celery message, but send_message rejects
     # PROCESSING status → schedule stuck. Reset to QUEUED so the re-queued task can proceed.
-    stale_pks = list(
-        Schedule.objects
-        .filter(status=ScheduleStatus.PROCESSING, updated_at__lte=stale_cutoff)
+    #
+    # Three types of stale schedules:
+    #   1. Individual sends (parent=None, no children) → reset + send_message
+    #   2. Batch parents (has children) → reset + send_batch_message
+    #   3. Batch children (parent set) → reset only (parent task handles them)
+    has_children = Schedule.objects.filter(parent_id=OuterRef('pk'))
+    stale_qs = Schedule.objects.filter(
+        status=ScheduleStatus.PROCESSING, updated_at__lte=stale_cutoff,
+    )
+    stale_individual_pks = list(
+        stale_qs.filter(parent__isnull=True)
+        .exclude(Exists(has_children))
         .values_list('pk', flat=True)
     )
-    if stale_pks:
-        Schedule.objects.filter(pk__in=stale_pks).update(status=ScheduleStatus.QUEUED)
-        for pk in stale_pks:
+    stale_parent_pks = list(
+        stale_qs.filter(parent__isnull=True)
+        .filter(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    stale_child_pks = list(
+        stale_qs.filter(parent__isnull=False)
+        .values_list('pk', flat=True)
+    )
+
+    all_stale = stale_individual_pks + stale_parent_pks + stale_child_pks
+    if all_stale:
+        Schedule.objects.filter(pk__in=all_stale).update(status=ScheduleStatus.QUEUED)
+        for pk in stale_individual_pks:
             send_message.delay(pk)
-        logger.warning('dispatch_due_messages: reset %d stale PROCESSING schedules', len(stale_pks))
+        for pk in stale_parent_pks:
+            send_batch_message.delay(pk)
+        # stale children: just reset, parent batch task will pick them up
+        logger.warning('dispatch_due_messages: reset %d stale PROCESSING schedules', len(all_stale))
 
     with transaction.atomic():
-        # Leaf schedules are either:
-        #   - group children (parent set, group set), or
-        #   - individual schedules (parent=None, group=None)
-        # Group parents (parent=None, group set) are containers only — never sent directly.
-        #
-        # Gap 2: Also pick up overdue RETRYING schedules. Worker may crash after marking a
-        # schedule RETRYING + setting next_retry_at but before calling apply_async (which is
-        # outside the transaction). The beat task is the safety net that recovers these.
+        # Dispatch two types of schedules:
+        #   1. Individual sends (parent=None, no parent) — dispatched via send_message
+        #   2. Batch parents (parent=None, has children) — dispatched via send_batch_message
+        # Children (parent set) are NOT dispatched directly — handled by parent's batch task.
         due = list(
             Schedule.objects.select_for_update(skip_locked=True)
             .filter(
                 Q(status=ScheduleStatus.PENDING, scheduled_time__lte=now) |
                 Q(status=ScheduleStatus.RETRYING, next_retry_at__lte=now),
             )
-            .exclude(
-                parent__isnull=True, group__isnull=False,  # exclude group-parent containers
-            )
+            .exclude(parent__isnull=False)  # exclude children
             .values_list('pk', flat=True)[:batch_size]
         )
 
@@ -313,18 +506,18 @@ def dispatch_due_messages() -> dict:
             status=ScheduleStatus.QUEUED,
         )
 
-        # Update parent statuses for dispatched group children
-        parent_ids = set(
-            Schedule.objects.filter(pk__in=due, parent__isnull=False)
-            .values_list('parent_id', flat=True)
-        )
-        if parent_ids:
-            Schedule.objects.filter(
-                pk__in=parent_ids, status=ScheduleStatus.PENDING
-            ).update(status=ScheduleStatus.PROCESSING)
+    # Determine which are batch parents (have children) vs individual sends
+    batch_parent_pks = set(
+        Schedule.objects.filter(pk__in=due)
+        .filter(Exists(Schedule.objects.filter(parent_id=OuterRef('pk'))))
+        .values_list('pk', flat=True)
+    )
 
     for schedule_id in due:
-        send_message.delay(schedule_id)
+        if schedule_id in batch_parent_pks:
+            send_batch_message.delay(schedule_id)
+        else:
+            send_message.delay(schedule_id)
 
     logger.info('dispatch_due_messages: dispatched %d schedules', len(due))
     return {'dispatched': len(due)}

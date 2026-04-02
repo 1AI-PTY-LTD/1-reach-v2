@@ -239,16 +239,22 @@ class ConfigSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'value']
 
 
+class RecipientSerializer(serializers.Serializer):
+    phone = serializers.CharField()
+    contact_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+
+    def validate_phone(self, value):
+        return validate_phone_number(value)
+
+
 class SendSMSSerializer(serializers.Serializer):
     message = serializers.CharField(min_length=1, max_length=306)
-    recipient = serializers.CharField()
-    contact_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    recipients = serializers.ListField(
+        child=RecipientSerializer(), min_length=1, max_length=500,
+    )
 
     def validate_message(self, value):
         return validate_sms_message(value)
-
-    def validate_recipient(self, value):
-        return validate_phone_number(value)
 
 
 class SendGroupSMSSerializer(serializers.Serializer):
@@ -262,15 +268,13 @@ class SendGroupSMSSerializer(serializers.Serializer):
 class SendMMSSerializer(serializers.Serializer):
     message = serializers.CharField(max_length=306, allow_blank=True)
     media_url = serializers.URLField()
-    recipient = serializers.CharField()
-    contact_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    recipients = serializers.ListField(
+        child=RecipientSerializer(), min_length=1, max_length=500,
+    )
     subject = serializers.CharField(max_length=64, required=False, allow_blank=True, allow_null=True)
 
     def validate_message(self, value):
         return validate_sms_message(value, allow_empty=True)
-
-    def validate_recipient(self, value):
-        return validate_phone_number(value)
 
     def validate_subject(self, value):
         if value:
