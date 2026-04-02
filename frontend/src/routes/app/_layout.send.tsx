@@ -183,10 +183,7 @@ function SendContent() {
 
   const validateAndBuildMessage = (formValues: { templateId: string; text: string; recipient: Contact | undefined | null }) => {
     if (!formValues.templateId && !formValues.text.trim() && !uploadedFileUrl) {
-      const errorMsg = import.meta.env.VITE_ENABLE_MMS === 'true'
-        ? 'Please select a template, enter a custom message, or upload an image'
-        : 'Please select a template or enter a custom message'
-      setErrorMessage(errorMsg)
+      setErrorMessage('Please select a template, enter a custom message, or upload an image')
       return null
     }
 
@@ -550,30 +547,28 @@ function SendContent() {
               )}
             />
 
-            {import.meta.env.VITE_ENABLE_MMS === 'true' && (
-              <Field>
-                <Label className="block mb-2">Image Upload (Optional)</Label>
-                <FileUpload
-                  key={fileUploadKey}
-                  onFileSelect={handleFileSelect}
-                  onFileRemove={handleFileRemove}
-                  accept=".png,.jpg,.jpeg,.gif"
-                  disabled={uploadingFile}
-                  maxSize={400 * 1024}
-                />
-                {uploadingFile && (
-                  <div className="mt-2 flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-                    Uploading image...
-                  </div>
-                )}
-                {uploadError && (
-                  <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
-                    <div className="text-sm text-red-600 dark:text-red-400">Upload failed: {uploadError}</div>
-                  </div>
-                )}
-              </Field>
-            )}
+            <Field>
+              <Label className="block mb-2">Image Upload (Optional)</Label>
+              <FileUpload
+                key={fileUploadKey}
+                onFileSelect={handleFileSelect}
+                onFileRemove={handleFileRemove}
+                accept=".png,.jpg,.jpeg,.gif"
+                disabled={uploadingFile}
+                maxSize={400 * 1024}
+              />
+              {uploadingFile && (
+                <div className="mt-2 flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+                  Uploading image...
+                </div>
+              )}
+              {uploadError && (
+                <div className="mt-2 p-2 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <div className="text-sm text-red-600 dark:text-red-400">Upload failed: {uploadError}</div>
+                </div>
+              )}
+            </Field>
 
             <div className="text-sm text-zinc-500 mt-4 text-right">
               <form.Subscribe
