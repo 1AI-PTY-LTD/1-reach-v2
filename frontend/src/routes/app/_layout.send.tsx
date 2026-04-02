@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   Field,
   FieldGroup,
@@ -319,7 +319,7 @@ function SendContent() {
         setLastActionWasSchedule(false)
         setSummaryCounts({ total, success: total, error: 0, errors: [] })
         setSummaryOpen(true)
-        toast.success(`${total} message${total !== 1 ? 's' : ''} sent`)
+        toast.success(`${total} message${total !== 1 ? 's' : ''} queued`)
       } catch (error) {
         const errorMsg = extractErrorMessage(error)
         toast.error(errorMsg)
@@ -671,15 +671,15 @@ function SendContent() {
       </Fieldset>
       {summaryOpen && (
         <Dialog open={summaryOpen} onClose={setSummaryOpen} size="sm">
-          <DialogTitle>{lastActionWasSchedule ? 'Schedule summary' : 'Send summary'}</DialogTitle>
+          <DialogTitle>{lastActionWasSchedule ? 'Schedule summary' : 'Messages queued'}</DialogTitle>
           <DialogBody>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
+              <div className="flex justify-between text-zinc-950 dark:text-white">
                 <span>Total recipients</span>
                 <span>{summaryCounts.total}</span>
               </div>
               <div className="flex justify-between text-brand-green">
-                <span>{lastActionWasSchedule ? 'Scheduled' : 'Successful'}</span>
+                <span>{lastActionWasSchedule ? 'Scheduled' : 'Queued'}</span>
                 <span>{summaryCounts.success}</span>
               </div>
               <div className="flex justify-between text-red-700 dark:text-red-400">
@@ -698,6 +698,14 @@ function SendContent() {
                   </div>
                 </div>
               )}
+              <div className="mt-4 pt-2 border-t border-zinc-200 dark:border-zinc-700">
+                <p className="text-zinc-500 dark:text-zinc-400">
+                  View delivery status on the{' '}
+                  <Link to="/app/schedule" className="text-brand-purple underline" onClick={() => setSummaryOpen(false)}>
+                    Schedule page
+                  </Link>
+                </p>
+              </div>
             </div>
           </DialogBody>
           <DialogActions>
