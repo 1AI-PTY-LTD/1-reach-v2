@@ -8,13 +8,13 @@ Endpoint: POST /jobs with job_type "sms" or "mms"
 Implemented:
 - Delivery status callbacks (callback_url + callback_on_sms_status_update)
 - Carrier failure detection via callbacks (FAIL, INVN, BARR, OPTO, etc. → FAILED + refund)
-- Note: Welcorp has no handset delivery confirmation — SENT means carrier accepted only
+- Job status polling (GET /jobs/{job_id}) as reconciliation fallback
+- Welcorp SENT = carrier accepted (best available confirmation) → mapped to DELIVERED
 
 Future features to implement:
-- 2-way SMS (replies via callback)
-- Custom sender ID (manual_sender_id)
 - Merge fields for personalised message content per recipient
-- Job status polling (GET /jobs/{job_id}) as reconciliation fallback
+- Custom sender ID (manual_sender_id)
+- 2-way SMS (replies via callback)
 """
 
 import logging
@@ -200,10 +200,11 @@ class WelcorpSMSProvider(SMSProvider):
 
     # --- Delivery callback interface ---
 
-    # Welcorp SENT = carrier acknowledged receipt (NOT handset delivery).
-    # We skip this — our schedule is already SENT from the initial API response.
-    # There is no handset delivery confirmation in the Welcorp API.
-    _CARRIER_ACCEPTED_STATUSES = {'SENT'}
+    # Welcorp SENT = carrier acknowledged receipt. This is the best delivery
+    # confirmation Welcorp provides (no handset-level delivery status exists).
+    # We map it to 'delivered' so the schedule transitions SENT → DELIVERED,
+    # preventing reconcile_stale_sent from re-polling completed jobs.
+    _DELIVERED_STATUSES = {'SENT'}
 
     # Non-terminal statuses to ignore (message still in transit).
     _PENDING_STATUSES = {'QUED'}
@@ -217,9 +218,8 @@ class WelcorpSMSProvider(SMSProvider):
         Welcorp POSTs application/x-www-form-urlencoded with fields:
         BroadcastID, Destination, Status, Timestamp, Reference, Recipient, BroadcastName.
 
-        Welcorp's SENT status means "carrier accepted" (not handset delivery),
-        so we skip it — the schedule is already SENT from the initial API call.
-        The real value of callbacks is catching carrier-level failures.
+        Welcorp's SENT = carrier accepted (best confirmation available).
+        Mapped to 'delivered' so schedules move to terminal DELIVERED status.
         """
         # request_data values may be lists (from Django QueryDict) or plain strings
         def _val(key: str) -> str:
@@ -228,11 +228,21 @@ class WelcorpSMSProvider(SMSProvider):
 
         raw_status = _val('Status').upper()
 
-        if raw_status in self._PENDING_STATUSES or raw_status in self._CARRIER_ACCEPTED_STATUSES:
+        if raw_status in self._PENDING_STATUSES:
             return []
 
         destination = _val('Destination')
         recipient_phone = self._normalise_phone(destination) if destination else None
+
+        if raw_status in self._DELIVERED_STATUSES:
+            return [DeliveryEvent(
+                provider_message_id=_val('BroadcastID'),
+                status='delivered',
+                recipient_phone=recipient_phone,
+                timestamp=_val('Timestamp') or None,
+                raw_status=raw_status,
+                raw_data=dict(request_data),
+            )]
 
         return [DeliveryEvent(
             provider_message_id=_val('BroadcastID'),
@@ -260,6 +270,69 @@ class WelcorpSMSProvider(SMSProvider):
         if not base_url or not secret:
             return None
         return f'{base_url.rstrip("/")}/api/webhooks/sms-delivery/?token={secret}'
+
+    def poll_job_status(self, provider_message_id: str) -> list[DeliveryEvent]:
+        """Poll Welcorp GET /jobs/{job_id} for delivery reports.
+
+        Only processes reports with stage=Confirmed (carrier has responded).
+        Maps SENT → delivered, failure codes → failed. Skips QUED (pending).
+        """
+        url = urljoin(self.base_url.rstrip('/') + '/', f'jobs/{provider_message_id}')
+
+        try:
+            response = self.session.get(url, timeout=30)
+        except requests.RequestException as exc:
+            logger.warning('Welcorp poll failed for job %s: %s', provider_message_id, exc)
+            return []
+
+        try:
+            data = response.json()
+        except ValueError:
+            logger.warning('Welcorp poll returned non-JSON for job %s (HTTP %s)', provider_message_id, response.status_code)
+            return []
+
+        if data.get('status') != 200:
+            logger.warning('Welcorp poll error for job %s: %s', provider_message_id, data.get('errors', 'unknown'))
+            return []
+
+        reports = data.get('data', {}).get('reports', [])
+        events = []
+
+        for report in reports:
+            stage = (report.get('stage') or '').lower()
+            if stage != 'confirmed':
+                continue
+
+            raw_status = (report.get('status') or '').upper()
+
+            if raw_status in self._PENDING_STATUSES:
+                continue
+
+            destination = report.get('destination', '')
+            recipient_phone = self._normalise_phone(destination) if destination else None
+
+            if raw_status in self._DELIVERED_STATUSES:
+                events.append(DeliveryEvent(
+                    provider_message_id=provider_message_id,
+                    status='delivered',
+                    recipient_phone=recipient_phone,
+                    timestamp=report.get('send_date_time'),
+                    raw_status=raw_status,
+                    raw_data=report,
+                ))
+            else:
+                events.append(DeliveryEvent(
+                    provider_message_id=provider_message_id,
+                    status='failed',
+                    recipient_phone=recipient_phone,
+                    timestamp=report.get('send_date_time'),
+                    error_code=raw_status,
+                    error_message=f'Welcorp delivery failed: {raw_status}',
+                    raw_status=raw_status,
+                    raw_data=report,
+                ))
+
+        return events
 
     def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
         payload = {

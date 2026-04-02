@@ -680,14 +680,45 @@ def process_delivery_event(event_data: dict) -> dict:
 
 @shared_task(name='app.celery.reconcile_stale_sent')
 def reconcile_stale_sent() -> dict:
-    """Log warning for SENT schedules that haven't received delivery callbacks."""
+    """Poll provider for delivery status of schedules stuck in SENT.
+
+    Finds schedules that have been SENT for >24h without a delivery callback,
+    polls the provider for their status, and dispatches any failure events
+    through the normal process_delivery_event pipeline.
+    """
     cutoff = timezone.now() - timedelta(hours=24)
-    stale = Schedule.objects.filter(
-        status=ScheduleStatus.SENT,
-        sent_time__lte=cutoff,
-    ).count()
 
-    if stale:
-        logger.warning('reconcile_stale_sent: %d schedules still SENT after 24h', stale)
+    # Get distinct job IDs from stale non-child schedules (one job = one API call)
+    stale_ids = list(
+        Schedule.objects.filter(
+            status=ScheduleStatus.SENT,
+            sent_time__lte=cutoff,
+            provider_message_id__isnull=False,
+        )
+        .exclude(parent__isnull=False)
+        .values_list('provider_message_id', flat=True)
+        .distinct()[:50]
+    )
 
-    return {'stale_count': stale}
+    if not stale_ids:
+        return {'polled': 0, 'events': 0}
+
+    provider = get_sms_provider()
+    total_events = 0
+
+    for job_id in stale_ids:
+        try:
+            events = provider.poll_job_status(job_id)
+        except NotImplementedError:
+            logger.info('Provider does not support polling, skipping reconciliation')
+            return {'polled': 0, 'events': 0, 'reason': 'not_supported'}
+        except Exception:
+            logger.exception('Failed to poll job %s', job_id)
+            continue
+
+        for event in events:
+            process_delivery_event.delay(event.__dict__)
+            total_events += 1
+
+    logger.info('reconcile_stale_sent: polled %d jobs, dispatched %d events', len(stale_ids), total_events)
+    return {'polled': len(stale_ids), 'events': total_events}

@@ -16,7 +16,7 @@ Tests:
 
 from datetime import timedelta
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from django.utils import timezone
@@ -225,21 +225,96 @@ class TestProcessDeliveryEventBatchSend:
 
 @pytest.mark.django_db
 class TestReconcileStaleSent:
-    """Tests for the reconcile_stale_sent beat task."""
+    """Tests for the reconcile_stale_sent beat task (polls provider for status)."""
 
-    def test_logs_stale_schedules(self, schedule_sent):
+    def test_stale_schedule_triggers_poll(self, schedule_sent):
         from app.celery import reconcile_stale_sent
+        from app.utils.sms import DeliveryEvent
 
-        # Backdate sent_time to >24h ago
         schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
         schedule_sent.save()
 
-        result = reconcile_stale_sent()
-        assert result['stale_count'] == 1
+        mock_event = DeliveryEvent(
+            provider_message_id=schedule_sent.provider_message_id,
+            status='failed',
+            recipient_phone=schedule_sent.phone,
+            error_code='EXPD',
+            error_message='Welcorp delivery failed: EXPD',
+            raw_status='EXPD',
+        )
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event') as mock_task:
+            provider = Mock()
+            provider.poll_job_status.return_value = [mock_event]
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        assert result['events'] == 1
+        mock_task.delay.assert_called_once()
 
     def test_no_stale_schedules(self, schedule_sent):
         from app.celery import reconcile_stale_sent
 
         # Recently sent — not stale
-        result = reconcile_stale_sent()
-        assert result['stale_count'] == 0
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_provider_without_polling_skips(self, schedule_sent):
+        from app.celery import reconcile_stale_sent
+
+        schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = Mock()
+            provider.poll_job_status.side_effect = NotImplementedError
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['reason'] == 'not_supported'
+
+    def test_api_error_continues_to_next(self, schedule_sent, organisation, user, contact):
+        from app.celery import reconcile_stale_sent
+
+        # Create two stale schedules with different job IDs
+        schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
+        schedule_sent.save()
+
+        other = Schedule.objects.create(
+            organisation=organisation,
+            contact=contact,
+            phone='0412999999',
+            text='Other message',
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.SENT,
+            format='sms',
+            message_parts=1,
+            provider_message_id='other-job-id',
+            sent_time=timezone.now() - timedelta(hours=25),
+            created_by=user,
+            updated_by=user,
+        )
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event') as mock_task:
+            provider = Mock()
+            # First job errors, second succeeds with no events
+            provider.poll_job_status.side_effect = [
+                Exception('API error'),
+                [],
+            ]
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        # Should have polled both despite first failing
+        assert result['polled'] == 2
+        assert result['events'] == 0
+        assert provider.poll_job_status.call_count == 2

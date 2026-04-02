@@ -27,3 +27,7 @@ class TestSMSProviderCallbackDefaults:
 
     def test_get_callback_url_returns_none(self):
         assert self.provider.get_callback_url() is None
+
+    def test_poll_job_status_raises(self):
+        with pytest.raises(NotImplementedError, match='MockSMSProvider'):
+            self.provider.poll_job_status('some-job-id')

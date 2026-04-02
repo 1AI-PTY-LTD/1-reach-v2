@@ -275,6 +275,19 @@ class SMSProvider(ABC):
         the provider does not support delivery callbacks."""
         return None
 
+    def poll_job_status(self, provider_message_id: str) -> list[DeliveryEvent]:
+        """Poll the provider for delivery status of a previously sent message.
+
+        Returns DeliveryEvent objects for any recipients whose status has
+        changed to a terminal state. Used as a fallback when delivery
+        callbacks are not received.
+
+        Default: raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f'{type(self).__name__} does not implement job status polling'
+        )
+
 
 class MockSMSProvider(SMSProvider):
     """Mock SMS provider for development and testing.
