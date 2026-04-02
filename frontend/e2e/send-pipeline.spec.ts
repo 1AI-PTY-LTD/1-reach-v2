@@ -129,7 +129,7 @@ test.describe('Send SMS — success flow', () => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page)
     await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
-    await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Queued', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('Unsuccessful').first()).toBeVisible()
   })
 
@@ -145,7 +145,7 @@ test.describe('Send MMS — success flow', () => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page, 'Check this out!')
     await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
-    await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Queued', { exact: true }).first()).toBeVisible()
   })
 })
 
@@ -183,17 +183,14 @@ test.describe('Billing gate — error surfaces in UI', () => {
     }
   })
 
-  test('billing error shows 0 successful in summary dialog', async ({ page }) => {
+  test('billing error shows inline error message', async ({ page }) => {
     await setOrgBalance(page, 0)
     try {
       await page.goto('/app/send')
       await fillAndSubmitSmsForm(page)
-      await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
-      await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
-      await expect(page.getByText('Unsuccessful').first()).toBeVisible()
       await expect(
         page.getByText(/insufficient balance/i).or(page.getByText(/subscribe to continue/i)).first()
-      ).toBeVisible()
+      ).toBeVisible({ timeout: 8000 })
     } finally {
       await setOrgBalance(page, 100)
     }

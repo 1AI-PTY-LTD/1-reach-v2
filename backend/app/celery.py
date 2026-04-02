@@ -11,6 +11,14 @@ send_message(schedule_id)
 dispatch_due_messages()
     Beat task (every 60s). Finds PENDING leaf schedules whose scheduled_time <= now()
     and queues them for sending.
+
+process_delivery_event(event_data)
+    Processes a delivery status callback from the SMS provider. Updates schedule
+    status to DELIVERED or FAILED based on provider-reported delivery outcome.
+
+reconcile_stale_sent()
+    Beat task. Logs warnings for schedules stuck in SENT status for >24h without
+    a delivery callback.
 """
 
 import logging
@@ -27,6 +35,7 @@ from django.conf import settings
 from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 app = Celery('reach')
 app.config_from_object('django.conf:settings', namespace='CELERY')
@@ -174,6 +183,10 @@ def _sync_parent_status(schedule: Schedule) -> None:
             new_status = ScheduleStatus.CANCELLED
         elif ScheduleStatus.FAILED in children_statuses:
             new_status = ScheduleStatus.FAILED
+        elif children_statuses <= {ScheduleStatus.DELIVERED}:
+            new_status = ScheduleStatus.DELIVERED
+        elif children_statuses <= {ScheduleStatus.DELIVERED, ScheduleStatus.CANCELLED}:
+            new_status = ScheduleStatus.DELIVERED
         else:
             new_status = ScheduleStatus.SENT
     else:
@@ -555,3 +568,126 @@ def dispatch_due_messages() -> dict:
 
     logger.info('dispatch_due_messages: dispatched %d schedules', len(due))
     return {'dispatched': len(due)}
+
+
+# ---------------------------------------------------------------------------
+# Delivery callback processing
+# ---------------------------------------------------------------------------
+
+def _find_schedule(provider_message_id: str, recipient_phone: str | None) -> Schedule | None:
+    """Find a schedule matching a delivery callback event.
+
+    For batch sends, children share the same provider_message_id (Welcorp job_id)
+    so we additionally match on phone number. For single sends, provider_message_id
+    alone is sufficient.
+    """
+    qs = Schedule.objects.filter(
+        provider_message_id=provider_message_id,
+        status=ScheduleStatus.SENT,
+    )
+
+    if recipient_phone:
+        # Try exact phone match first (batch child or single send with phone)
+        match = qs.filter(phone=recipient_phone).first()
+        if match:
+            return match
+
+    # Fallback: single send (no children)
+    return qs.filter(parent__isnull=True).first()
+
+
+def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
+    """Transition a SENT schedule to DELIVERED."""
+    timestamp = event_data.get('timestamp')
+    if timestamp:
+        try:
+            delivered_time = parse_datetime(timestamp) or timezone.now()
+        except (ValueError, TypeError):
+            delivered_time = timezone.now()
+    else:
+        delivered_time = timezone.now()
+
+    schedule.status = ScheduleStatus.DELIVERED
+    schedule.delivered_time = delivered_time
+    schedule.save(update_fields=['status', 'delivered_time', 'updated_at'])
+
+    logger.info('Schedule %d delivered at %s', schedule.pk, delivered_time)
+    _sync_parent_status(schedule)
+
+
+def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
+    """Transition a SENT schedule to FAILED based on a delivery callback."""
+    error_code = event_data.get('error_code')
+    error_message = event_data.get('error_message', '')
+
+    failure_category_obj, _is_retryable = classify_failure(error_code, None, error_message)
+    failure_category = failure_category_obj.value
+
+    org = schedule.organisation
+    with transaction.atomic():
+        schedule.status = ScheduleStatus.FAILED
+        schedule.failure_category = failure_category
+        schedule.error = error_message
+        schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+        refund_usage(org, schedule)
+
+    logger.warning(
+        'Schedule %d delivery failed (%s): %s',
+        schedule.pk, failure_category, error_message,
+    )
+    _sync_parent_status(schedule)
+
+
+@shared_task(name='app.celery.process_delivery_event', queue='messages', acks_late=True)
+def process_delivery_event(event_data: dict) -> dict:
+    """Process a delivery status callback from the SMS provider.
+
+    Looks up the schedule by provider_message_id (and phone for batch sends),
+    then transitions it to DELIVERED or FAILED.
+
+    Idempotent: only processes schedules in SENT status.
+    """
+    provider_message_id = event_data.get('provider_message_id')
+    recipient_phone = event_data.get('recipient_phone')
+    delivery_status = event_data.get('status')
+
+    if not provider_message_id:
+        logger.warning('process_delivery_event: missing provider_message_id')
+        return {'skipped': True, 'reason': 'missing provider_message_id'}
+
+    schedule = _find_schedule(provider_message_id, recipient_phone)
+    if not schedule:
+        logger.info(
+            'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
+            provider_message_id, recipient_phone,
+        )
+        return {'skipped': True, 'reason': 'schedule_not_found'}
+
+    if delivery_status == 'delivered':
+        _handle_delivery_success(schedule, event_data)
+    elif delivery_status == 'failed':
+        _handle_delivery_failure(schedule, event_data)
+    else:
+        logger.warning('process_delivery_event: unknown status %r', delivery_status)
+        return {'skipped': True, 'reason': f'unknown_status:{delivery_status}'}
+
+    return {'schedule_id': schedule.pk, 'status': delivery_status}
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation
+# ---------------------------------------------------------------------------
+
+@shared_task(name='app.celery.reconcile_stale_sent')
+def reconcile_stale_sent() -> dict:
+    """Log warning for SENT schedules that haven't received delivery callbacks."""
+    cutoff = timezone.now() - timedelta(hours=24)
+    stale = Schedule.objects.filter(
+        status=ScheduleStatus.SENT,
+        sent_time__lte=cutoff,
+    ).count()
+
+    if stale:
+        logger.warning('reconcile_stale_sent: %d schedules still SENT after 24h', stale)
+
+    return {'stale_count': stale}

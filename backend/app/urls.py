@@ -23,6 +23,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', HealthCheckView.as_view(), name='health'),
     path('api/webhooks/clerk/', ClerkWebhookView.as_view(), name='clerk-webhook'),
+    path('api/webhooks/sms-delivery/', SMSDeliveryWebhookView.as_view(), name='sms-delivery-webhook'),
     path('api/stats/monthly/', StatsView.as_view(), name='stats-monthly'),
     path('api/', include(router.urls)),
 ]

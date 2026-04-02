@@ -255,6 +255,44 @@ def schedule_sent(db, schedule_queued):
 
 
 @pytest.fixture
+def batch_sent_schedules(db, organisation, contacts, user):
+    """A batch parent + 3 children, all SENT with the same provider_message_id."""
+    parent = Schedule.objects.create(
+        organisation=organisation,
+        name='Batch Campaign',
+        text='Hello batch',
+        scheduled_time=timezone.now(),
+        status=ScheduleStatus.SENT,
+        format=MessageFormat.SMS,
+        message_parts=1,
+        provider_message_id='welcorp-job-999',
+        sent_time=timezone.now(),
+        created_by=user,
+        updated_by=user,
+    )
+    children = []
+    phones = ['0412111111', '0412222222', '0412333333']
+    for i, contact in enumerate(contacts[:3]):
+        child = Schedule.objects.create(
+            organisation=organisation,
+            parent=parent,
+            contact=contact,
+            phone=phones[i],
+            text='Hello batch',
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.SENT,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            provider_message_id='welcorp-job-999',
+            sent_time=timezone.now(),
+            created_by=user,
+            updated_by=user,
+        )
+        children.append(child)
+    return parent, children
+
+
+@pytest.fixture
 def schedule_queued_at_max_retries(db, schedule_queued):
     """A RETRYING schedule that has hit max_retries."""
     schedule_queued.status = ScheduleStatus.RETRYING

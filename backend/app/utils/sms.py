@@ -3,7 +3,7 @@ import math
 import re
 import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, cast
 
 from django.conf import settings
@@ -30,6 +30,23 @@ class SendResult:
     failure_category: str | None = None
 
 
+@dataclass
+class DeliveryEvent:
+    """Provider-agnostic delivery status event.
+
+    Returned by SMSProvider.parse_delivery_callback() and consumed by the
+    process_delivery_event Celery task to update Schedule status.
+    """
+    provider_message_id: str
+    status: str                          # 'delivered' or 'failed'
+    recipient_phone: str | None = None   # normalised 04XXXXXXXX
+    timestamp: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_status: str | None = None        # original provider status code
+    raw_data: dict | None = field(default=None, repr=False)
+
+
 class SMSProvider(ABC):
     """Abstract base class for SMS/MMS providers.
 
@@ -38,6 +55,11 @@ class SMSProvider(ABC):
 
     All public methods (send_sms, send_bulk_sms, send_mms) handle normalisation
     automatically before calling the abstract implementation methods.
+
+    Providers that support delivery callbacks should override:
+    - parse_delivery_callback() to parse provider-specific callback payloads
+    - validate_callback_request() for request authentication
+    - get_callback_url() to return the URL the provider should POST callbacks to
     """
 
     def _validate_phone(self, phone: str) -> bool:
@@ -227,6 +249,31 @@ class SMSProvider(ABC):
             result_dict['retryable'] = first_failure.retryable
             result_dict['failure_category'] = first_failure.failure_category
         return result_dict
+
+    # --- Delivery callback interface ---
+
+    def parse_delivery_callback(self, request_data: dict, content_type: str) -> list[DeliveryEvent]:
+        """Parse a delivery status callback into provider-agnostic DeliveryEvents.
+
+        Providers must override this to handle their specific callback format.
+        Return an empty list for non-terminal statuses that should be ignored.
+        """
+        raise NotImplementedError(
+            f'{type(self).__name__} does not implement delivery callbacks'
+        )
+
+    def validate_callback_request(self, request) -> bool:
+        """Validate that a delivery callback request is authentic.
+
+        Default: returns True (no validation). Providers should override to
+        implement signature verification, token checks, or IP allowlisting.
+        """
+        return True
+
+    def get_callback_url(self) -> str | None:
+        """Return the callback URL to include in send payloads, or None if
+        the provider does not support delivery callbacks."""
+        return None
 
 
 class MockSMSProvider(SMSProvider):

@@ -5,14 +5,16 @@ API docs: https://api.message-service.org/api/v1/
 Auth: Basic (username:password)
 Endpoint: POST /jobs with job_type "sms" or "mms"
 
-Future features to implement:
+Implemented:
 - Delivery status callbacks (callback_url + callback_on_sms_status_update)
-- Job status polling (GET /jobs/{job_id}) for delivery confirmation
+- Carrier failure detection via callbacks (FAIL, INVN, BARR, OPTO, etc. → FAILED + refund)
+- Note: Welcorp has no handset delivery confirmation — SENT means carrier accepted only
+
+Future features to implement:
 - 2-way SMS (replies via callback)
-- Scheduled sends via Welcorp (scheduled_date field)
-- Mobile number validation (POST /validateMobile)
 - Custom sender ID (manual_sender_id)
-- Client verification / 2FA endpoints
+- Merge fields for personalised message content per recipient
+- Job status polling (GET /jobs/{job_id}) as reconciliation fallback
 """
 
 import logging
@@ -23,7 +25,7 @@ import requests
 from django.conf import settings
 
 from app.utils.failure_classifier import classify_failure
-from app.utils.sms import SMSProvider, SendResult
+from app.utils.sms import DeliveryEvent, SMSProvider, SendResult
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,11 @@ class WelcorpSMSProvider(SMSProvider):
 
     def _post_job(self, payload: dict) -> SendResult:
         """POST a job to the Welcorp API and return a normalised SendResult."""
+        callback_url = self.get_callback_url()
+        if callback_url:
+            payload['callback_url'] = callback_url
+            payload['callback_on_sms_status_update'] = True
+
         url = urljoin(self.base_url.rstrip('/') + '/', 'jobs')
 
         try:
@@ -190,6 +197,69 @@ class WelcorpSMSProvider(SMSProvider):
             'retryable': result.retryable,
             'failure_category': result.failure_category,
         }
+
+    # --- Delivery callback interface ---
+
+    # Welcorp SENT = carrier acknowledged receipt (NOT handset delivery).
+    # We skip this — our schedule is already SENT from the initial API response.
+    # There is no handset delivery confirmation in the Welcorp API.
+    _CARRIER_ACCEPTED_STATUSES = {'SENT'}
+
+    # Non-terminal statuses to ignore (message still in transit).
+    _PENDING_STATUSES = {'QUED'}
+
+    # Everything else is a carrier-reported failure:
+    # FAIL, SVRE, BARR, INVN, BADS, EXPD, OPTO, RECE
+
+    def parse_delivery_callback(self, request_data: dict, content_type: str) -> list[DeliveryEvent]:
+        """Parse a Welcorp delivery status callback.
+
+        Welcorp POSTs application/x-www-form-urlencoded with fields:
+        BroadcastID, Destination, Status, Timestamp, Reference, Recipient, BroadcastName.
+
+        Welcorp's SENT status means "carrier accepted" (not handset delivery),
+        so we skip it — the schedule is already SENT from the initial API call.
+        The real value of callbacks is catching carrier-level failures.
+        """
+        # request_data values may be lists (from Django QueryDict) or plain strings
+        def _val(key: str) -> str:
+            v = request_data.get(key, '')
+            return v[0] if isinstance(v, list) else (v or '')
+
+        raw_status = _val('Status').upper()
+
+        if raw_status in self._PENDING_STATUSES or raw_status in self._CARRIER_ACCEPTED_STATUSES:
+            return []
+
+        destination = _val('Destination')
+        recipient_phone = self._normalise_phone(destination) if destination else None
+
+        return [DeliveryEvent(
+            provider_message_id=_val('BroadcastID'),
+            status='failed',
+            recipient_phone=recipient_phone,
+            timestamp=_val('Timestamp') or None,
+            error_code=raw_status,
+            error_message=f'Welcorp delivery failed: {raw_status}',
+            raw_status=raw_status,
+            raw_data=dict(request_data),
+        )]
+
+    def validate_callback_request(self, request) -> bool:
+        """Validate callback using a shared secret token in the URL query string."""
+        expected = getattr(settings, 'WELCORP_CALLBACK_SECRET', '')
+        if not expected:
+            logger.warning('WELCORP_CALLBACK_SECRET not configured, rejecting callback')
+            return False
+        return request.GET.get('token') == expected
+
+    def get_callback_url(self) -> str | None:
+        """Return the delivery callback URL to include in Welcorp job payloads."""
+        base_url = getattr(settings, 'CALLBACK_BASE_URL', '')
+        secret = getattr(settings, 'WELCORP_CALLBACK_SECRET', '')
+        if not base_url or not secret:
+            return None
+        return f'{base_url.rstrip("/")}/api/webhooks/sms-delivery/?token={secret}'
 
     def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
         payload = {

@@ -31,7 +31,8 @@ from app.serializers import *
 from app.utils import clerk
 from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate
 from app.utils.storage import get_storage_provider
-from app.celery import _estimate_parts, send_batch_message as send_batch_message_task, send_message as send_message_task
+from app.celery import _estimate_parts, process_delivery_event, send_batch_message as send_batch_message_task, send_message as send_message_task
+from app.utils.sms import get_sms_provider
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,39 @@ class ClerkWebhookView(APIView):
             logger.info('Processed Clerk webhook event: %s', event_type)
         else:
             logger.debug('Unhandled Clerk webhook event: %s', event_type)
+
+        return Response({'status': 'ok'})
+
+
+class SMSDeliveryWebhookView(APIView):
+    """Receive delivery status callbacks from the SMS/MMS provider.
+
+    Unauthenticated endpoint — validation is delegated to the provider's
+    validate_callback_request() method (e.g. shared-secret token for Welcorp).
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        provider = get_sms_provider()
+
+        if not provider.validate_callback_request(request):
+            return Response({'error': 'Unauthorized'}, status=401)
+
+        content_type = request.content_type or ''
+        if 'form' in content_type or 'urlencoded' in content_type:
+            data = dict(request.POST)
+        else:
+            data = request.data
+
+        try:
+            events = provider.parse_delivery_callback(data, content_type)
+        except Exception:
+            logger.exception('Failed to parse delivery callback')
+            return Response({'error': 'Bad request'}, status=400)
+
+        for event in events:
+            process_delivery_event.delay(event.__dict__)
 
         return Response({'status': 'ok'})
 

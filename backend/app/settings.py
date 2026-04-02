@@ -259,6 +259,10 @@ SMS_PROVIDER_CLASS = 'app.utils.welcorp.WelcorpSMSProvider'
 WELCORP_BASE_URL = os.environ.get('WELCORP_BASE_URL', 'https://api.message-service.org/api/v1')
 WELCORP_USERNAME = os.environ.get('WELCORP_USERNAME', '')
 WELCORP_PASSWORD = os.environ.get('WELCORP_PASSWORD', '')
+WELCORP_CALLBACK_SECRET = os.environ.get('WELCORP_CALLBACK_SECRET', '')
+
+# Delivery callback base URL (publicly accessible URL for provider callbacks)
+CALLBACK_BASE_URL = os.environ.get('CALLBACK_BASE_URL', '')
 
 
 # Storage Provider Configuration
