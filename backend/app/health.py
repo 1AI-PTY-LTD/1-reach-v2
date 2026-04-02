@@ -25,10 +25,14 @@ class HealthCheckView(APIView):
             checks['db'] = str(e)
 
         try:
+            url = settings.CELERY_BROKER_URL
             kwargs = {}
-            if settings.CELERY_BROKER_URL.startswith('rediss://'):
+            if url.startswith('rediss://'):
+                # Strip ssl_cert_reqs from URL — redis-py rejects the string
+                # "CERT_NONE" from query params, so pass the constant as a kwarg.
+                url = url.split('?')[0] if 'ssl_cert_reqs' in url else url
                 kwargs['ssl_cert_reqs'] = ssl.CERT_NONE
-            r = redis.from_url(settings.CELERY_BROKER_URL, **kwargs)
+            r = redis.from_url(url, **kwargs)
             r.ping()
             checks['redis'] = 'ok'
         except Exception as e:

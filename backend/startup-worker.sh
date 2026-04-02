@@ -13,10 +13,12 @@ django.setup()
 from django.db import connection
 from django.conf import settings
 connection.ensure_connection()
+url = settings.CELERY_BROKER_URL
 kwargs = {}
-if settings.CELERY_BROKER_URL.startswith('rediss://'):
+if url.startswith('rediss://'):
+    url = url.split('?')[0] if 'ssl_cert_reqs' in url else url
     kwargs['ssl_cert_reqs'] = ssl.CERT_NONE
-r = redis.from_url(settings.CELERY_BROKER_URL, **kwargs)
+r = redis.from_url(url, **kwargs)
 r.ping()
 " 2>/dev/null && echo "Dependencies ready." && break
   echo "Dependencies not ready (attempt $i/30), retrying in 5s..."
