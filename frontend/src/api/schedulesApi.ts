@@ -129,6 +129,15 @@ export function getSchedulesByContactIdInfiniteOptions(
   })
 }
 
+// Recipients query (children of a batch parent)
+export function getScheduleRecipientsQueryOptions(client: ApiClient, scheduleId: number) {
+  return queryOptions({
+    queryKey: ['schedules', scheduleId, 'recipients'],
+    queryFn: () => client.get<Schedule[]>(`/api/schedules/${scheduleId}/recipients/`),
+    enabled: !!scheduleId,
+  })
+}
+
 // Mutation hooks
 export function useCreateScheduleMutation(client: ApiClient) {
   const queryClient = useQueryClient()

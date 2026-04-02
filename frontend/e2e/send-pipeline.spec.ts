@@ -66,7 +66,7 @@ test.beforeAll(async ({ browser }) => {
   ]
   const results = await Promise.all(
     PIPELINE_STATES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
-      message: s.message, recipient: s.phone, contact_id: contact.id,
+      message: s.message, recipients: [{ phone: s.phone, contact_id: contact.id }],
     }))
   )
   results.forEach(r => pipelineScheduleIds.push(r.schedule_id))
@@ -128,15 +128,15 @@ test.describe('Send SMS — success flow', () => {
   test('202 response treated as success — summary dialog shows 1 successful', async ({ page }) => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page)
-    await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
-    await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByText('Queued', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('Unsuccessful').first()).toBeVisible()
   })
 
   test('success clears the message input', async ({ page }) => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page, 'This should be cleared after send')
-    await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
   })
 })
 
@@ -144,8 +144,8 @@ test.describe('Send MMS — success flow', () => {
   test('MMS send returns 202 and shows success summary', async ({ page }) => {
     await page.goto('/app/send')
     await fillAndSubmitSmsForm(page, 'Check this out!')
-    await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
-    await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
+    await expect(page.getByText('Queued', { exact: true }).first()).toBeVisible()
   })
 })
 
@@ -183,17 +183,14 @@ test.describe('Billing gate — error surfaces in UI', () => {
     }
   })
 
-  test('billing error shows 0 successful in summary dialog', async ({ page }) => {
+  test('billing error shows inline error message', async ({ page }) => {
     await setOrgBalance(page, 0)
     try {
       await page.goto('/app/send')
       await fillAndSubmitSmsForm(page)
-      await expect(page.getByText(/send summary/i)).toBeVisible({ timeout: 8000 })
-      await expect(page.getByText('Successful', { exact: true }).first()).toBeVisible()
-      await expect(page.getByText('Unsuccessful').first()).toBeVisible()
       await expect(
         page.getByText(/insufficient balance/i).or(page.getByText(/subscribe to continue/i)).first()
-      ).toBeVisible()
+      ).toBeVisible({ timeout: 8000 })
     } finally {
       await setOrgBalance(page, 100)
     }

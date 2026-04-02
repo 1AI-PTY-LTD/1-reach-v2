@@ -21,6 +21,7 @@ export type Schedule = {
   phone?: string | null
   group?: number | null
   parent?: number | null
+  recipient_count?: number
   scheduled_time: string
   sent_time?: string | null
   status: ScheduleStatus

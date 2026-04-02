@@ -134,9 +134,8 @@ export function ContactMessageModal({
                     });
 
                     const smsProps: SendSmsRequest = {
-                        recipient: contact.phone,
                         message: messageText,
-                        contact_id: contact.id
+                        recipients: [{ phone: contact.phone, contact_id: contact.id }],
                     };
 
                     await sendSms(client, smsProps);

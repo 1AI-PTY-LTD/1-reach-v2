@@ -22,8 +22,7 @@ test.beforeAll(async ({ browser }) => {
   contact = await ensureContact(page, { first_name: 'Billing', last_name: 'Test', phone: '0416111111' })
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
     message: 'Billing test message',
-    recipient: '0416111111',
-    contact_id: contact.id,
+    recipients: [{ phone: '0416111111', contact_id: contact.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
 
@@ -62,7 +61,7 @@ test.describe('Billing Page', () => {
 
   test('shows monthly spend section', async ({ page }) => {
     await page.goto('/app/billing')
-    await expect(page.getByText(/Monthly spend:/).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/Monthly spend/).first()).toBeVisible({ timeout: 10000 })
   })
 
   test('displays transaction history', async ({ page }) => {

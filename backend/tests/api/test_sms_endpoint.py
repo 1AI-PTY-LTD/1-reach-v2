@@ -41,10 +41,10 @@ class TestSendSMS:
         """Sending SMS creates a QUEUED Schedule record and returns 202."""
         data = {
             'message': 'Test message',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
 
-        response = authenticated_client.post('/api/sms/send/', data)
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['success'] is True
@@ -71,11 +71,10 @@ class TestSendSMS:
         """Sending SMS with contact_id links to contact."""
         data = {
             'message': 'Hello!',
-            'recipient': contact.phone,
-            'contact_id': contact.id
+            'recipients': [{'phone': contact.phone, 'contact_id': contact.id}],
         }
 
-        response = authenticated_client.post('/api/sms/send/', data)
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
@@ -91,8 +90,8 @@ class TestSendSMS:
         organisation.save()
         ConfigFactory(organisation=organisation, name='monthly_limit', value='0.01')
 
-        data = {'message': 'Test', 'recipient': '0412345678'}
-        response = authenticated_client.post('/api/sms/send/', data)
+        data = {'message': 'Test', 'recipients': [{'phone': '0412345678'}]}
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
@@ -103,10 +102,10 @@ class TestSendSMS:
         """Invalid phone numbers rejected."""
         data = {
             'message': 'Test',
-            'recipient': 'invalid-phone'
+            'recipients': [{'phone': 'invalid-phone'}],
         }
 
-        response = authenticated_client.post('/api/sms/send/', data)
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -116,10 +115,10 @@ class TestSendSMS:
         """Empty/invalid messages rejected."""
         data = {
             'message': '',  # Empty message
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
 
-        response = authenticated_client.post('/api/sms/send/', data)
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -129,10 +128,10 @@ class TestSendSMS:
         """send_sms dispatches a Celery task (not the provider directly)."""
         data = {
             'message': 'Test message',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
 
-        response = authenticated_client.post('/api/sms/send/', data)
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         # Provider is NOT called in the view — it's called inside the Celery task
@@ -140,8 +139,8 @@ class TestSendSMS:
 
     def test_send_sms_requires_authentication(self, api_client):
         """Unauthenticated requests rejected."""
-        data = {'message': 'Test', 'recipient': '0412345678'}
-        response = api_client.post('/api/sms/send/', data)
+        data = {'message': 'Test', 'recipients': [{'phone': '0412345678'}]}
+        response = api_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
@@ -151,7 +150,7 @@ class TestSendToGroup:
     """Tests for POST /api/sms/send-to-group/ endpoint."""
 
     def test_send_to_group_creates_parent_and_children(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_batch_message_task
     ):
         """Sending to group creates parent + QUEUED child schedules."""
         # Create group with 3 members
@@ -184,8 +183,8 @@ class TestSendToGroup:
             assert child.status == ScheduleStatus.QUEUED
             assert child.contact in contacts
 
-        # One Celery task per child
-        assert mock_send_message_task.delay.call_count == 3
+        # Single batch task dispatched for parent
+        mock_send_batch_message_task.delay.assert_called_once_with(parent.pk)
 
     def test_send_to_group_skips_opted_out_contacts(
         self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
@@ -239,11 +238,11 @@ class TestSendMMS:
         data = {
             'message': 'Check this out!',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678',
-            'subject': 'Photo'
+            'recipients': [{'phone': '0412345678'}],
+            'subject': 'Photo',
         }
 
-        response = authenticated_client.post('/api/sms/send-mms/', data)
+        response = authenticated_client.post('/api/sms/send-mms/', data, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['success'] is True
@@ -260,6 +259,37 @@ class TestSendMMS:
         assert schedule.message_parts == 1  # MMS always 1 part
         assert schedule.status == ScheduleStatus.QUEUED
 
+    def test_send_mms_multiple_recipients_creates_parent_and_children(
+        self, authenticated_client, organisation, mock_check_mms_limit, mock_send_batch_message_task
+    ):
+        """MMS with multiple recipients creates parent + children."""
+        data = {
+            'message': 'Check this out!',
+            'media_url': 'https://example.com/image.jpg',
+            'recipients': [{'phone': '0412345678'}, {'phone': '0400000000'}],
+            'subject': 'Photo',
+        }
+
+        response = authenticated_client.post('/api/sms/send-mms/', data, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert 'parent_schedule_id' in response.data
+        assert response.data['total'] == 2
+
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        assert parent.format == MessageFormat.MMS
+        assert parent.media_url == 'https://example.com/image.jpg'
+        assert parent.subject == 'Photo'
+
+        children = Schedule.objects.filter(parent=parent)
+        assert children.count() == 2
+        for child in children:
+            assert child.format == MessageFormat.MMS
+            assert child.media_url == 'https://example.com/image.jpg'
+            assert child.subject == 'Photo'
+
+        mock_send_batch_message_task.delay.assert_called_once_with(parent.pk)
+
     def test_send_mms_checks_monthly_limit(
         self, authenticated_client, organisation
     ):
@@ -271,10 +301,10 @@ class TestSendMMS:
         data = {
             'message': 'Test',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
 
-        response = authenticated_client.post('/api/sms/send-mms/', data)
+        response = authenticated_client.post('/api/sms/send-mms/', data, format='json')
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
@@ -286,10 +316,10 @@ class TestSendMMS:
         data = {
             'message': '',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
 
-        response = authenticated_client.post('/api/sms/send-mms/', data)
+        response = authenticated_client.post('/api/sms/send-mms/', data, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
@@ -299,11 +329,11 @@ class TestSendMMS:
         """MMS without a media_url is rejected with 400."""
         data = {
             'message': 'Check this out',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
             # media_url intentionally omitted
         }
 
-        response = authenticated_client.post('/api/sms/send-mms/', data)
+        response = authenticated_client.post('/api/sms/send-mms/', data, format='json')
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -314,10 +344,10 @@ class TestSendMMS:
         data = {
             'message': 'Hello',
             'media_url': 'not-a-url',
-            'recipient': '0412345678'
+            'recipients': [{'phone': '0412345678'}],
         }
 
-        response = authenticated_client.post('/api/sms/send-mms/', data)
+        response = authenticated_client.post('/api/sms/send-mms/', data, format='json')
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -479,8 +509,8 @@ class TestTrialCreditReservation:
 
         response = authenticated_client.post('/api/sms/send/', {
             'message': 'Hello',
-            'recipient': '0412345678',
-        })
+            'recipients': [{'phone': '0412345678'}],
+        }, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         # $0.05 SMS rate deducted immediately
@@ -496,8 +526,8 @@ class TestTrialCreditReservation:
 
         response = authenticated_client.post('/api/sms/send/', {
             'message': 'Hello',
-            'recipient': '0412345678',
-        })
+            'recipients': [{'phone': '0412345678'}],
+        }, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert get_balance(organisation) == balance_before
@@ -514,8 +544,8 @@ class TestTrialCreditReservation:
         response = authenticated_client.post('/api/sms/send-mms/', {
             'message': 'Check this',
             'media_url': 'https://example.com/image.jpg',
-            'recipient': '0412345678',
-        })
+            'recipients': [{'phone': '0412345678'}],
+        }, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert get_balance(organisation) == balance_before - Decimal('0.20')
@@ -555,9 +585,8 @@ class TestSendEdgeCases:
 
         response = authenticated_client.post('/api/sms/send/', {
             'message': 'Hello',
-            'recipient': '0412345678',
-            'contact_id': other_contact.id,
-        })
+            'recipients': [{'phone': '0412345678', 'contact_id': other_contact.id}],
+        }, format='json')
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

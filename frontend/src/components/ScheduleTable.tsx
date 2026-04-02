@@ -76,7 +76,13 @@ export default function ScheduleTable({
 					</TableCell>
 					<TableCell className="w-20">{dayjs(entry.scheduled_time).format('hh:mmA')} </TableCell>
 					<TableCell className="w-20">{entry.sent_time ? dayjs(entry.sent_time).format('hh:mmA') : '-'}</TableCell>
-					<TableCell className="w-32"> {entry.phone?.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3')}</TableCell>
+					<TableCell className="w-32">
+						{entry.phone
+							? entry.phone.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3')
+							: entry.recipient_count
+								? `${entry.recipient_count} recipients`
+								: '-'}
+					</TableCell>
 					<TableCell className="w-16">{entry.format || 'SMS'}</TableCell>
 					<TableCell className="w-16">{entry.message_parts}</TableCell>
 					<TableCell> {entry.text && entry.text.length > 40 ? entry.text.substring(0, 40) + '...' : entry.text}</TableCell>

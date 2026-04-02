@@ -3,12 +3,48 @@ import math
 import re
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Optional, cast
 
 from django.conf import settings
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SendResult:
+    """Standardised result from a single SMS/MMS send operation.
+
+    Returned by all provider send_sms / send_mms methods and consumed by the
+    Celery task pipeline (celery.py) for status tracking, retry decisions, and
+    failure classification.
+    """
+    success: bool
+    message_id: str | None = None
+    error: str | None = None
+    message_parts: int = 0
+    error_code: str | None = None
+    http_status: int | None = None
+    retryable: bool = False
+    failure_category: str | None = None
+
+
+@dataclass
+class DeliveryEvent:
+    """Provider-agnostic delivery status event.
+
+    Returned by SMSProvider.parse_delivery_callback() and consumed by the
+    process_delivery_event Celery task to update Schedule status.
+    """
+    provider_message_id: str
+    status: str                          # 'delivered' or 'failed'
+    recipient_phone: str | None = None   # normalised 04XXXXXXXX
+    timestamp: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    raw_status: str | None = None        # original provider status code
+    raw_data: dict | None = field(default=None, repr=False)
 
 
 class SMSProvider(ABC):
@@ -19,6 +55,11 @@ class SMSProvider(ABC):
 
     All public methods (send_sms, send_bulk_sms, send_mms) handle normalisation
     automatically before calling the abstract implementation methods.
+
+    Providers that support delivery callbacks should override:
+    - parse_delivery_callback() to parse provider-specific callback payloads
+    - validate_callback_request() for request authentication
+    - get_callback_url() to return the URL the provider should POST callbacks to
     """
 
     def _validate_phone(self, phone: str) -> bool:
@@ -35,6 +76,13 @@ class SMSProvider(ABC):
             cleaned = '0' + cleaned[3:]
         return cleaned
 
+    @staticmethod
+    def _to_international(phone: str) -> str:
+        """Convert 04XXXXXXXX to +614XXXXXXXX (international format)."""
+        if phone.startswith('04'):
+            return '+61' + phone[1:]
+        return phone
+
     def _calculate_sms_parts(self, message: str) -> int:
         """Calculate the number of SMS parts for a message.
 
@@ -47,39 +95,21 @@ class SMSProvider(ABC):
             return 1
         return math.ceil(length / 153)
 
-    def send_sms(self, to: str, message: str) -> dict:
+    def send_sms(self, to: str, message: str) -> SendResult:
         """Send a single SMS message.
 
         Validates and normalises the phone number, then calls _send_sms_impl().
-
-        Args:
-            to: Phone number (04XXXXXXXX or +614XXXXXXXX format)
-            message: Message body (1-306 characters)
-
-        Returns:
-            dict with keys: success, message_id, error, message_parts,
-                            error_code, http_status, retryable, failure_category
         """
         if not self._validate_phone(to):
-            return {
-                'success': False,
-                'message_id': None,
-                'error': 'Invalid phone number format',
-                'message_parts': 0,
-                'error_code': None,
-                'http_status': None,
-                'retryable': False,
-                'failure_category': 'invalid_number',
-            }
+            return SendResult(
+                success=False,
+                error='Invalid phone number format',
+                failure_category='invalid_number',
+            )
 
         normalised = self._normalise_phone(to)
-        message_parts = self._calculate_sms_parts(message)
         result = self._send_sms_impl(normalised, message)
-        result['message_parts'] = message_parts
-        result.setdefault('error_code', None)
-        result.setdefault('http_status', None)
-        result.setdefault('retryable', False)
-        result.setdefault('failure_category', None)
+        result.message_parts = self._calculate_sms_parts(message)
         return result
 
     def send_bulk_sms(self, recipients: list[dict]) -> dict:
@@ -87,17 +117,12 @@ class SMSProvider(ABC):
 
         Validates and normalises all phone numbers, then calls _send_bulk_sms_impl().
 
-        Args:
-            recipients: List of dicts with 'to' and 'message' keys
-
         Returns:
             dict with keys: success (bool), results (list), error (str)
-            Each result in results list includes message_parts
         """
         normalised_recipients = []
         for recipient in recipients:
             if not self._validate_phone(recipient['to']):
-                # Skip invalid phones (or could return error for whole batch)
                 continue
             normalised_recipients.append({
                 'to': self._normalise_phone(recipient['to']),
@@ -107,87 +132,161 @@ class SMSProvider(ABC):
 
         return self._send_bulk_sms_impl(normalised_recipients)
 
-    def send_mms(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> dict:
+    def send_mms(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
         """Send an MMS message with media.
 
         Validates and normalises the phone number, then calls _send_mms_impl().
-
-        Args:
-            to: Phone number (04XXXXXXXX or +614XXXXXXXX format)
-            message: Message body (0-306 characters, can be empty)
-            media_url: URL to media file
-            subject: Optional subject line (max 64 characters)
-
-        Returns:
-            dict with keys: success, message_id, error, message_parts,
-                            error_code, http_status, retryable, failure_category
         """
         if not self._validate_phone(to):
-            return {
-                'success': False,
-                'message_id': None,
-                'error': 'Invalid phone number format',
-                'message_parts': 0,
-                'error_code': None,
-                'http_status': None,
-                'retryable': False,
-                'failure_category': 'invalid_number',
-            }
+            return SendResult(
+                success=False,
+                error='Invalid phone number format',
+                failure_category='invalid_number',
+            )
 
         normalised = self._normalise_phone(to)
         result = self._send_mms_impl(normalised, message, media_url, subject)
-        result['message_parts'] = 1  # MMS is always 1 part
-        result.setdefault('error_code', None)
-        result.setdefault('http_status', None)
-        result.setdefault('retryable', False)
-        result.setdefault('failure_category', None)
+        result.message_parts = 1  # MMS is always 1 part
         return result
 
-    @abstractmethod
-    def _send_sms_impl(self, to: str, message: str) -> dict:
-        """Implementation method for sending SMS.
+    def send_bulk_mms(self, recipients: list[dict]) -> dict:
+        """Send MMS to multiple recipients.
 
-        Phone number is already validated and normalised to 04XXXXXXXX format.
-
-        Args:
-            to: Normalised phone number (04XXXXXXXX)
-            message: Message body
-
-        Returns:
-            dict with keys: success (bool), message_id (str), error (str)
-        """
-        pass
-
-    @abstractmethod
-    def _send_bulk_sms_impl(self, recipients: list[dict]) -> dict:
-        """Implementation method for sending bulk SMS.
-
-        All phone numbers are already validated and normalised.
-
-        Args:
-            recipients: List of dicts with normalised 'to' and 'message' keys
+        Validates and normalises all phone numbers, then calls _send_bulk_mms_impl().
+        Recipient dicts: {to, message, media_url, subject?}
 
         Returns:
             dict with keys: success (bool), results (list), error (str)
         """
-        pass
+        normalised_recipients = []
+        for recipient in recipients:
+            if not self._validate_phone(recipient['to']):
+                continue
+            normalised_recipients.append({
+                'to': self._normalise_phone(recipient['to']),
+                'message': recipient['message'],
+                'media_url': recipient['media_url'],
+                'subject': recipient.get('subject'),
+                'message_parts': 1,  # MMS is always 1 part
+            })
+
+        return self._send_bulk_mms_impl(normalised_recipients)
 
     @abstractmethod
-    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> dict:
+    def _send_sms_impl(self, to: str, message: str) -> SendResult:
+        """Implementation method for sending SMS.
+
+        Phone number is already validated and normalised to 04XXXXXXXX format.
+        """
+        pass
+
+    def _send_bulk_sms_impl(self, recipients: list[dict]) -> dict:
+        """Implementation method for sending bulk SMS.
+
+        Default: loops over _send_sms_impl() individually.
+        Providers with native bulk SMS support (e.g. Welcorp) can override this.
+        """
+        results = []
+        first_failure: SendResult | None = None
+        for r in recipients:
+            result = self._send_sms_impl(r['to'], r['message'])
+            results.append({
+                'to': r['to'],
+                'message_parts': r.get('message_parts', self._calculate_sms_parts(r['message'])),
+                'success': result.success,
+                'message_id': result.message_id,
+                'error': result.error,
+            })
+            if not result.success and first_failure is None:
+                first_failure = result
+
+        failed = sum(1 for r in results if not r['success'])
+        result_dict: dict = {
+            'success': failed == 0,
+            'results': results,
+            'error': f'{failed} messages failed' if failed > 0 else None,
+        }
+        if first_failure:
+            result_dict['retryable'] = first_failure.retryable
+            result_dict['failure_category'] = first_failure.failure_category
+        return result_dict
+
+    @abstractmethod
+    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
         """Implementation method for sending MMS.
 
         Phone number is already validated and normalised to 04XXXXXXXX format.
-
-        Args:
-            to: Normalised phone number (04XXXXXXXX)
-            message: Message body
-            media_url: URL to media file
-            subject: Optional subject line
-
-        Returns:
-            dict with keys: success (bool), message_id (str), error (str)
         """
         pass
+
+    def _send_bulk_mms_impl(self, recipients: list[dict]) -> dict:
+        """Implementation method for sending bulk MMS.
+
+        Default: loops over _send_mms_impl() individually.
+        Providers with native bulk MMS support (e.g. Welcorp) can override this.
+        """
+        results = []
+        first_failure: SendResult | None = None
+        for r in recipients:
+            result = self._send_mms_impl(r['to'], r['message'], r['media_url'], r.get('subject'))
+            results.append({
+                'to': r['to'],
+                'message_parts': 1,
+                'success': result.success,
+                'message_id': result.message_id,
+                'error': result.error,
+            })
+            if not result.success and first_failure is None:
+                first_failure = result
+
+        failed = sum(1 for r in results if not r['success'])
+        result_dict: dict = {
+            'success': failed == 0,
+            'results': results,
+            'error': f'{failed} messages failed' if failed > 0 else None,
+        }
+        if first_failure:
+            result_dict['retryable'] = first_failure.retryable
+            result_dict['failure_category'] = first_failure.failure_category
+        return result_dict
+
+    # --- Delivery callback interface ---
+
+    def parse_delivery_callback(self, request_data: dict, content_type: str) -> list[DeliveryEvent]:
+        """Parse a delivery status callback into provider-agnostic DeliveryEvents.
+
+        Providers must override this to handle their specific callback format.
+        Return an empty list for non-terminal statuses that should be ignored.
+        """
+        raise NotImplementedError(
+            f'{type(self).__name__} does not implement delivery callbacks'
+        )
+
+    def validate_callback_request(self, request) -> bool:
+        """Validate that a delivery callback request is authentic.
+
+        Default: returns True (no validation). Providers should override to
+        implement signature verification, token checks, or IP allowlisting.
+        """
+        return True
+
+    def get_callback_url(self) -> str | None:
+        """Return the callback URL to include in send payloads, or None if
+        the provider does not support delivery callbacks."""
+        return None
+
+    def poll_job_status(self, provider_message_id: str) -> list[DeliveryEvent]:
+        """Poll the provider for delivery status of a previously sent message.
+
+        Returns DeliveryEvent objects for any recipients whose status has
+        changed to a terminal state. Used as a fallback when delivery
+        callbacks are not received.
+
+        Default: raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f'{type(self).__name__} does not implement job status polling'
+        )
 
 
 class MockSMSProvider(SMSProvider):
@@ -197,7 +296,7 @@ class MockSMSProvider(SMSProvider):
     Always returns success with generated message IDs.
     """
 
-    def _send_sms_impl(self, to: str, message: str) -> dict:
+    def _send_sms_impl(self, to: str, message: str) -> SendResult:
         message_id = f'mock-sms-{uuid.uuid4().hex[:12]}'
 
         logger.info(
@@ -209,45 +308,9 @@ class MockSMSProvider(SMSProvider):
             },
         )
 
-        return {
-            'success': True,
-            'message_id': message_id,
-            'error': None,
-            'error_code': None,
-            'http_status': None,
-            'retryable': False,
-            'failure_category': None,
-        }
+        return SendResult(success=True, message_id=message_id)
 
-    def _send_bulk_sms_impl(self, recipients: list[dict]) -> dict:
-        results = []
-        for recipient in recipients:
-            result = self._send_sms_impl(recipient['to'], recipient['message'])
-            results.append({
-                'to': recipient['to'],
-                'message_parts': recipient['message_parts'],
-                **result,
-            })
-
-        successful = sum(1 for r in results if r['success'])
-        failed = len(results) - successful
-
-        logger.info(
-            'MockSMSProvider.send_bulk_sms',
-            extra={
-                'total': len(recipients),
-                'successful': successful,
-                'failed': failed,
-            },
-        )
-
-        return {
-            'success': failed == 0,
-            'results': results,
-            'error': f'{failed} messages failed' if failed > 0 else None,
-        }
-
-    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> dict:
+    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
         message_id = f'mock-mms-{uuid.uuid4().hex[:12]}'
 
         logger.info(
@@ -261,15 +324,7 @@ class MockSMSProvider(SMSProvider):
             },
         )
 
-        return {
-            'success': True,
-            'message_id': message_id,
-            'error': None,
-            'error_code': None,
-            'http_status': None,
-            'retryable': False,
-            'failure_category': None,
-        }
+        return SendResult(success=True, message_id=message_id)
 
 
 class _ProviderCache:

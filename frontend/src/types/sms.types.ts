@@ -1,7 +1,11 @@
+export type SendSmsRecipient = {
+  phone: string
+  contact_id?: number | null
+}
+
 export type SendSmsRequest = {
   message: string
-  recipient: string
-  contact_id?: number | null
+  recipients: SendSmsRecipient[]
 }
 
 export type SendGroupSmsRequest = {
@@ -12,8 +16,7 @@ export type SendGroupSmsRequest = {
 export type SendMmsRequest = {
   message: string
   media_url: string
-  recipient: string
-  contact_id?: number | null
+  recipients: SendSmsRecipient[]
   subject?: string
 }
 
@@ -21,6 +24,8 @@ export type SendSmsResponse = {
   success: boolean
   message: string
   schedule_id?: number
+  parent_schedule_id?: number
+  total?: number
 }
 
 export type SendGroupSmsResponse = {

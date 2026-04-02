@@ -224,7 +224,7 @@ class TestSendMMSSerializer:
     def test_validate_subject_none(self):
         """Subject can be None."""
         serializer = SendMMSSerializer(data={
-            'phone': '0412345678',
+            'recipients': [{'phone': '0412345678'}],
             'media_url': 'https://example.com/image.jpg',
             'message': 'Test',
             'subject': None

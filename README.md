@@ -12,7 +12,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 - Contact management with CSV import
 - Group messaging with scheduling
 - Template library
-- SMS/MMS sending — async dispatch via Celery with automatic retry and credit refund on failure
+- SMS/MMS sending — single or batch (multi-recipient), async dispatch via Celery with automatic retry and credit refund on failure
 - Scheduled sends — Celery beat dispatches due messages every 60 s
 - Org user management — invite, deactivate, grant/revoke admin
 - Usage stats dashboard
@@ -96,6 +96,11 @@ cp frontend/.envexample frontend/.env
 | `MESSAGE_RETRY_BASE_DELAY` | No | Base backoff delay in seconds (default: `60`) |
 | `MESSAGE_RETRY_MAX_DELAY` | No | Max backoff delay in seconds (default: `3600`) |
 | `MESSAGE_RETRY_JITTER` | No | Jitter fraction for backoff (default: `0.25` = ±25%) |
+| `WELCORP_BASE_URL` | No | Welcorp API URL (default: `https://api.message-service.org/api/v1`) |
+| `WELCORP_USERNAME` | If using Welcorp | Welcorp Basic auth username |
+| `WELCORP_PASSWORD` | If using Welcorp | Welcorp Basic auth password |
+| `WELCORP_CALLBACK_SECRET` | No | Shared secret for delivery callback URL token verification |
+| `BASE_URL` | No | Publicly accessible base URL for this application (e.g. `https://your-domain.com`) — used for provider delivery callbacks |
 
 **`frontend/.env`** — Vite + Clerk:
 
@@ -120,7 +125,7 @@ This starts six services:
 | ReDoc | http://localhost:8000/api/redoc/ | API reference |
 | Redis | localhost:6379 | Celery broker + result backend |
 | Celery worker | — | Processes `send_message` tasks (async SMS/MMS dispatch) |
-| Celery beat | — | Runs `dispatch_due_messages` every 60 s (scheduled send) |
+| Celery beat | — | Runs `dispatch_due_messages` every 60 s + `reconcile_stale_sent` (polls provider for missed callbacks) |
 
 ---
 
@@ -137,31 +142,37 @@ backend/
 │   ├── authentication.py  # ClerkJWTAuthentication — extracts org context from JWT
 │   ├── permissions.py     # IsOrgMember, IsOrgAdmin
 │   ├── filters.py         # django-filter (search, date, group)
-│   ├── celery.py          # Celery app instance + send_message + dispatch_due_messages tasks
+│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent tasks
 │   ├── middleware/        # RequestLoggingMiddleware, ClerkTenantMiddleware
 │   ├── utils/
 │   │   ├── billing.py          # grant_credits, check_can_send, record_usage, refund_usage, etc.
 │   │   ├── failure_classifier.py  # classify_failure() — maps provider errors to FailureCategory
 │   │   ├── clerk.py            # Webhook handlers (user/org/membership sync + billing subscription events)
-│   │   ├── sms.py              # Pluggable SMS provider (MockSMSProvider)
+│   │   ├── sms.py              # Pluggable SMS provider (SMSProvider base + MockSMSProvider + DeliveryEvent)
+│   │   ├── welcorp.py          # Welcorp SMS/MMS provider (API integration + delivery callbacks + job polling)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 517 tests
+└── tests/                 # 645 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
 
 **Clerk integration:** Users and organisations are created in Clerk and synced to the local DB via webhooks (`POST /api/webhooks/clerk/`). Membership changes (role updates, deactivation, invitations) go through Clerk's API and sync back via webhooks — Clerk is the source of truth.
 
-**Async send pipeline:** Send endpoints (`POST /api/sms/send/`, `send-mms/`, `send-to-group/`) return `202 Accepted` immediately. A Celery task (`send_message`) handles actual dispatch with full retry logic:
+**Async send pipeline:** Send endpoints (`POST /api/sms/send/`, `send-mms/`, `send-to-group/`) return `202 Accepted` immediately. Single-recipient sends dispatch a `send_message` task; multi-recipient sends create a parent Schedule with per-recipient child Schedules and dispatch a `send_batch_message` task that calls the provider's bulk send interface:
 
 ```
-HTTP POST → validate + billing gate → Schedule(status=QUEUED) → send_message.delay() → 202
-                                                                        │
-                                                          Celery worker ▼
-                                           QUEUED → PROCESSING → SENT → DELIVERED (receipt)
-                                                               ↓ transient fail → RETRYING (backoff)
-                                                               ↓ permanent fail → FAILED + refund
+Single recipient:
+  HTTP POST → validate + billing gate → Schedule(QUEUED) → send_message.delay() → 202
+
+Multiple recipients:
+  HTTP POST → validate + billing gate → parent Schedule(QUEUED) + N child Schedules
+            → send_batch_message.delay(parent.pk) → 202
+
+Celery worker (both paths):
+  QUEUED → PROCESSING → SENT → DELIVERED (receipt)
+                      ↓ transient fail → RETRYING (backoff)
+                      ↓ permanent fail → FAILED + refund
 ```
 
 Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults to ~1m → 2m → 4m → 8m, capped at 1h. A `dispatch_due_messages` beat task runs every 60 s to pick up scheduled sends and recover stuck RETRYING/PROCESSING schedules.
@@ -172,7 +183,9 @@ Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults t
 
 **Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed` | `past_due`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. `check_can_send` blocks all sends when `billing_mode='past_due'`. Clerk Billing is live: `subscription.active` sets `billing_mode='subscribed'` and clears the Clerk `billing_suspended` metadata flag; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` sets `billing_mode='past_due'` and sets `billing_suspended=True` in Clerk org metadata. Per-SMS/MMS metered billing is tracked internally via `CreditTransaction` (for manual invoicing); native Clerk metered billing will be wired into `record_usage()` when Clerk adds support.
 
-**SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). Implement the abstract base class to add real providers.
+**SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). The `SMSProvider` base class defines `send_sms()`, `send_bulk_sms()`, `send_mms()`, and `send_bulk_mms()` public methods that handle phone validation/normalisation, then delegate to abstract `_send_sms_impl()` and `_send_mms_impl()` methods. Bulk methods (`_send_bulk_sms_impl`, `_send_bulk_mms_impl`) have default implementations that loop over the individual send method — providers with native batch support can override them.
+
+**Delivery status tracking:** The `SMSProvider` base class also defines a provider-agnostic delivery callback/polling interface. Providers can override `parse_delivery_callback()` to handle incoming webhooks, `validate_callback_request()` for authentication, `get_callback_url()` to register callbacks in send payloads, and `poll_job_status()` to fetch delivery reports on demand. All methods return `DeliveryEvent` objects consumed by the `process_delivery_event` Celery task, which updates schedule status and triggers billing refunds on carrier-reported failures. A `reconcile_stale_sent` beat task polls the provider for schedules stuck in SENT >24h as a fallback when callbacks are missed. The Welcorp provider (`welcorp.py`) implements all four methods. Welcorp's `SENT` status means "carrier accepted" (the best confirmation available — no handset delivery status exists), so it is mapped to `DELIVERED` to mark the schedule as terminal.
 
 ### Frontend (`frontend/`)
 
@@ -225,14 +238,14 @@ Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in 
 | Contacts | `GET/POST /api/contacts/`, `GET/PUT/PATCH /api/contacts/:id/`, `GET /api/contacts/:id/schedules/`, `POST /api/contacts/import/` |
 | Groups | `GET/POST /api/groups/`, `GET/PUT/PATCH/DELETE /api/groups/:id/`, `POST/DELETE /api/groups/:id/members/` |
 | Templates | `GET/POST /api/templates/`, `GET/PUT/PATCH /api/templates/:id/` |
-| Schedules | `GET/POST /api/schedules/`, `GET/PUT/PATCH /api/schedules/:id/` |
+| Schedules | `GET/POST /api/schedules/`, `GET/PUT/PATCH /api/schedules/:id/`, `GET /api/schedules/:id/recipients/` |
 | Group Schedules | `GET/POST /api/group-schedules/`, `GET/PUT/DELETE /api/group-schedules/:id/` |
 | Users | `GET /api/users/`, `GET /api/users/me/`, `PATCH /api/users/:id/role/`, `PATCH /api/users/:id/status/`, `POST /api/users/invite/` |
 | SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/` |
 | Stats | `GET /api/stats/monthly/` |
 | Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history (admin only) |
 | Configs | `GET/POST/PUT/PATCH/DELETE /api/configs/`, `GET/PUT/PATCH/DELETE /api/configs/:id/` |
-| Webhooks | `POST /api/webhooks/clerk/` |
+| Webhooks | `POST /api/webhooks/clerk/`, `POST /api/webhooks/sms-delivery/` |
 
 All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
 
@@ -246,7 +259,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-523 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+645 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -258,7 +271,7 @@ docker compose exec backend python -m pytest --create-db tests/ -q
 docker compose exec frontend npx vitest run
 ```
 
-324 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+383 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 
@@ -322,18 +335,17 @@ For E2E tests in CI, set `CLERK_SECRET_KEY` as a secret. The test infrastructure
 
 These features are not yet implemented and are required before production use:
 
-### 1. Real SMS/MMS Provider + Delivery Receipts
+### 1. Switching SMS/MMS Provider
 
-The app uses `MockSMSProvider`, which logs operations but does not send real messages. To add a real provider:
+The app currently uses `WelcorpSMSProvider` (with `MockSMSProvider` available for dev/testing). To switch to a different provider:
 
 - Subclass `SMSProvider` in `backend/app/utils/sms.py`
-- Implement `_send_sms_impl()`, `_send_bulk_sms_impl()`, `_send_mms_impl()` — return the enriched dict including `error_code`, `http_status`, `retryable`, `failure_category`
+- Implement `_send_sms_impl()` and `_send_mms_impl()` — return a `SendResult` with `error_code`, `http_status`, `retryable`, `failure_category`
+- Optionally override `_send_bulk_sms_impl()` and `_send_bulk_mms_impl()` for native batch support (the base class provides default implementations that loop over the individual send methods)
+- For delivery callbacks: override `parse_delivery_callback()`, `validate_callback_request()`, `get_callback_url()`, and `poll_job_status()` — they all return `DeliveryEvent` objects consumed by the existing `process_delivery_event` Celery task
 - Set `settings.SMS_PROVIDER_CLASS` to the new provider class path
 
-Delivery receipt tracking (`DELIVERED` status, carrier-confirmed delivery time) is deferred until a real provider is chosen. The schema is ready (`provider_message_id`, `delivered_time` fields on `Schedule`). When a provider is selected, add:
-
-- `POST /api/webhooks/delivery/?provider=<name>` with HMAC signature verification
-- `process_delivery_event` Celery task: marks `DELIVERED` or triggers `refund_usage()` on delivery failure
+Note: Welcorp does not provide true handset delivery confirmation — their `SENT` status means "carrier accepted". If the new provider supports handset delivery receipts, map them to `DeliveryEvent(status='delivered')` and the existing pipeline will transition schedules to `DELIVERED` status.
 
 ### 2. Production Deployment
 
