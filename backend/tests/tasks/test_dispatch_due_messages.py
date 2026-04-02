@@ -434,3 +434,127 @@ class TestStaleProcessingRecovery:
         mock_batch.delay.assert_not_called()
         individual.refresh_from_db()
         assert individual.status == ScheduleStatus.PROCESSING
+
+
+# ---------------------------------------------------------------------------
+# Stale QUEUED recovery tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestStaleQueuedRecovery:
+    """Schedules stuck in QUEUED (Celery task lost) are re-dispatched by the beat task."""
+
+    def test_redispatches_stale_queued_individual(self, db, organisation, user):
+        """Stale individual QUEUED schedule is re-dispatched via send_message."""
+        individual = Schedule.objects.create(
+            organisation=organisation,
+            phone='0412345678',
+            text='Stuck queued',
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            status=ScheduleStatus.QUEUED,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            max_retries=3,
+            created_by=user,
+            updated_by=user,
+        )
+        Schedule.objects.filter(pk=individual.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=10)
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            mock_send.delay.return_value = None
+            dispatch_due_messages()
+
+        mock_send.delay.assert_called_once_with(individual.pk)
+        mock_batch.delay.assert_not_called()
+        individual.refresh_from_db()
+        assert individual.status == ScheduleStatus.QUEUED
+
+    def test_redispatches_stale_queued_batch_parent(self, db, organisation, user):
+        """Stale batch parent QUEUED schedule is re-dispatched via send_batch_message."""
+        parent = _make_parent(organisation, user, status=ScheduleStatus.QUEUED)
+        _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
+        Schedule.objects.filter(pk=parent.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=10)
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            mock_batch.delay.return_value = None
+            dispatch_due_messages()
+
+        mock_batch.delay.assert_called_once_with(parent.pk)
+        mock_send.delay.assert_not_called()
+        parent.refresh_from_db()
+        assert parent.status == ScheduleStatus.QUEUED
+
+    def test_stale_queued_children_not_dispatched(self, db, organisation, user):
+        """Stale QUEUED children are NOT directly dispatched — parent handles them."""
+        parent = _make_parent(organisation, user, status=ScheduleStatus.QUEUED)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
+        # Only child is stale; parent is fresh
+        Schedule.objects.filter(pk=child.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=10)
+        )
+        Schedule.objects.filter(pk=parent.pk).update(
+            updated_at=timezone.now()
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            dispatch_due_messages()
+
+        dispatched_pks = {c[0][0] for c in mock_send.delay.call_args_list}
+        assert child.pk not in dispatched_pks
+        dispatched_batch_pks = {c[0][0] for c in mock_batch.delay.call_args_list}
+        assert child.pk not in dispatched_batch_pks
+
+    def test_fresh_queued_not_redispatched(self, db, organisation, user):
+        """A QUEUED schedule with recent updated_at is NOT re-dispatched."""
+        individual = Schedule.objects.create(
+            organisation=organisation,
+            phone='0412345678',
+            text='Fresh queued',
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            status=ScheduleStatus.QUEUED,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            max_retries=3,
+            created_by=user,
+            updated_by=user,
+        )
+        # updated_at is set to now() by default — well within the timeout
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            dispatch_due_messages()
+
+        mock_send.delay.assert_not_called()
+        mock_batch.delay.assert_not_called()
+
+    def test_stale_queued_updated_at_is_bumped(self, db, organisation, user):
+        """After re-dispatch, updated_at is bumped so schedule isn't re-dispatched next tick."""
+        individual = Schedule.objects.create(
+            organisation=organisation,
+            phone='0412345678',
+            text='Stuck queued',
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            status=ScheduleStatus.QUEUED,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            max_retries=3,
+            created_by=user,
+            updated_by=user,
+        )
+        old_time = timezone.now() - timedelta(minutes=10)
+        Schedule.objects.filter(pk=individual.pk).update(updated_at=old_time)
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message'):
+            mock_send.delay.return_value = None
+            dispatch_due_messages()
+
+        individual.refresh_from_db()
+        assert individual.updated_at > old_time

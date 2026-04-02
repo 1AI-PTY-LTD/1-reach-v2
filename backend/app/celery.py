@@ -438,24 +438,58 @@ def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: di
 def dispatch_due_messages() -> dict:
     """Find PENDING/RETRYING leaf schedules that are due and dispatch them.
 
-    Also recovers stale PROCESSING schedules (worker crashed mid-task).
+    Also recovers stale QUEUED and PROCESSING schedules.
     Uses select_for_update(skip_locked=True) to prevent double-dispatch in clustered
     deployments. Processes in batches of 500 per tick.
     """
     now = timezone.now()
     batch_size = 500
-    processing_timeout = getattr(settings, 'MESSAGE_PROCESSING_TIMEOUT_MINUTES', 10)
-    stale_cutoff = now - timedelta(minutes=processing_timeout)
+    has_children = Schedule.objects.filter(parent_id=OuterRef('pk'))
 
-    # Recover stale PROCESSING schedules (worker crashed between PROCESSING and completion).
-    # acks_late + reject_on_worker_lost re-queues the Celery message, but send_message rejects
-    # PROCESSING status → schedule stuck. Reset to QUEUED so the re-queued task can proceed.
+    # --- Recover stale QUEUED schedules (Celery task lost before worker pickup) ----------
+    # If the broker dropped the task (crash, Redis flush, worker restart before ack),
+    # the schedule stays QUEUED forever. Re-enqueue the task and bump updated_at so it
+    # won't be re-dispatched again until the next timeout window.
+    queued_timeout = getattr(settings, 'MESSAGE_QUEUED_TIMEOUT_MINUTES', 5)
+    queued_cutoff = now - timedelta(minutes=queued_timeout)
+    stale_queued_qs = Schedule.objects.filter(
+        status=ScheduleStatus.QUEUED, updated_at__lte=queued_cutoff,
+    )
+    stale_queued_individual_pks = list(
+        stale_queued_qs.filter(parent__isnull=True)
+        .exclude(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    stale_queued_parent_pks = list(
+        stale_queued_qs.filter(parent__isnull=True)
+        .filter(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    all_stale_queued = stale_queued_individual_pks + stale_queued_parent_pks
+    if all_stale_queued:
+        Schedule.objects.filter(pk__in=all_stale_queued).update(updated_at=now)
+        for pk in stale_queued_individual_pks:
+            send_message.delay(pk)
+        for pk in stale_queued_parent_pks:
+            send_batch_message.delay(pk)
+        logger.warning(
+            'dispatch_due_messages: re-dispatched %d stale QUEUED schedules '
+            '(%d individual, %d batch parents)',
+            len(all_stale_queued),
+            len(stale_queued_individual_pks),
+            len(stale_queued_parent_pks),
+        )
+
+    # --- Recover stale PROCESSING schedules (worker crashed mid-task) --------------------
+    # acks_late + reject_on_worker_lost re-queues the Celery message, but send_message
+    # rejects PROCESSING status → schedule stuck. Reset to QUEUED so the task can proceed.
     #
     # Three types of stale schedules:
     #   1. Individual sends (parent=None, no children) → reset + send_message
     #   2. Batch parents (has children) → reset + send_batch_message
     #   3. Batch children (parent set) → reset only (parent task handles them)
-    has_children = Schedule.objects.filter(parent_id=OuterRef('pk'))
+    processing_timeout = getattr(settings, 'MESSAGE_PROCESSING_TIMEOUT_MINUTES', 10)
+    stale_cutoff = now - timedelta(minutes=processing_timeout)
     stale_qs = Schedule.objects.filter(
         status=ScheduleStatus.PROCESSING, updated_at__lte=stale_cutoff,
     )
