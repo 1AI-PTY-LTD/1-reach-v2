@@ -13,6 +13,7 @@ from pathlib import Path
 import json
 import logging
 import os
+import ssl as _ssl
 from decimal import Decimal as _Decimal
 import sentry_sdk
 
@@ -33,6 +34,8 @@ TEST = os.environ.get('TEST', '0').lower() in ('1', 'true')
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
+# Publicly accessible base URL for this application (used for provider callbacks, etc.)
+BASE_URL = os.environ.get('BASE_URL', '')
 
 # Application definition
 INSTALLED_APPS = [
@@ -247,7 +250,6 @@ CELERY_BROKER_URL = _ensure_redis_ssl(CELERY_BROKER_URL)
 CELERY_RESULT_BACKEND = _ensure_redis_ssl(CELERY_RESULT_BACKEND)
 
 if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
-    import ssl as _ssl
     CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
     CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
 
@@ -261,8 +263,6 @@ WELCORP_USERNAME = os.environ.get('WELCORP_USERNAME', '')
 WELCORP_PASSWORD = os.environ.get('WELCORP_PASSWORD', '')
 WELCORP_CALLBACK_SECRET = os.environ.get('WELCORP_CALLBACK_SECRET', '')
 
-# Delivery callback base URL (publicly accessible URL for provider callbacks)
-CALLBACK_BASE_URL = os.environ.get('CALLBACK_BASE_URL', '')
 
 
 # Storage Provider Configuration

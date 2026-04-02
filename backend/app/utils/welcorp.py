@@ -265,7 +265,7 @@ class WelcorpSMSProvider(SMSProvider):
 
     def get_callback_url(self) -> str | None:
         """Return the delivery callback URL to include in Welcorp job payloads."""
-        base_url = getattr(settings, 'CALLBACK_BASE_URL', '')
+        base_url = getattr(settings, 'BASE_URL', '')
         secret = getattr(settings, 'WELCORP_CALLBACK_SECRET', '')
         if not base_url or not secret:
             return None

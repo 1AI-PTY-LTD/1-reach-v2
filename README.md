@@ -100,7 +100,7 @@ cp frontend/.envexample frontend/.env
 | `WELCORP_USERNAME` | If using Welcorp | Welcorp Basic auth username |
 | `WELCORP_PASSWORD` | If using Welcorp | Welcorp Basic auth password |
 | `WELCORP_CALLBACK_SECRET` | No | Shared secret for delivery callback URL token verification |
-| `CALLBACK_BASE_URL` | No | Publicly accessible base URL for provider delivery callbacks (e.g. `https://your-domain.com`) |
+| `BASE_URL` | No | Publicly accessible base URL for this application (e.g. `https://your-domain.com`) — used for provider delivery callbacks |
 
 **`frontend/.env`** — Vite + Clerk:
 

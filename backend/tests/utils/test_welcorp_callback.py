@@ -22,7 +22,7 @@ WELCORP_SETTINGS = {
     'WELCORP_USERNAME': 'testuser',
     'WELCORP_PASSWORD': 'testpass',
     'WELCORP_CALLBACK_SECRET': 'test-secret-123',
-    'CALLBACK_BASE_URL': 'https://myapp.example.com',
+    'BASE_URL': 'https://myapp.example.com',
 }
 
 
@@ -144,7 +144,7 @@ class TestGetCallbackUrl:
             assert url == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=test-secret-123'
 
     def test_returns_none_without_base_url(self):
-        with override_settings(**{**WELCORP_SETTINGS, 'CALLBACK_BASE_URL': ''}):
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
             p = WelcorpSMSProvider()
             assert p.get_callback_url() is None
 
@@ -154,7 +154,7 @@ class TestGetCallbackUrl:
             assert p.get_callback_url() is None
 
     def test_strips_trailing_slash(self):
-        with override_settings(**{**WELCORP_SETTINGS, 'CALLBACK_BASE_URL': 'https://myapp.example.com/'}):
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': 'https://myapp.example.com/'}):
             p = WelcorpSMSProvider()
             assert p.get_callback_url() == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=test-secret-123'
 
@@ -179,7 +179,7 @@ class TestPostJobCallbackInjection:
             assert payload['callback_on_sms_status_update'] is True
 
     def test_no_callback_fields_without_config(self):
-        with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': '', 'CALLBACK_BASE_URL': ''}):
+        with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': '', 'BASE_URL': ''}):
             p = WelcorpSMSProvider()
 
             mock_session = Mock()
