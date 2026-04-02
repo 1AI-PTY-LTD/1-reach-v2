@@ -154,9 +154,26 @@ class AzureBlobStorageProvider(StorageProvider):
         self.blob_service_client = self.BlobServiceClient(account_url=account_url)
         self.container = container
 
+        self._ensure_container_exists()
+
         logger.info(
             f'AzureBlobStorageProvider initialized with container: {container}'
         )
+
+    def _ensure_container_exists(self):
+        """Create the blob container if it doesn't already exist."""
+        try:
+            container_client = self.blob_service_client.get_container_client(self.container)
+            container_client.get_container_properties()
+        except Exception:
+            try:
+                self.blob_service_client.create_container(self.container)
+                logger.info(f'Created Azure Blob Storage container: {self.container}')
+            except Exception as e:
+                logger.warning(
+                    f'Could not create container {self.container}: {e}',
+                    exc_info=True,
+                )
 
     def _upload_file_impl(self, file_obj, unique_filename: str, content_type: str) -> dict:
         """Upload file to Azure Blob Storage."""
