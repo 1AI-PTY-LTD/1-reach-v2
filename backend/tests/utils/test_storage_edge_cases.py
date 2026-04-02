@@ -148,3 +148,88 @@ class TestAzureBlobStorageProvider:
             assert result['url'] is None
             assert 'Azure Blob Storage upload failed' in result['error']
             assert 'Azure error' in result['error']
+
+
+class TestEnsureContainerExists:
+    """Test _ensure_container_exists auto-creates missing containers."""
+
+    def _make_azure_module(self):
+        """Create mock azure.storage.blob module."""
+        mock_azure_module = MagicMock()
+        mock_blob_service_class = Mock()
+        mock_content_settings_class = Mock()
+        mock_azure_module.BlobServiceClient = mock_blob_service_class
+        mock_azure_module.ContentSettings = mock_content_settings_class
+        return mock_azure_module, mock_blob_service_class
+
+    def test_container_exists_no_creation(self):
+        """Does not create container when it already exists."""
+        mock_azure_module, mock_blob_service_class = self._make_azure_module()
+        mock_blob_service = Mock()
+        mock_blob_service_class.return_value = mock_blob_service
+
+        # get_container_properties succeeds → container exists
+        mock_container_client = Mock()
+        mock_blob_service.get_container_client.return_value = mock_container_client
+
+        with patch.dict('sys.modules', {'azure.storage.blob': mock_azure_module}):
+            AzureBlobStorageProvider(account_url='https://test.blob.core.windows.net')
+
+        mock_blob_service.get_container_client.assert_called_once_with('media')
+        mock_container_client.get_container_properties.assert_called_once()
+        mock_blob_service.create_container.assert_not_called()
+
+    def test_container_missing_creates_it(self):
+        """Creates container when get_container_properties raises."""
+        mock_azure_module, mock_blob_service_class = self._make_azure_module()
+        mock_blob_service = Mock()
+        mock_blob_service_class.return_value = mock_blob_service
+
+        # get_container_properties fails → container doesn't exist
+        mock_container_client = Mock()
+        mock_container_client.get_container_properties.side_effect = Exception('ContainerNotFound')
+        mock_blob_service.get_container_client.return_value = mock_container_client
+
+        with patch.dict('sys.modules', {'azure.storage.blob': mock_azure_module}):
+            AzureBlobStorageProvider(account_url='https://test.blob.core.windows.net')
+
+        mock_blob_service.create_container.assert_called_once_with('media')
+
+    def test_container_creation_failure_logs_warning(self):
+        """Logs warning when container creation fails (e.g. permission denied)."""
+        mock_azure_module, mock_blob_service_class = self._make_azure_module()
+        mock_blob_service = Mock()
+        mock_blob_service_class.return_value = mock_blob_service
+
+        # Container doesn't exist and creation also fails
+        mock_container_client = Mock()
+        mock_container_client.get_container_properties.side_effect = Exception('ContainerNotFound')
+        mock_blob_service.get_container_client.return_value = mock_container_client
+        mock_blob_service.create_container.side_effect = Exception('AuthorizationFailure')
+
+        with patch.dict('sys.modules', {'azure.storage.blob': mock_azure_module}):
+            with patch('app.utils.storage.logger') as mock_logger:
+                # Should not raise — logs warning instead
+                AzureBlobStorageProvider(account_url='https://test.blob.core.windows.net')
+
+                mock_logger.warning.assert_called_once()
+                assert 'media' in mock_logger.warning.call_args[0][0]
+
+    def test_custom_container_name(self):
+        """Uses custom container name when provided."""
+        mock_azure_module, mock_blob_service_class = self._make_azure_module()
+        mock_blob_service = Mock()
+        mock_blob_service_class.return_value = mock_blob_service
+
+        mock_container_client = Mock()
+        mock_container_client.get_container_properties.side_effect = Exception('ContainerNotFound')
+        mock_blob_service.get_container_client.return_value = mock_container_client
+
+        with patch.dict('sys.modules', {'azure.storage.blob': mock_azure_module}):
+            AzureBlobStorageProvider(
+                account_url='https://test.blob.core.windows.net',
+                container='custom-bucket',
+            )
+
+        mock_blob_service.get_container_client.assert_called_once_with('custom-bucket')
+        mock_blob_service.create_container.assert_called_once_with('custom-bucket')

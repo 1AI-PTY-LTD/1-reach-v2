@@ -415,7 +415,7 @@ Create these resources in a single resource group (a logical container that grou
 3. **App Service Plan** — Linux, B1 or higher. All three backend services (API, worker, beat) can share one plan for dev/staging.
 4. **App Service × 3** — Create three App Services on the plan above (API, worker, beat). Set runtime to Python 3.12.
 5. **Azure Static Web Apps** — Free tier. `frontend/staticwebapp.config.json` handles SPA routing fallback.
-6. **Azure Blob Storage** — Standard LRS. Create a `media` container. Generate a SAS token via Storage Account → Shared access signature (enable Blob service, Container + Object resource types, Read + Write + Create permissions).
+6. **Azure Blob Storage** — Standard LRS. The `media` container is auto-created on first upload if it doesn't exist. Generate a SAS token via Storage Account → Shared access signature (enable Blob service, Container + Object resource types, Read + Write + Create + List permissions).
 
 #### 2. Configure Azure Cache for Redis
 
