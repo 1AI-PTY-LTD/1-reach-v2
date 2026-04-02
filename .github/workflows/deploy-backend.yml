@@ -79,25 +79,22 @@ jobs:
           publish-profile: ${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}
           package: backend
 
-  # TODO: Re-enable once Redis connectivity from Azure API is confirmed healthy.
-  # The health endpoint checks both DB and Redis — returns 503 if either is down.
-  #
-  # verify-health:
-  #   needs: [deploy-api, deploy-worker, deploy-beat]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Wait for API to be healthy
-  #       run: |
-  #         URL="${{ secrets.VITE_API_BASE_URL }}/api/health/"
-  #         echo "Polling $URL for healthy response..."
-  #         for i in $(seq 1 30); do
-  #           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$URL" 2>/dev/null) || true
-  #           echo "Attempt $i/30: HTTP $STATUS"
-  #           if [ "$STATUS" = "200" ]; then
-  #             echo "API is healthy."
-  #             exit 0
-  #           fi
-  #           sleep 10
-  #         done
-  #         echo "API did not become healthy within 5 minutes."
-  #         exit 1
+  verify-health:
+    needs: [deploy-api, deploy-worker, deploy-beat]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for API to be healthy
+        run: |
+          URL="${{ secrets.VITE_API_BASE_URL }}/api/health/"
+          echo "Polling $URL for healthy response..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$URL" 2>/dev/null) || true
+            echo "Attempt $i/30: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "API is healthy."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "API did not become healthy within 5 minutes."
+          exit 1

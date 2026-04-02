@@ -1,3 +1,5 @@
+import ssl
+
 import redis
 from django.conf import settings
 from django.db import connection
@@ -20,7 +22,10 @@ class HealthCheckView(APIView):
             checks['db'] = str(e)
 
         try:
-            r = redis.from_url(settings.CELERY_BROKER_URL)
+            kwargs = {}
+            if settings.CELERY_BROKER_URL.startswith('rediss://'):
+                kwargs['ssl_cert_reqs'] = ssl.CERT_NONE
+            r = redis.from_url(settings.CELERY_BROKER_URL, **kwargs)
             r.ping()
             checks['redis'] = 'ok'
         except Exception as e:
