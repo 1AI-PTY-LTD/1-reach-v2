@@ -9,8 +9,59 @@ import { useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import Logger from '../utils/logger';
 import { Alert, AlertActions, AlertDescription, AlertTitle } from '../ui/alert';
-import { useCancelScheduleMutation } from '../api/schedulesApi';
+import { useCancelScheduleMutation, getScheduleRecipientsQueryOptions } from '../api/schedulesApi';
 import { useApiClient } from '../lib/ApiClientProvider';
+import { useQuery } from '@tanstack/react-query';
+import { StatusBadge } from './StatusBadge';
+
+function RecipientsTable({ parentId }: { parentId: number }) {
+	const client = useApiClient();
+	const { data: recipients, isLoading } = useQuery(getScheduleRecipientsQueryOptions(client, parentId));
+
+	if (isLoading) {
+		return (
+			<div className="flex items-center gap-2 py-3 px-4 text-sm text-zinc-500">
+				<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+				Loading recipients...
+			</div>
+		);
+	}
+
+	if (!recipients?.length) return null;
+
+	return (
+		<Table>
+			<TableHead>
+				<TableRow>
+					<TableHeader>Name</TableHeader>
+					<TableHeader>Phone</TableHeader>
+					<TableHeader>Status</TableHeader>
+					<TableHeader>Error</TableHeader>
+				</TableRow>
+			</TableHead>
+			<TableBody>
+				{recipients.map((r) => (
+					<TableRow key={r.id}>
+						<TableCell>
+							{r.contact_detail
+								? `${r.contact_detail.first_name} ${r.contact_detail.last_name}`
+								: '-'}
+						</TableCell>
+						<TableCell>
+							{r.phone?.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3') || '-'}
+						</TableCell>
+						<TableCell>
+							<StatusBadge status={r.status} />
+						</TableCell>
+						<TableCell className="text-sm text-zinc-500">
+							{r.error || '-'}
+						</TableCell>
+					</TableRow>
+				))}
+			</TableBody>
+		</Table>
+	);
+}
 
 export function ScheduleDetails({ message }: { message: Schedule | undefined }) {
 	Logger.debug('Rendering ScheduleDetails', {
@@ -76,6 +127,7 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 
 	const canCancel = message.status === 'pending';
 	const canEdit = message.status === 'pending' && dayjs(message.scheduled_time).isAfter(dayjs());
+	const isBatchParent = (message.recipient_count ?? 0) > 0;
 
 	return (
 		<div className="">
@@ -91,6 +143,12 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 					</TableRow>
 				</TableBody>
 			</Table>
+			{isBatchParent && (
+				<>
+					<Divider />
+					<RecipientsTable parentId={message.id} />
+				</>
+			)}
 			<Divider />
 			{(canCancel || canEdit) && (
 				<div className="flex justify-between mt-4">

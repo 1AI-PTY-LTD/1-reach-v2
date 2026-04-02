@@ -159,13 +159,14 @@ class TemplateSerializer(serializers.ModelSerializer):
 
 class ScheduleSerializer(serializers.ModelSerializer):
     contact_detail = ContactSerializer(source='contact', read_only=True)
+    recipient_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Schedule
         fields = [
             'id', 'name', 'template', 'text', 'message_parts',
             'contact', 'contact_detail', 'phone',
-            'group', 'parent',
+            'group', 'parent', 'recipient_count',
             'scheduled_time', 'sent_time',
             'status', 'error',
             'format', 'media_url', 'subject',

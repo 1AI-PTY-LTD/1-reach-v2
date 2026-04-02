@@ -385,6 +385,8 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     queryset = Schedule.objects.filter(
         parent__isnull=True,  # Exclude child schedules
         group__isnull=True,   # Exclude group schedules (handled by /api/group-schedules/)
+    ).annotate(
+        recipient_count=Count('schedule'),
     ).select_related('contact', 'template', 'group').order_by('-scheduled_time')
 
     serializer_class = ScheduleSerializer
@@ -401,6 +403,16 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
         instance.status = ScheduleStatus.CANCELLED
         instance.updated_by = self.request.user
         instance.save(update_fields=['status', 'updated_by'])
+
+    @action(detail=True, methods=['get'], url_path='recipients')
+    def recipients(self, request, pk=None):
+        """GET /api/schedules/{id}/recipients/ — list child schedules for a batch parent."""
+        parent = self.get_object()
+        children = Schedule.objects.filter(
+            parent=parent,
+        ).select_related('contact').order_by('id')
+        serializer = ScheduleSerializer(children, many=True)
+        return Response(serializer.data)
 
     @action(detail=True, methods=['patch'], url_path='force-status')
     def force_status(self, request, pk=None):

@@ -142,6 +142,14 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
+  http.get(`${BASE_URL}/api/schedules/:id/recipients/`, () => {
+    return HttpResponse.json([
+      createSchedule({ id: 10, text: 'Hello Alice', phone: '0412111111', status: 'sent' }),
+      createSchedule({ id: 11, text: 'Hello Bob', phone: '0412222222', status: 'sent' }),
+      createSchedule({ id: 12, text: 'Hello Charlie', phone: '0412333333', status: 'failed' }),
+    ])
+  }),
+
   // Groups
   http.get(`${BASE_URL}/api/groups/`, ({ request }) => {
     const url = new URL(request.url)
