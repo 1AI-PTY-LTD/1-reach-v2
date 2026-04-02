@@ -43,8 +43,15 @@ MMS_RATE=0.20
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0
 
-# Database connection pooling (0 for dev/E2E to avoid connection exhaustion; 600 for production)
-DB_CONN_MAX_AGE=600
+# Database connection pooling (psycopg3 native pool)
+# Pool is enabled by default for production ASGI deployments.
+# Set DB_POOL=false for local dev (docker-compose already does this).
+DB_POOL=true
+DB_POOL_MIN_SIZE=2
+DB_POOL_MAX_SIZE=8
+DB_POOL_TIMEOUT=10
+# Fallback when DB_POOL=false (0 = close after each request)
+DB_CONN_MAX_AGE=0
 
 # Security (set to True in production; False locally)
 SESSION_COOKIE_SECURE=False

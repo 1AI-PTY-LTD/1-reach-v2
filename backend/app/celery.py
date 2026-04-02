@@ -31,11 +31,13 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
 import django
 from celery import Celery, shared_task
+from celery.signals import worker_process_init
 from django.conf import settings
 from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.db import connections
 
 app = Celery('reach')
 app.config_from_object('django.conf:settings', namespace='CELERY')
@@ -47,6 +49,17 @@ from app.utils.failure_classifier import classify_failure
 from app.utils.sms import SendResult, get_sms_provider
 
 logger = logging.getLogger(__name__)
+
+
+@worker_process_init.connect
+def _close_db_connections_on_fork(**kwargs):
+    """Close inherited DB connections after Celery worker fork.
+
+    Prefork workers inherit the parent's DB connections, which are invalid
+    in the child process.  With psycopg3 pooling this also resets the
+    connection pool so the child starts fresh.
+    """
+    connections.close_all()
 
 
 # ---------------------------------------------------------------------------

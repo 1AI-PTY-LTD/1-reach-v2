@@ -27,6 +27,7 @@ services:
       - backend/.env
     environment:
       - DB_CONN_MAX_AGE=0
+      - DB_POOL=false
     depends_on:
       db:
         condition: service_healthy
@@ -58,6 +59,7 @@ services:
       - backend/.env
     environment:
       - DB_CONN_MAX_AGE=0
+      - DB_POOL=false
     depends_on:
       db:
         condition: service_healthy
@@ -74,6 +76,7 @@ services:
       - backend/.env
     environment:
       - DB_CONN_MAX_AGE=0
+      - DB_POOL=false
     depends_on:
       db:
         condition: service_healthy

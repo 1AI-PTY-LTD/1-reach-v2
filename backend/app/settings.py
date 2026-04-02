@@ -89,6 +89,13 @@ ASGI_APPLICATION = 'app.asgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+# Connection pool (psycopg3 native) — bounded per-process pool for ASGI safety.
+# Disable with DB_POOL=false for local dev where pooling is unnecessary.
+_DB_POOL_ENABLED = os.environ.get('DB_POOL', 'true').lower() in ('1', 'true')
+_DB_POOL_MIN = int(os.environ.get('DB_POOL_MIN_SIZE', '2'))
+_DB_POOL_MAX = int(os.environ.get('DB_POOL_MAX_SIZE', '8'))
+_DB_POOL_TIMEOUT = int(os.environ.get('DB_POOL_TIMEOUT', '10'))
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -97,8 +104,16 @@ DATABASES = {
         'PASSWORD': os.environ.get('POSTGRES_PASSWORD'),
         'HOST': os.environ.get('POSTGRES_HOST'),
         'PORT': os.environ.get('POSTGRES_PORT'),
-        'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '600')),
+        'CONN_MAX_AGE': None if _DB_POOL_ENABLED else int(os.environ.get('DB_CONN_MAX_AGE', '0')),
         'CONN_HEALTH_CHECKS': True,
+        'OPTIONS': {
+            **({'sslmode': 'require'} if not DEBUG else {}),
+        },
+        **({'POOL': {
+            'min_size': _DB_POOL_MIN,
+            'max_size': _DB_POOL_MAX,
+            'timeout': _DB_POOL_TIMEOUT,
+        }} if _DB_POOL_ENABLED else {}),
     }
 }
 

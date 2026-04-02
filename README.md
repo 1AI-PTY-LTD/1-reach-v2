@@ -485,7 +485,10 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `POSTGRES_PASSWORD` | Database password |
 | `POSTGRES_HOST` | `<server>.postgres.database.azure.com` |
 | `POSTGRES_PORT` | `5432` |
-| `DB_CONN_MAX_AGE` | `600` |
+| `DB_POOL` | `true` (enable psycopg3 native connection pooling) |
+| `DB_POOL_MIN_SIZE` | `2` (API), `1` (worker/beat — set in startup scripts) |
+| `DB_POOL_MAX_SIZE` | `8` (API), `4` (worker), `2` (beat — set in startup scripts) |
+| `DB_POOL_TIMEOUT` | `10` (seconds to wait for a pooled connection) |
 | `CELERY_BROKER_URL` | `rediss://:<key>@<redis-host>:<port>/0` |
 | `CELERY_RESULT_BACKEND` | Same as broker URL |
 | `CLERK_FRONTEND_API` | Clerk frontend API URL |
@@ -514,6 +517,68 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` |
+
+### Database Connection Pooling
+
+The backend uses **psycopg3 with Django's native connection pool** (`DATABASES["default"]["POOL"]`). This is essential for ASGI deployments — without it, Django under Uvicorn spawns a new thread per request via `asgiref`, and each thread opens a persistent DB connection. Under load, connections accumulate unboundedly until PostgreSQL runs out of connection slots and the entire system (API + Celery) goes down.
+
+The pool provides a **bounded, per-process connection pool**. When all connections in the pool are busy, new requests queue for up to `DB_POOL_TIMEOUT` seconds. If a connection frees up in time, the request proceeds. If not, the request gets a `PoolTimeout` error — but only that request fails, not the whole system.
+
+#### Connection budget
+
+With default settings, the maximum number of PostgreSQL connections is deterministic:
+
+| Process | Instances | Pool max_size | Total connections |
+|---|---|---|---|
+| Web workers (Uvicorn) | 2 | 8 | 16 |
+| Celery workers | 2 | 4 | 8 |
+| Celery Beat | 1 | 2 | 2 |
+| **Total** | | | **26** |
+
+Azure PostgreSQL Flexible Server typically allows 50–100+ connections depending on tier, so this leaves ample headroom for admin queries, migrations, and monitoring.
+
+#### Throughput estimates
+
+With 16 concurrent web DB connections:
+
+| Avg DB time per request | Approx max throughput |
+|---|---|
+| 10ms | ~1,600 req/s |
+| 50ms | ~320 req/s |
+| 200ms | ~80 req/s |
+
+#### Scaling horizontally
+
+When Azure App Service auto-scales to multiple instances, each instance creates its own pools. The total connection count multiplies:
+
+| Web instances | Pool max_size | Web connections | + Celery/Beat | Total |
+|---|---|---|---|---|
+| 1 (default) | 8 | 16 | 10 | **26** |
+| 2 | 8 | 32 | 10 | **42** |
+| 4 | 8 | 64 | 10 | **74** |
+| 4 | 4 (reduced) | 32 | 10 | **42** |
+
+**If you scale beyond 2 web instances**, reduce `DB_POOL_MAX_SIZE` proportionally via Azure App Settings to stay within PostgreSQL's connection limit. No redeploy is needed — just change the env var and restart.
+
+**If you need more than ~100 concurrent DB connections**, enable Azure PostgreSQL Flexible Server's [built-in PgBouncer](https://learn.microsoft.com/en-us/azure/postgresql/flexible-server/concepts-pgbouncer). PgBouncer multiplexes hundreds of application connections through a smaller number of actual PostgreSQL connections, removing the per-instance pool sizing constraint.
+
+#### Configuration reference
+
+| Env var | Default | Where set | Description |
+|---|---|---|---|
+| `DB_POOL` | `true` | Azure App Settings | Enable/disable connection pooling. `false` for local dev. |
+| `DB_POOL_MIN_SIZE` | `2` | App Settings or startup scripts | Minimum warm connections per process |
+| `DB_POOL_MAX_SIZE` | `8` | App Settings or startup scripts | Maximum connections per process |
+| `DB_POOL_TIMEOUT` | `10` | App Settings | Seconds to wait for a connection before `PoolTimeout` |
+| `DB_CONN_MAX_AGE` | `0` | Only used when `DB_POOL=false` | Seconds to keep connections alive (0 = close after each request) |
+
+The startup scripts (`startup-worker.sh`, `startup-beat.sh`) set smaller default pool sizes for Celery processes. Azure App Settings override these if set.
+
+#### Troubleshooting
+
+- **`PoolTimeout` errors in Sentry:** The pool is full and requests are waiting longer than `DB_POOL_TIMEOUT`. Increase `DB_POOL_MAX_SIZE` or investigate slow queries.
+- **`remaining connection slots are reserved`:** Total connections across all processes exceed PostgreSQL's `max_connections`. Reduce `DB_POOL_MAX_SIZE`, scale down instances, or enable PgBouncer.
+- **Celery tasks hanging after deploy:** Forked worker processes may have inherited stale connections from the parent. The `worker_process_init` signal handler in `celery.py` closes these automatically, but if you see issues, restart the worker App Service.
 
 ### Gotchas & Troubleshooting
 
