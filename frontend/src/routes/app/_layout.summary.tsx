@@ -59,7 +59,7 @@ function SummaryContent() {
         <TableBody>
           {data.monthly_stats.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-8 text-zinc-400">
+              <TableCell colSpan={6} className="text-center py-8 text-zinc-400 dark:text-zinc-300">
                 No data yet. Stats will appear after your first message is sent.
               </TableCell>
             </TableRow>

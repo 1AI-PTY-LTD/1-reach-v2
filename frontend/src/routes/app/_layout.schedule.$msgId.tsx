@@ -16,7 +16,7 @@ function MessageDetails() {
   return (
     <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10">
       <Heading>Message Details</Heading>
-      <p className="text-gray-500 mt-2">Select a message from the schedule table to view details.</p>
+      <p className="text-gray-500 dark:text-gray-400 mt-2">Select a message from the schedule table to view details.</p>
     </div>
   )
 }

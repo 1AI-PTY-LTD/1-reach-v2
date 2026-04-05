@@ -63,9 +63,9 @@ export default function ScheduleTable({
 				>
 					<TableCell className="w-8">
 						{isExpanded ? (
-							<ChevronDownIcon className="h-4 w-4 text-gray-500" />
+							<ChevronDownIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
 						) : (
-							<ChevronRightIcon className="h-4 w-4 text-gray-500" />
+							<ChevronRightIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
 						)}
 					</TableCell>
 					<TableCell className="w-32">

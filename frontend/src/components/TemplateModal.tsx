@@ -212,7 +212,7 @@ export function TemplateModal({
                                     autoFocus
                                     autoComplete="off"
                                 />
-                                <div className="text-sm mt-1 flex justify-between">
+                                <div className="text-sm mt-1 flex justify-between text-zinc-500 dark:text-zinc-400">
                                     {field.state.meta.errors && (
                                         <div className="text-red-500 dark:text-red-400">
                                             {field.state.meta.errors}
@@ -222,7 +222,7 @@ export function TemplateModal({
                                         Characters: {field.state.value.length} / {import.meta.env.VITE_MAX_TEMPLATE_LENGTH}
                                     </div>
                                 </div>
-                                <div className="text-sm mt-1 flex justify-end">
+                                <div className="text-sm mt-1 flex justify-end text-zinc-500 dark:text-zinc-400">
                                     Message parts: {field.state.value.length === 0 ? "0" : field.state.value.length > 160 ? "2" : "1"} / 2
                                 </div>
                             </Field>

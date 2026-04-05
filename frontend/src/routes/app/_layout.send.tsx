@@ -439,7 +439,7 @@ function SendContent() {
                           )}
                           {!contactsQuery.isFetching && !groupsQuery.isFetching && contacts.length === 0 && searchGroups.length === 0 && inputValue.length >= 2 && !contactsQuery.isError && !groupsQuery.isError && (
                             <div className="absolute z-50 mt-1 w-full rounded-md bg-white dark:bg-zinc-900 py-2 shadow-lg border border-zinc-950/10 dark:border-white/10">
-                              <p className="px-3 text-sm text-zinc-400">No contacts or groups found</p>
+                              <p className="px-3 text-sm text-zinc-400 dark:text-zinc-300">No contacts or groups found</p>
                             </div>
                           )}
                           {(contacts.length > 0 || searchGroups.length > 0) && (
@@ -476,7 +476,7 @@ function SendContent() {
                         </div>
                       </Combobox>
                     </div>
-                    <div className="text-right text-sm text-zinc-500 mt-1">Recipients: {selectedRecipients.length}</div>
+                    <div className="text-right text-sm text-zinc-500 dark:text-zinc-400 mt-1">Recipients: {selectedRecipients.length}</div>
                     {field.state.meta.errors && (
                       <div className="mt-1 text-sm text-red-500">{field.state.meta.errors}</div>
                     )}
@@ -570,7 +570,7 @@ function SendContent() {
               )}
             </Field>
 
-            <div className="text-sm text-zinc-500 mt-4 text-right">
+            <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-4 text-right">
               <form.Subscribe
                 selector={(state) => ({ templateId: state.values.templateId, text: state.values.text })}
                 children={({ templateId, text }) => {

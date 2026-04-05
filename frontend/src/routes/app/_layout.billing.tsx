@@ -154,13 +154,13 @@ function BillingContent() {
         <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">
           Transaction history
           {data.pagination.total > 0 && (
-            <span className="text-sm font-normal text-zinc-500 ml-2">
+            <span className="text-sm font-normal text-zinc-500 dark:text-zinc-400 ml-2">
               Showing {allTransactions.length} of {data.pagination.total}
             </span>
           )}
         </h3>
         {allTransactions.length === 0 ? (
-          <p className="text-sm text-zinc-400 text-center py-4">No transactions yet.</p>
+          <p className="text-sm text-zinc-400 dark:text-zinc-300 text-center py-4">No transactions yet.</p>
         ) : (
           <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
             <Table>
@@ -177,7 +177,7 @@ function BillingContent() {
               <TableBody>
                 {allTransactions.map((tx) => (
                   <TableRow key={tx.id}>
-                    <TableCell className="whitespace-nowrap text-sm text-zinc-500">
+                    <TableCell className="whitespace-nowrap text-sm text-zinc-500 dark:text-zinc-400">
                       {new Date(tx.created_at).toLocaleString()}
                     </TableCell>
                     <TableCell>

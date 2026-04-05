@@ -126,7 +126,7 @@ function ContactDetails() {
     if (messages.length === 0) {
       return (
         <TableRow>
-          <TableCell colSpan={6} className="text-center py-8 text-zinc-400">
+          <TableCell colSpan={6} className="text-center py-8 text-zinc-400 dark:text-zinc-300">
             No messages for this contact
           </TableCell>
         </TableRow>
@@ -141,9 +141,9 @@ function ContactDetails() {
         >
           <TableCell className="w-4">
             {selectedRowId === entry.id ? (
-              <ChevronDownIcon className="h-4 w-4 text-gray-500" />
+              <ChevronDownIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
             ) : (
-              <ChevronRightExpandIcon className="h-4 w-4 text-gray-500" />
+              <ChevronRightExpandIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
             )}
           </TableCell>
           <TableCell>

@@ -158,8 +158,8 @@ export default function GroupsWidget({ userGroups }: { userGroups: ContactGroup[
 			<div className="flex-1 min-h-0 overflow-auto">
 				{groupsToRender.length === 0 && !isFetching ? (
 					<div className="flex flex-col items-center justify-center py-12 text-center">
-						<Text className="text-zinc-400">No groups yet</Text>
-						<Text className="text-sm text-zinc-400">Click "Add" to create your first group</Text>
+						<Text className="text-zinc-400 dark:text-zinc-300">No groups yet</Text>
+						<Text className="text-sm text-zinc-400 dark:text-zinc-300">Click "Add" to create your first group</Text>
 					</div>
 				) : (
 					<Table>

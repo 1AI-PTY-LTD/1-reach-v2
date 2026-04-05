@@ -405,7 +405,7 @@ export default function GroupScheduleModal({
 											value={field.state.value}
 											onChange={handleMessageChange}
 										/>
-										<div className="text-sm text-zinc-500 mt-1 text-right">
+										<div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 text-right">
 											<div>
 												Characters: {field.state.value.length} /{' '}
 												{import.meta.env.VITE_MAX_TEMPLATE_LENGTH}

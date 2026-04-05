@@ -102,7 +102,7 @@ export default function ContactsWidget({
                 >
                     <div>
                         <div>{entry.first_name} {entry.last_name}</div>
-                        <div className="text-xs text-zinc-500">
+                        <div className="text-xs text-zinc-500 dark:text-zinc-400">
                             {entry.phone.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3')}
                         </div>
                     </div>
@@ -168,8 +168,8 @@ export default function ContactsWidget({
             <div className="flex-1 min-h-0 overflow-auto">
                 {contactsToRender.length === 0 && !isFetching ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <Text className="text-zinc-400">No contacts yet</Text>
-                        <Text className="text-sm text-zinc-400">Click "Add" to create your first contact</Text>
+                        <Text className="text-zinc-400 dark:text-zinc-300">No contacts yet</Text>
+                        <Text className="text-sm text-zinc-400 dark:text-zinc-300">Click "Add" to create your first contact</Text>
                     </div>
                 ) : (
                     <Table dense>

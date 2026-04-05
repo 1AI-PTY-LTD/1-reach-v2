@@ -20,7 +20,7 @@ function RecipientsTable({ parentId }: { parentId: number }) {
 
 	if (isLoading) {
 		return (
-			<div className="flex items-center gap-2 py-3 px-4 text-sm text-zinc-500">
+			<div className="flex items-center gap-2 py-3 px-4 text-sm text-zinc-500 dark:text-zinc-400">
 				<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
 				Loading recipients...
 			</div>
@@ -53,7 +53,7 @@ function RecipientsTable({ parentId }: { parentId: number }) {
 						<TableCell>
 							<StatusBadge status={r.status} />
 						</TableCell>
-						<TableCell className="text-sm text-zinc-500">
+						<TableCell className="text-sm text-zinc-500 dark:text-zinc-400">
 							{r.error || '-'}
 						</TableCell>
 					</TableRow>

@@ -167,7 +167,7 @@ export function UsersContent() {
         <TableBody>
           {users.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-8 text-zinc-400">
+              <TableCell colSpan={6} className="text-center py-8 text-zinc-400 dark:text-zinc-300">
                 No users yet. Invite someone to get started.
               </TableCell>
             </TableRow>
@@ -179,7 +179,7 @@ export function UsersContent() {
                 <TableCell>
                   {user.first_name} {user.last_name}
                   {isSelf && (
-                    <span className="ml-2 text-xs text-zinc-400">(you)</span>
+                    <span className="ml-2 text-xs text-zinc-400 dark:text-zinc-300">(you)</span>
                   )}
                 </TableCell>
                 <TableCell>{user.email}</TableCell>
