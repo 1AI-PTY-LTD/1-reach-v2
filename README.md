@@ -178,7 +178,7 @@ Celery worker (both paths):
 
 Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults to ~1m → 2m → 4m → 8m, capped at 1h. A `dispatch_due_messages` beat task runs every 60 s to pick up scheduled sends and recover stuck RETRYING/PROCESSING schedules.
 
-**Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED. All three startup scripts (`startup.sh`, `startup-worker.sh`, `startup-beat.sh`) include dependency wait loops that poll DB (and Redis for worker/beat) for up to 2.5 minutes before proceeding, preventing crash loops during Azure App Service restarts.
+**Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED. All three startup scripts include DB readiness wait loops (up to 2.5 minutes). Worker and beat scripts also start a background HTTP server on `$PORT` so Azure App Service health probes get a response (without this, Azure kills the container — see [gotchas](#workerbbeat-require-an-http-listener)). Lifecycle events are logged via Celery signals: `beat_init`, `worker_ready`, `worker_shutting_down`. Shell-level SIGTERM traps in the startup scripts log when Azure sends a graceful shutdown signal.
 
 **Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
 
@@ -396,8 +396,8 @@ The app deploys to Azure as five services. GitHub Actions workflows (`.github/wo
 | Component | Azure Service | Startup |
 |-----------|---------------|---------|
 | Backend API | App Service (Python 3.12, Linux) | `bash startup.sh` — waits for DB, migrations, collectstatic, gunicorn + uvicorn ASGI workers |
-| Celery Worker | App Service (same plan) | `bash startup-worker.sh` — waits for DB + Redis, processes `messages` queue |
-| Celery Beat | App Service (same plan) | `bash startup-beat.sh` — waits for DB + Redis, `DatabaseScheduler`, dispatches due messages every 60s |
+| Celery Worker | App Service (same plan) | `bash startup-worker.sh` — HTTP health responder + waits for DB, processes `messages` queue |
+| Celery Beat | App Service (same plan) | `bash startup-beat.sh` — HTTP health responder + waits for DB, `DatabaseScheduler`, dispatches due messages every 60s |
 | Frontend | Azure Static Web Apps | Vite build → `dist/` uploaded via `Azure/static-web-apps-deploy` |
 | Database | Azure Database for PostgreSQL | Flexible Server |
 | Redis | Azure Cache for Redis | Celery broker + result backend |
@@ -436,7 +436,7 @@ For each App Service (API, worker, beat):
 - Worker: `bash startup-worker.sh`
 - Beat: `bash startup-beat.sh`
 
-**Settings → Configuration → General settings → Always On:** Set to **On**. Required for worker and beat services to stay alive between requests. Without it, Azure unloads idle processes and Celery tasks stop being consumed.
+**Settings → Configuration → General settings → Always On:** Set to **On**. Required for all three services. Azure unloads idle processes without it. Note: Always On alone is not sufficient for worker/beat — they also need the HTTP health responder (see [Worker/beat require an HTTP listener](#workerbbeat-require-an-http-listener) below).
 
 **Settings → Environment variables** — set the variables listed in the [Environment Variables](#environment-variables) table below.
 
@@ -460,7 +460,11 @@ In your GitHub repo → Settings → Secrets and variables → Actions, set the 
 
 #### 6. Deploy
 
-Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab. The backend deploy workflow includes a `verify-health` job that polls `/api/health/` for up to 5 minutes after deployment, failing the workflow if the API does not become healthy.
+Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab. The backend deploy workflow:
+
+1. Deploys code to all three App Services via `azure/webapps-deploy`
+2. Explicitly stops and starts the worker and beat services via `az webapp stop/start` (Azure doesn't reliably restart non-web App Services after zip deploy — see [gotcha below](#workerbbeat-require-an-http-listener))
+3. Polls `/api/health/` for up to 5 minutes, failing the workflow if the API does not become healthy
 
 #### 7. Verify
 
@@ -516,9 +520,25 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_WORKER_PUBLISH_PROFILE` | Worker App Service → Download publish profile |
 | `AZURE_BEAT_APP_NAME` | Beat App Service name |
 | `AZURE_BEAT_PUBLISH_PROFILE` | Beat App Service → Download publish profile |
+| `AZURE_CREDENTIALS` | Service principal JSON — see [Creating AZURE_CREDENTIALS](#creating-azure_credentials) below |
+| `AZURE_RESOURCE_GROUP` | Resource group name containing all App Services |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` (also used by backend deploy's post-deploy health check) |
+
+#### Creating AZURE_CREDENTIALS
+
+The backend deploy workflow uses `azure/login` + `az webapp stop/start` to restart worker and beat after deploying. This requires a service principal with Contributor access to the resource group:
+
+```bash
+az ad sp create-for-rbac \
+  --name "github-deploy-1reach" \
+  --role contributor \
+  --scopes /subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP_NAME> \
+  --json-auth
+```
+
+Find `<SUBSCRIPTION_ID>` at Azure Portal → Subscriptions. Paste the entire JSON output as the `AZURE_CREDENTIALS` secret value in GitHub.
 
 ### Database Connection Pooling
 
@@ -627,6 +647,25 @@ By default, Azure Redis blocks all inbound connections. Without firewall rules, 
 
 #### Azure Cache for Redis — do not URL-encode the access key
 Azure Redis access keys are base64 strings that may end in `=`. Do **not** URL-encode `=` to `%3D` in `CELERY_BROKER_URL` — `redis-py` parses the password using `@` as the delimiter and handles `=` correctly. URL-encoding causes auth failures.
+
+#### Azure Cache for Redis — `redis.from_url()` and TLS `ssl_cert_reqs`
+The `_ensure_redis_ssl()` helper in `settings.py` appends `ssl_cert_reqs=CERT_NONE` to `rediss://` URLs. Celery reads this via its own `CELERY_BROKER_USE_SSL` setting, but `redis.from_url()` (used in the health endpoint and startup scripts) rejects the string `"CERT_NONE"` from the URL query param — it expects the `ssl.CERT_NONE` integer constant passed as a keyword argument. The health endpoint (`health.py`) strips the query param and passes `ssl_cert_reqs=ssl.CERT_NONE` explicitly. If you create new `redis.from_url()` calls, do the same.
+
+#### Worker/beat require an HTTP listener
+Azure App Service expects every container to respond to HTTP health probes on `$PORT` (default 8000). The API service satisfies this via gunicorn, but Celery worker and beat have no HTTP listener. Without one:
+
+- Azure may not start the container even when the Portal shows status "Running"
+- Azure kills containers that don't respond to health probes within ~2 minutes of startup
+- `az webapp restart` and manual restarts from the Portal may have no effect
+- Containers get periodically recycled to a blank state, losing the deployment artifact
+
+**Fix:** Both `startup-worker.sh` and `startup-beat.sh` start a minimal Python HTTP server as a background process before launching Celery. This server responds `200 ok` to any request on `$PORT`, satisfying Azure's health probes. This is a standard workaround for running background processes on Azure App Service. For a production setup, consider migrating worker/beat to Azure Container Apps which natively supports non-HTTP workloads.
+
+#### Worker/beat don't restart automatically after deploy
+`azure/webapps-deploy` pushes code but doesn't reliably restart non-web App Services. The API restarts because Azure detects new code for web processes, but worker and beat may continue running old code (or not run at all). **Fix:** The deploy workflow uses `az webapp stop` + `az webapp start` after deploying worker and beat. This requires `AZURE_CREDENTIALS` and `AZURE_RESOURCE_GROUP` secrets. Note: `az webapp restart` alone is insufficient — it's a soft restart that Azure may ignore for idle non-web containers. The stop/start cycle forces Azure to tear down and recreate the container.
+
+#### Deployment artifacts can disappear on container recycle
+When Azure recycles a non-web App Service container (which happens periodically), the fresh container may boot with an empty `/home/site/wwwroot` — no build manifest, no virtual environment, no startup script. The log shows `Could not find build manifest file` followed by `bash: startup-worker.sh: No such file or directory`. The HTTP health responder in the startup scripts prevents most recycling by keeping the container alive. If it does happen, re-trigger the deploy workflow or manually stop/start the App Service.
 
 ---
 
