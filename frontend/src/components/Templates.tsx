@@ -32,7 +32,7 @@ function TemplatesContent() {
     );
 
     if (selectedTemplateId && !getTemplateById(selectedTemplateId)) {
-        setSelectedTemplateId(templates[0].id);
+        setSelectedTemplateId(templates.length > 0 ? templates[0].id : undefined);
     }
 
     const renderedTemplates = templates.map((entry) => {
