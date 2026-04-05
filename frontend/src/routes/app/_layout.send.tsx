@@ -33,6 +33,7 @@ import { FileUpload } from '../../ui/file-upload'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 import { toast } from 'sonner'
+import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms'
 
 export const Route = createFileRoute('/app/_layout/send')({
   component: Send,
@@ -536,8 +537,8 @@ function SendContent() {
                         }
                       }
 
-                      if (newValue.length > Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH)) {
-                        field.handleChange(newValue.substring(0, Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH)))
+                      if (newValue.length > SMS_MAX_LENGTH) {
+                        field.handleChange(newValue.substring(0, SMS_MAX_LENGTH))
                       } else {
                         field.handleChange(newValue)
                       }
@@ -570,39 +571,32 @@ function SendContent() {
               )}
             </Field>
 
-            <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-4 text-right">
-              <form.Subscribe
-                selector={(state) => ({ templateId: state.values.templateId, text: state.values.text })}
-                children={({ templateId, text }) => {
-                  let textToCount = ''
-                  const maxLength = parseInt(import.meta.env.VITE_MAX_TEMPLATE_LENGTH) || 320
+            <form.Subscribe
+              selector={(state) => ({ templateId: state.values.templateId, text: state.values.text })}
+              children={({ templateId, text }) => {
+                let textToCount = ''
 
-                  if (templateId && templates) {
-                    const selectedTemplate = templates.find(
-                      (template) => template.id.toString() === templateId,
-                    )
-                    textToCount = selectedTemplate?.text || ''
-                  } else {
-                    textToCount = text || ''
-                  }
-
-                  const messageTypePrefix = uploadedFileUrl ? 'MMS' : 'SMS'
-
-                  return (
-                    <>
-                      <div>
-                        {messageTypePrefix} - Characters: {textToCount.length} / {maxLength}
-                      </div>
-                      <div>
-                        {uploadedFileUrl
-                          ? `${messageTypePrefix} - Message parts: 1 / 1`
-                          : `${messageTypePrefix} - Message parts: ${textToCount.length === 0 ? '0' : textToCount.length > 160 ? '2' : '1'} / 2`}
-                      </div>
-                    </>
+                if (templateId && templates) {
+                  const selectedTemplate = templates.find(
+                    (template) => template.id.toString() === templateId,
                   )
-                }}
-              />
-            </div>
+                  textToCount = selectedTemplate?.text || ''
+                } else {
+                  textToCount = text || ''
+                }
+
+                const messageTypePrefix = uploadedFileUrl ? 'MMS' : 'SMS'
+                const messageParts = uploadedFileUrl
+                  ? '1 of 1'
+                  : `${textToCount.length === 0 ? '0' : textToCount.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2`
+
+                return (
+                  <div className={`text-sm mt-4 text-right ${!uploadedFileUrl && textToCount.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                    {messageTypePrefix} · {textToCount.length} / {SMS_MAX_LENGTH} characters · {messageParts} message parts
+                  </div>
+                )
+              }}
+            />
 
             <div className="flex justify-end gap-2 mt-4">
               <Button

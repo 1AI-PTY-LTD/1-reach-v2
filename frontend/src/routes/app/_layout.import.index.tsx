@@ -11,6 +11,7 @@ import Logger from '../../utils/logger'
 import { sendSmsToGroup } from '../../api/smsApi'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
+import { SMS_MAX_LENGTH } from '../../lib/sms'
 
 export const Route = createFileRoute('/app/_layout/import/')({
   component: ImportIndex,
@@ -34,7 +35,7 @@ function GroupedDataView({ data, existingGroups }: { data: GroupedData; existing
   const [editedGroups, setEditedGroups] = useState<Record<string, string>>({})
   const [sendingState, setSendingState] = useState<Record<string, { isSending: boolean; error: string | null; success: string | null }>>({})
 
-  const maxTemplateLength = parseInt(import.meta.env.VITE_MAX_TEMPLATE_LENGTH) || 306
+  const maxTemplateLength = SMS_MAX_LENGTH
 
   const existingGroupNames = new Set(existingGroups.map((group) => group.name.trim()))
 

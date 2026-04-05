@@ -29,21 +29,21 @@ describe('TemplateDetails', () => {
     const template = createTemplate({ text: 'Short message' })
     renderWithProviders(<TemplateDetails template={template} {...defaultProps} />)
 
-    expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument()
+    expect(screen.getByText(/1 of 2/)).toBeInTheDocument()
   })
 
   it('shows message parts as 2 for long text (>160 chars)', () => {
     const template = createTemplate({ text: 'A'.repeat(161) })
     renderWithProviders(<TemplateDetails template={template} {...defaultProps} />)
 
-    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument()
+    expect(screen.getByText(/2 of 2/)).toBeInTheDocument()
   })
 
   it('shows message parts as 0 for empty text', () => {
     const template = createTemplate({ text: '' })
     renderWithProviders(<TemplateDetails template={template} {...defaultProps} />)
 
-    expect(screen.getByText(/0 \/ 2/)).toBeInTheDocument()
+    expect(screen.getByText(/0 of 2/)).toBeInTheDocument()
   })
 
   it('calls setTemplateId and setIsOpen on edit click', async () => {

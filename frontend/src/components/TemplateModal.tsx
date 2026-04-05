@@ -12,6 +12,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import Logger from "../utils/logger";
 import { toast } from "sonner";
+import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from "../lib/sms";
 
 export function TemplateModal({
     isOpen,
@@ -124,13 +125,13 @@ export function TemplateModal({
             component: "TemplateModal",
             data: {
                 textLength: newValue.length,
-                truncated: newValue.length > import.meta.env.VITE_MAX_TEMPLATE_LENGTH
+                truncated: newValue.length > SMS_MAX_LENGTH
             }
         });
 
-        if (newValue.length > import.meta.env.VITE_MAX_TEMPLATE_LENGTH) {
+        if (newValue.length > SMS_MAX_LENGTH) {
             //allow up to max template length characters
-            field.handleChange(newValue.substring(0, import.meta.env.VITE_MAX_TEMPLATE_LENGTH));
+            field.handleChange(newValue.substring(0, SMS_MAX_LENGTH));
         } else {
             field.handleChange(newValue);
         }
@@ -187,7 +188,7 @@ export function TemplateModal({
                                         }
                                     });
                                     return "Text must be at least 3 characters";
-                                } else if (value.length > import.meta.env.VITE_MAX_TEMPLATE_LENGTH) {
+                                } else if (value.length > SMS_MAX_LENGTH) {
                                     Logger.warn("Template text validation failed", {
                                         component: "TemplateModal",
                                         data: {
@@ -195,7 +196,7 @@ export function TemplateModal({
                                             reason: "too long"
                                         }
                                     });
-                                    return `Text must be less than ${import.meta.env.VITE_MAX_TEMPLATE_LENGTH} characters`;
+                                    return `Text must be less than ${SMS_MAX_LENGTH} characters`;
                                 }
                                 return undefined;
                             },
@@ -212,18 +213,13 @@ export function TemplateModal({
                                     autoFocus
                                     autoComplete="off"
                                 />
-                                <div className="text-sm mt-1 flex justify-between text-zinc-500 dark:text-zinc-400">
-                                    {field.state.meta.errors && (
-                                        <div className="text-red-500 dark:text-red-400">
-                                            {field.state.meta.errors}
-                                        </div>
-                                    )}
-                                    <div>
-                                        Characters: {field.state.value.length} / {import.meta.env.VITE_MAX_TEMPLATE_LENGTH}
+                                {field.state.meta.errors && (
+                                    <div className="text-sm mt-1 text-red-500 dark:text-red-400">
+                                        {field.state.meta.errors}
                                     </div>
-                                </div>
-                                <div className="text-sm mt-1 flex justify-end text-zinc-500 dark:text-zinc-400">
-                                    Message parts: {field.state.value.length === 0 ? "0" : field.state.value.length > 160 ? "2" : "1"} / 2
+                                )}
+                                <div className={`text-sm mt-1 text-right ${field.state.value.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                                    {field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? "0" : field.state.value.length > SMS_SEGMENT_LIMIT ? "2" : "1"} of 2 message parts
                                 </div>
                             </Field>
                         )}

@@ -4,7 +4,8 @@ import { Divider } from "../ui/divider";
 import { Heading } from "../ui/heading";
 import { Text } from "../ui/text";
 import type { Template } from "../types/template.types";
-import { useDeleteTemplateMutation } from "../api/templatesApi";
+import { useUpdateTemplateMutation } from "../api/templatesApi";
+import { SMS_SEGMENT_LIMIT } from "../lib/sms";
 import { useApiClient } from "../lib/ApiClientProvider";
 import Logger from "../utils/logger";
 import { Alert, AlertTitle, AlertDescription, AlertActions } from "../ui/alert";
@@ -31,7 +32,7 @@ export default function TemplateDetails({
 
     const [isAlertOpen, setIsAlertOpen] = useState(false);
     const client = useApiClient();
-    const deleteTemplateMutation = useDeleteTemplateMutation(client);
+    const updateTemplate = useUpdateTemplateMutation(client);
 
     const handleEdit = () => {
         Logger.info("Opening edit template modal", {
@@ -47,7 +48,7 @@ export default function TemplateDetails({
 
     const handleDelete = async () => {
         try {
-            await deleteTemplateMutation.mutateAsync(template.id);
+            await updateTemplate.mutateAsync({ id: template.id, is_active: false });
             toast.success("Template deleted");
         } catch {
             toast.error("Failed to delete template");
@@ -58,7 +59,7 @@ export default function TemplateDetails({
         <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 bg-white dark:bg-zinc-900 shadow-lg">
             <div className="flex justify-between mb-2">
                 <Heading>Template Name: {template.name}</Heading>
-                <Heading>Message parts: {template.text.length === 0 ? "0" : template.text.length > 160 ? "2" : "1"} / 2</Heading>
+                <Heading>Message parts: {template.text.length === 0 ? "0" : template.text.length > SMS_SEGMENT_LIMIT ? "2" : "1"} of 2</Heading>
 
             </div>
             <Text>{template.text}</Text>
@@ -98,9 +99,9 @@ export default function TemplateDetails({
                             await handleDelete();
                             setIsAlertOpen(false);
                         }}
-                        disabled={deleteTemplateMutation.isPending}
+                        disabled={updateTemplate.isPending}
                     >
-                        {deleteTemplateMutation.isPending ? (
+                        {updateTemplate.isPending ? (
                             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                         ) : (
                             <>

@@ -19,6 +19,7 @@ import type { SendSmsRequest } from "../../types/sms.types";
 import { useState } from "react";
 import { useApiClient } from "../../lib/ApiClientProvider";
 import { ScheduleDateTimePicker, isTimeInPast, shouldSendImmediately } from '../ScheduleDateTimePicker';
+import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms';
 
 
 
@@ -211,7 +212,7 @@ export function ContactMessageModal({
             component: "ContactMessageModal",
             data: {
                 textLength: newValue.length,
-                truncated: newValue.length > Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH),
+                truncated: newValue.length > SMS_MAX_LENGTH,
                 currentTemplateId
             }
         });
@@ -235,8 +236,8 @@ export function ContactMessageModal({
         }
 
         // Handle length limit and set field value
-        if (newValue.length > Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH)) {
-            field.handleChange(newValue.substring(0, Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH)));
+        if (newValue.length > SMS_MAX_LENGTH) {
+            field.handleChange(newValue.substring(0, SMS_MAX_LENGTH));
         } else {
             field.handleChange(newValue);
         }
@@ -370,20 +371,8 @@ export function ContactMessageModal({
                                     value={field.state.value}
                                     onChange={(e) => handleMessageChange(e, field)}
                                 />
-                                <div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 text-right">
-                                    <div>
-                                        Characters: {field.state.value.length} /{' '}
-                                        {import.meta.env.VITE_MAX_TEMPLATE_LENGTH}
-                                    </div>
-                                    <div>
-                                        Message parts:{' '}
-                                        {field.state.value.length === 0
-                                            ? '0'
-                                            : field.state.value.length > 160
-                                                ? '2'
-                                                : '1'}{' '}
-                                        / 2
-                                    </div>
+                                <div className={`text-sm mt-1 text-right ${field.state.value.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                                    {field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? '0' : field.state.value.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2 message parts
                                 </div>
                             </Field>
                         )}

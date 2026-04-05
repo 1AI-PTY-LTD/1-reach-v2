@@ -15,6 +15,7 @@ import type { SendGroupSmsRequest } from '../../types/sms.types';
 import { useApiClient } from '../../lib/ApiClientProvider';
 import { toast } from 'sonner';
 import { ScheduleDateTimePicker, isTimeInPast, shouldSendImmediately } from '../ScheduleDateTimePicker';
+import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms';
 
 export default function GroupScheduleModal({
 	groupId,
@@ -386,9 +387,9 @@ export default function GroupScheduleModal({
 									}
 
 									// Handle length limit
-									if (newValue.length > Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH)) {
+									if (newValue.length > SMS_MAX_LENGTH) {
 										field.handleChange(
-											newValue.substring(0, Number(import.meta.env.VITE_MAX_TEMPLATE_LENGTH))
+											newValue.substring(0, SMS_MAX_LENGTH)
 										);
 									} else {
 										field.handleChange(newValue);
@@ -405,20 +406,8 @@ export default function GroupScheduleModal({
 											value={field.state.value}
 											onChange={handleMessageChange}
 										/>
-										<div className="text-sm text-zinc-500 dark:text-zinc-400 mt-1 text-right">
-											<div>
-												Characters: {field.state.value.length} /{' '}
-												{import.meta.env.VITE_MAX_TEMPLATE_LENGTH}
-											</div>
-											<div>
-												Message parts:{' '}
-												{field.state.value.length === 0
-													? '0'
-													: field.state.value.length > 160
-														? '2'
-														: '1'}{' '}
-												/ 2
-											</div>
+										<div className={`text-sm mt-1 text-right ${field.state.value.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+											{field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? '0' : field.state.value.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2 message parts
 										</div>
 									</Field>
 								);

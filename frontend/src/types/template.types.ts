@@ -17,4 +17,5 @@ export type UpdateTemplate = {
   id: number
   name?: string
   text?: string
+  is_active?: boolean
 }

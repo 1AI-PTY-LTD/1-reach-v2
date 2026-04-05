@@ -57,32 +57,6 @@ export function useCreateTemplateMutation(client: ApiClient) {
   })
 }
 
-export function useDeleteTemplateMutation(client: ApiClient) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (id: number) => {
-      Logger.debug('Deleting template', {
-        component: 'templatesApi.deleteTemplate',
-        data: { templateId: id },
-      })
-      return client.del<void>(`/api/templates/${id}/`)
-    },
-    onSuccess: (_data, id) => {
-      Logger.info('Template deleted successfully', {
-        component: 'templatesApi.deleteTemplate',
-        data: { templateId: id },
-      })
-      return queryClient.invalidateQueries({ queryKey: ['templates'] })
-    },
-    onError: (error) => {
-      Logger.error('Failed to delete template', {
-        component: 'templatesApi.deleteTemplate',
-        data: { error: error.message },
-      })
-    },
-  })
-}
-
 export function useUpdateTemplateMutation(client: ApiClient) {
   const queryClient = useQueryClient()
   return useMutation({

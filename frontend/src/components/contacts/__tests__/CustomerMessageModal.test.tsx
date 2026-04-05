@@ -47,12 +47,12 @@ describe('ContactMessageModal', () => {
     const textarea = screen.getByPlaceholderText(/Enter your message/)
     await user.type(textarea, 'Hello world')
 
-    expect(screen.getByText(/Characters: 11/)).toBeInTheDocument()
+    expect(screen.getByText(/11 \/ 306 characters/)).toBeInTheDocument()
   })
 
   it('shows message parts as 0 for empty text', () => {
     renderWithProviders(<ContactMessageModal {...defaultProps} />)
-    expect(screen.getByText(/Message parts: 0/)).toBeInTheDocument()
+    expect(screen.getByText(/0 of 2 message parts/)).toBeInTheDocument()
   })
 
   it('shows message parts as 1 for short text', async () => {
@@ -60,7 +60,7 @@ describe('ContactMessageModal', () => {
     renderWithProviders(<ContactMessageModal {...defaultProps} />)
 
     await user.type(screen.getByPlaceholderText(/Enter your message/), 'Hello')
-    expect(screen.getByText(/Message parts: 1/)).toBeInTheDocument()
+    expect(screen.getByText(/1 of 2 message parts/)).toBeInTheDocument()
   })
 
   it('shows Create button in create mode', () => {

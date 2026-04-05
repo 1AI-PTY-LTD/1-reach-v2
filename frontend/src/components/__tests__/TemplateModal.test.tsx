@@ -48,12 +48,12 @@ describe('TemplateModal', () => {
     const textInput = screen.getByPlaceholderText('Template text')
     await user.type(textInput, 'Hello')
 
-    expect(screen.getByText(/Characters: 5/)).toBeInTheDocument()
+    expect(screen.getByText(/5 \/ 306 characters/)).toBeInTheDocument()
   })
 
   it('shows message parts as 0 for empty text', () => {
     renderWithProviders(<TemplateModal {...defaultProps} />)
-    expect(screen.getByText(/Message parts: 0/)).toBeInTheDocument()
+    expect(screen.getByText(/0 of 2 message parts/)).toBeInTheDocument()
   })
 
   it('shows message parts as 1 for text under 160 chars', async () => {
@@ -63,7 +63,7 @@ describe('TemplateModal', () => {
     const textInput = screen.getByPlaceholderText('Template text')
     await user.type(textInput, 'Hello world')
 
-    expect(screen.getByText(/Message parts: 1/)).toBeInTheDocument()
+    expect(screen.getByText(/1 of 2 message parts/)).toBeInTheDocument()
   })
 
   it('shows Create button in create mode', () => {

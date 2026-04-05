@@ -8,7 +8,6 @@ vi.stubEnv('VITE_API_BASE_URL', 'http://localhost:8000')
 vi.stubEnv('VITE_LOG_LEVEL', 'error')
 vi.stubEnv('VITE_CLERK_PUBLISHABLE_KEY', 'pk_test_mock')
 vi.stubEnv('VITE_IMPORT_ENABLED', 'true')
-vi.stubEnv('VITE_MAX_TEMPLATE_LENGTH', '306')
 vi.stubEnv('VITE_MIN_MESSAGE_DELAY', '5')
 
 // Mock Clerk
