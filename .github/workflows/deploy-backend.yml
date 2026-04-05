@@ -62,12 +62,13 @@ jobs:
           publish-profile: ${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}
           package: backend
 
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Restart worker
-        run: |
-          USER=$(echo '${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}' | grep -oP 'userName="\K[^"]+' | head -1)
-          PASS=$(echo '${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}' | grep -oP 'userPWD="\K[^"]+' | head -1)
-          curl -X POST "https://${{ secrets.AZURE_WORKER_APP_NAME }}.scm.azurewebsites.net/api/restart" \
-            -u "$USER:$PASS" --max-time 60 -s -o /dev/null -w "HTTP %{http_code}\n"
+        run: az webapp restart --name ${{ secrets.AZURE_WORKER_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
 
   deploy-beat:
     needs: build
@@ -86,12 +87,13 @@ jobs:
           publish-profile: ${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}
           package: backend
 
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Restart beat
-        run: |
-          USER=$(echo '${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}' | grep -oP 'userName="\K[^"]+' | head -1)
-          PASS=$(echo '${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}' | grep -oP 'userPWD="\K[^"]+' | head -1)
-          curl -X POST "https://${{ secrets.AZURE_BEAT_APP_NAME }}.scm.azurewebsites.net/api/restart" \
-            -u "$USER:$PASS" --max-time 60 -s -o /dev/null -w "HTTP %{http_code}\n"
+        run: az webapp restart --name ${{ secrets.AZURE_BEAT_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
 
   verify-health:
     needs: [deploy-api, deploy-worker, deploy-beat]
