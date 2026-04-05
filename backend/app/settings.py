@@ -288,7 +288,8 @@ STORAGE_PROVIDER_CLASS = os.environ.get(
 
 STORAGE_PROVIDER_CONFIG = {
     # Azure Blob Storage settings (only used if AzureBlobStorageProvider selected)
-    'account_url': os.environ.get('AZURE_BLOB_URL', ''),
+    'account_name': os.environ.get('AZURE_STORAGE_ACCOUNT_NAME', ''),
+    'account_key': os.environ.get('AZURE_STORAGE_ACCOUNT_KEY', ''),
     'container': os.environ.get('AZURE_CONTAINER', 'media'),
 }
 

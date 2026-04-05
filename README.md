@@ -82,7 +82,8 @@ cp frontend/.envexample frontend/.env
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Yes | Clerk webhook signing secret (`whsec_...`) |
 | `DEBUG` | No | Set to `1` for development |
 | `STORAGE_PROVIDER_CLASS` | No | Defaults to `MockStorageProvider`; set to `AzureBlobStorageProvider` for real storage |
-| `AZURE_BLOB_URL` | If using Azure | Azure Blob Storage SAS URL |
+| `AZURE_STORAGE_ACCOUNT_NAME` | If using Azure | Azure Storage account name |
+| `AZURE_STORAGE_ACCOUNT_KEY` | If using Azure | Azure Storage account key (for per-blob SAS tokens) |
 | `AZURE_CONTAINER` | If using Azure | Blob container name (default: `media`) |
 | `SENTRY_DSN` | No | Sentry DSN for error tracking |
 | `LOG_LEVEL` | No | `INFO` or `DEBUG` (default: `INFO`) |
@@ -415,7 +416,7 @@ Create these resources in a single resource group (a logical container that grou
 3. **App Service Plan** — Linux, B1 or higher. All three backend services (API, worker, beat) can share one plan for dev/staging.
 4. **App Service × 3** — Create three App Services on the plan above (API, worker, beat). Set runtime to Python 3.12.
 5. **Azure Static Web Apps** — Free tier. `frontend/staticwebapp.config.json` handles SPA routing fallback.
-6. **Azure Blob Storage** — Standard LRS. The `media` container is auto-created on first upload if it doesn't exist. Generate a SAS token via Storage Account → Shared access signature (enable Blob service, Container + Object resource types, Read + Write + Create + List permissions).
+6. **Azure Blob Storage** — Standard LRS. The `media` container is auto-created on first upload if it doesn't exist. Copy the account name and one of the access keys from Storage Account → Access keys. Per-blob read-only SAS tokens (1h expiry) are generated at upload time.
 
 #### 2. Configure Azure Cache for Redis
 
@@ -496,7 +497,8 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Clerk webhook signing secret (`whsec_...`) |
 | `CLERK_AUTHORIZED_PARTIES` | `https://<static-web-app>.azurestaticapps.net` |
 | `STORAGE_PROVIDER_CLASS` | `app.utils.storage.AzureBlobStorageProvider` |
-| `AZURE_BLOB_URL` | `https://<account>.blob.core.windows.net/?<sas-token>` |
+| `AZURE_STORAGE_ACCOUNT_NAME` | `<account-name>` |
+| `AZURE_STORAGE_ACCOUNT_KEY` | `<account-key>` |
 | `AZURE_CONTAINER` | `media` |
 | `LOG_LEVEL` | `INFO` |
 | `LOG_FORMAT` | `json` |

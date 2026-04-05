@@ -1,9 +1,19 @@
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, cast
+from urllib.parse import urlparse
 
+from azure.core.credentials import AzureNamedKeyCredential
+from azure.core.exceptions import AzureError, ResourceNotFoundError
+from azure.storage.blob import (
+    BlobSasPermissions,
+    BlobServiceClient,
+    ContentSettings,
+    generate_blob_sas,
+)
 from django.conf import settings
 from rest_framework.exceptions import ValidationError
 
@@ -89,6 +99,29 @@ class StorageProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def delete_blob(self, blob_name: str) -> bool:
+        """Delete a blob from storage.
+
+        Args:
+            blob_name: The blob filename to delete
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        pass
+
+    @staticmethod
+    def extract_blob_name(url: str) -> Optional[str]:
+        """Extract the blob filename from a storage URL.
+
+        Parses the last path segment from the URL, stripping query params.
+        Works for both Azure and mock URLs.
+        """
+        parsed = urlparse(url)
+        path = parsed.path.rstrip('/')
+        return path.split('/')[-1] if path else None
+
 
 class MockStorageProvider(StorageProvider):
     """Mock storage provider for development and testing.
@@ -117,42 +150,48 @@ class MockStorageProvider(StorageProvider):
             'error': None,
         }
 
+    def delete_blob(self, blob_name: str) -> bool:
+        """Log deletion and return success."""
+        logger.info('MockStorageProvider.delete_blob', extra={'blob_name': blob_name})
+        return True
+
 
 class AzureBlobStorageProvider(StorageProvider):
     """Azure Blob Storage provider.
 
     Uses azure-storage-blob SDK to upload files to Azure Blob Storage.
-    Requires account_url (with SAS token) and container name.
+    Authenticates with account name + key to enable per-blob SAS token generation.
     """
 
-    def __init__(self, account_url: str = '', container: str = 'media'):
+    SAS_EXPIRY_HOURS = 1
+
+    def __init__(self, account_name: str = '', account_key: str = '', container: str = 'media'):
         """Initialize Azure Blob Storage provider.
 
         Args:
-            account_url: Azure Blob Storage account URL with SAS token
+            account_name: Azure Storage account name
+            account_key: Azure Storage account key
             container: Container name (default: 'media')
 
         Raises:
-            ValueError: If account_url is not provided
+            ValueError: If account_name or account_key is not provided
         """
-        if not account_url:
+        if not account_name or not account_key:
             raise ValueError(
-                'Azure Blob Storage account_url is required. '
-                'Set AZURE_BLOB_URL environment variable.'
+                'Azure Blob Storage account_name and account_key are required. '
+                'Set AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY environment variables.'
             )
 
-        try:
-            from azure.storage.blob import BlobServiceClient, ContentSettings
-            self.BlobServiceClient = BlobServiceClient
-            self.ContentSettings = ContentSettings
-        except ImportError:
-            raise ImportError(
-                'azure-storage-blob is required for AzureBlobStorageProvider. '
-                'Install it with: pip install azure-storage-blob'
-            )
-
-        self.blob_service_client = self.BlobServiceClient(account_url=account_url)
+        self.account_name = account_name
+        self.account_key = account_key
         self.container = container
+
+        account_url = f'https://{account_name}.blob.core.windows.net'
+        credential = AzureNamedKeyCredential(account_name, account_key)
+        self.blob_service_client = BlobServiceClient(
+            account_url=account_url,
+            credential=credential,
+        )
 
         self._ensure_container_exists()
 
@@ -165,34 +204,46 @@ class AzureBlobStorageProvider(StorageProvider):
         try:
             container_client = self.blob_service_client.get_container_client(self.container)
             container_client.get_container_properties()
-        except Exception:
+        except ResourceNotFoundError:
             try:
                 self.blob_service_client.create_container(self.container)
                 logger.info(f'Created Azure Blob Storage container: {self.container}')
-            except Exception as e:
+            except AzureError as e:
                 logger.warning(
                     f'Could not create container {self.container}: {e}',
                     exc_info=True,
                 )
 
+    def _generate_sas_url(self, blob_name: str) -> str:
+        """Generate a short-lived, read-only SAS URL for a specific blob."""
+        sas_token = generate_blob_sas(
+            account_name=self.account_name,
+            container_name=self.container,
+            blob_name=blob_name,
+            account_key=self.account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.now(timezone.utc) + timedelta(hours=self.SAS_EXPIRY_HOURS),
+        )
+        return (
+            f'https://{self.account_name}.blob.core.windows.net'
+            f'/{self.container}/{blob_name}?{sas_token}'
+        )
+
     def _upload_file_impl(self, file_obj, unique_filename: str, content_type: str) -> dict:
-        """Upload file to Azure Blob Storage."""
+        """Upload file to Azure Blob Storage and return a short-lived SAS URL."""
         try:
-            # Get blob client for this file
             blob_client = self.blob_service_client.get_blob_client(
                 container=self.container,
                 blob=unique_filename
             )
 
-            # Upload with content-type header
             blob_client.upload_blob(
                 file_obj.read(),
-                content_settings=self.ContentSettings(content_type=content_type),
-                overwrite=False  # Prevent accidental overwrites
+                content_settings=ContentSettings(content_type=content_type),
+                overwrite=False
             )
 
-            # Return clean URL (remove SAS token query params)
-            url = blob_client.url.split('?')[0]
+            url = self._generate_sas_url(unique_filename)
 
             logger.info(
                 'AzureBlobStorageProvider.upload_file',
@@ -200,7 +251,6 @@ class AzureBlobStorageProvider(StorageProvider):
                     'blob_name': unique_filename,
                     'content_type': content_type,
                     'size': file_obj.size,
-                    'url': url,
                 },
             )
 
@@ -210,7 +260,7 @@ class AzureBlobStorageProvider(StorageProvider):
                 'error': None,
             }
 
-        except Exception as e:
+        except AzureError as e:
             error_msg = f'Azure Blob Storage upload failed: {str(e)}'
             logger.error(
                 'AzureBlobStorageProvider.upload_file failed',
@@ -226,6 +276,23 @@ class AzureBlobStorageProvider(StorageProvider):
                 'url': None,
                 'error': error_msg,
             }
+
+    def delete_blob(self, blob_name: str) -> bool:
+        """Delete a blob from Azure Blob Storage."""
+        try:
+            blob_client = self.blob_service_client.get_blob_client(
+                container=self.container,
+                blob=blob_name,
+            )
+            blob_client.delete_blob()
+            logger.info('AzureBlobStorageProvider.delete_blob', extra={'blob_name': blob_name})
+            return True
+        except AzureError as e:
+            logger.warning(
+                f'Failed to delete blob {blob_name}: {e}',
+                exc_info=True,
+            )
+            return False
 
 
 class _StorageCache:

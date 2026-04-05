@@ -11,7 +11,7 @@ import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.exceptions import ValidationError
 
-from app.utils.storage import MockStorageProvider, StorageProvider, get_storage_provider
+from app.utils.storage import MockStorageProvider, StorageProvider, _StorageCache, get_storage_provider
 
 
 class TestStorageProviderValidation:
@@ -173,13 +173,24 @@ class TestMockStorageProvider:
 class TestGetStorageProvider:
     """Tests for get_storage_provider factory function."""
 
-    def test_returns_configured_provider(self):
+    def setup_method(self):
+        self._original = _StorageCache.instance
+        _StorageCache.instance = None
+
+    def teardown_method(self):
+        _StorageCache.instance = self._original
+
+    def test_returns_configured_provider(self, settings):
         """get_storage_provider returns configured provider class."""
+        settings.STORAGE_PROVIDER_CLASS = 'app.utils.storage.MockStorageProvider'
+        settings.STORAGE_PROVIDER_CONFIG = {}
         provider = get_storage_provider()
         assert isinstance(provider, StorageProvider)
 
-    def test_returns_singleton(self):
+    def test_returns_singleton(self, settings):
         """get_storage_provider returns same instance on multiple calls."""
+        settings.STORAGE_PROVIDER_CLASS = 'app.utils.storage.MockStorageProvider'
+        settings.STORAGE_PROVIDER_CONFIG = {}
         provider1 = get_storage_provider()
         provider2 = get_storage_provider()
         assert provider1 is provider2

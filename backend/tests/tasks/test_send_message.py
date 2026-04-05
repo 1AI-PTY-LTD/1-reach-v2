@@ -17,7 +17,7 @@ from app.models import (
     Schedule,
     ScheduleStatus,
 )
-from app.celery import send_message
+from app.celery import send_message, _cleanup_media_blob
 from app.utils.sms import SendResult
 from app.utils.billing import get_balance, grant_credits
 
@@ -112,7 +112,8 @@ class TestSendMessageSuccess:
             updated_by=user,
         )
 
-        send_message(schedule.pk)
+        with patch('app.celery.get_storage_provider'):
+            send_message(schedule.pk)
 
         mock_sms_provider.send_mms.assert_called_once()
         mock_sms_provider.send_sms.assert_not_called()
@@ -428,3 +429,84 @@ class TestParentStatusSync:
 
         schedule_queued.refresh_from_db()
         assert schedule_queued.status == ScheduleStatus.SENT
+
+
+# ---------------------------------------------------------------------------
+# Media blob cleanup on terminal state
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestMediaBlobCleanup:
+    def test_mms_blob_deleted_on_success(
+        self, db, organisation, contact, user, mock_sms_provider
+    ):
+        """Media blob is deleted when MMS send succeeds."""
+        schedule = _make_queued(
+            db, organisation, user, contact,
+            format=MessageFormat.MMS,
+            media_url='https://myaccount.blob.core.windows.net/media/abc123.png?sv=2022&sig=token',
+        )
+
+        with patch('app.celery.get_storage_provider') as mock_storage:
+            mock_provider = mock_storage.return_value
+            send_message(schedule.pk)
+
+            mock_provider.delete_blob.assert_called_once_with('abc123.png')
+
+    def test_sms_no_blob_cleanup(
+        self, schedule_queued, mock_sms_provider
+    ):
+        """SMS schedules (no media_url) don't trigger blob cleanup."""
+        with patch('app.celery.get_storage_provider') as mock_storage:
+            send_message(schedule_queued.pk)
+            mock_storage.assert_not_called()
+
+    def test_mms_blob_deleted_on_permanent_failure(
+        self, db, organisation, contact, user, mock_sms_provider_permanent_fail
+    ):
+        """Media blob is deleted when MMS send permanently fails."""
+        schedule = _make_queued(
+            db, organisation, user, contact,
+            format=MessageFormat.MMS,
+            media_url='https://myaccount.blob.core.windows.net/media/def456.png?sv=2022&sig=token',
+        )
+
+        with patch('app.celery.get_storage_provider') as mock_storage:
+            mock_provider = mock_storage.return_value
+            send_message(schedule.pk)
+
+            mock_provider.delete_blob.assert_called_once_with('def456.png')
+
+    def test_blob_deletion_failure_does_not_affect_schedule(
+        self, db, organisation, contact, user, mock_sms_provider
+    ):
+        """Blob deletion failure is non-fatal — schedule still marked as SENT."""
+        schedule = _make_queued(
+            db, organisation, user, contact,
+            format=MessageFormat.MMS,
+            media_url='https://myaccount.blob.core.windows.net/media/fail.png?sv=2022&sig=token',
+        )
+
+        with patch('app.celery.get_storage_provider') as mock_storage:
+            mock_provider = mock_storage.return_value
+            mock_provider.delete_blob.return_value = False
+            send_message(schedule.pk)
+
+        schedule.refresh_from_db()
+        assert schedule.status == ScheduleStatus.SENT
+
+    def test_no_cleanup_during_retry(
+        self, db, organisation, contact, user, mock_sms_provider_transient_fail
+    ):
+        """Media blob is NOT deleted on transient failure (schedule will retry)."""
+        schedule = _make_queued(
+            db, organisation, user, contact,
+            format=MessageFormat.MMS,
+            media_url='https://myaccount.blob.core.windows.net/media/retry.png?sv=2022&sig=token',
+        )
+
+        with patch('app.celery.get_storage_provider') as mock_storage:
+            with patch('app.celery.send_message.apply_async'):
+                send_message(schedule.pk)
+
+            mock_storage.assert_not_called()

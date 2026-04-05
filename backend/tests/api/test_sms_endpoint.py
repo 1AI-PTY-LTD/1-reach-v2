@@ -422,7 +422,7 @@ class TestUploadFile:
         assert 'url' in response.data
         assert 'file_id' in response.data
 
-    def test_upload_file_validates_file_type(self, authenticated_client):
+    def test_upload_file_validates_file_type(self, authenticated_client, mock_storage_provider):
         """Non-image files rejected."""
         txt_file = SimpleUploadedFile(
             'test.txt',
@@ -438,7 +438,7 @@ class TestUploadFile:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_upload_file_validates_file_size(self, authenticated_client):
+    def test_upload_file_validates_file_size(self, authenticated_client, mock_storage_provider):
         """Files >400KB rejected."""
         large_image = SimpleUploadedFile(
             'large.jpg',

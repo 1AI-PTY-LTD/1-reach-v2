@@ -32,6 +32,7 @@ from app.models import (
     User,
 )
 from app.utils.sms import SendResult
+from app.utils.storage import MockStorageProvider
 
 
 # ============================================================================
@@ -473,19 +474,14 @@ def mock_send_batch_message_task():
 
 @pytest.fixture
 def mock_storage_provider():
-    """Mock the storage provider."""
-    with patch('app.views.get_storage_provider') as mock:
-        provider = Mock()
-        provider.upload_file.return_value = {
-            'success': True,
-            'url': 'https://mock-storage.example.com/media/test.jpg',
-            'file_id': 'test.jpg',
-            'error': None,
-            'size': 1024,
-            'content_type': 'image/jpeg'
-        }
-        mock.return_value = provider
-        yield provider
+    """Mock the storage provider with a real MockStorageProvider.
+
+    Uses the real MockStorageProvider so file validation (type, size) works
+    correctly, while avoiding Azure credentials.
+    """
+    real_provider = MockStorageProvider()
+    with patch('app.views.get_storage_provider', return_value=real_provider):
+        yield real_provider
 
 
 @pytest.fixture

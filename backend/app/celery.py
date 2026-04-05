@@ -43,6 +43,7 @@ app = Celery('reach')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 django.setup()
 
+from app.utils.storage import StorageProvider, get_storage_provider
 from app.models import MessageFormat, Schedule, ScheduleStatus
 from app.utils.billing import record_usage, refund_usage
 from app.utils.failure_classifier import classify_failure
@@ -91,6 +92,20 @@ def _compute_backoff_delay(retry_count: int) -> int:
     return max(1, int(delay))
 
 
+def _cleanup_media_blob(schedule: Schedule) -> None:
+    """Delete the media blob for an MMS schedule after it reaches a terminal state.
+
+    Non-fatal: logs a warning on failure but never raises.
+    """
+    if not schedule.media_url:
+        return
+    
+    blob_name = StorageProvider.extract_blob_name(schedule.media_url)
+    if not blob_name:
+        return
+    get_storage_provider().delete_blob(blob_name)
+
+
 def _dispatch_to_provider(provider, schedule: Schedule) -> SendResult:
     """Route to the correct provider method based on schedule.format.
 
@@ -133,6 +148,7 @@ def _handle_success(schedule: Schedule, result: SendResult) -> None:
                 schedule=schedule,
             )
 
+    _cleanup_media_blob(schedule)
     _sync_parent_status(schedule)
 
 
@@ -172,6 +188,7 @@ def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_cat
         schedule.pk, failure_category, result.error,
     )
 
+    _cleanup_media_blob(schedule)
     _sync_parent_status(schedule)
 
 
@@ -392,6 +409,8 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
     parent.sent_time = now
     parent.save(update_fields=['status', 'sent_time', 'updated_at'])
 
+    _cleanup_media_blob(parent)
+
     logger.info(
         'Batch send succeeded: parent %d, %d children sent',
         parent.pk, len(children),
@@ -449,6 +468,8 @@ def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: di
         parent.failure_category = failure_category
         parent.error = error
         parent.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+
+        _cleanup_media_blob(parent)
 
         logger.warning(
             'Batch send permanently failed: parent %d (%s): %s',
@@ -625,6 +646,7 @@ def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
     schedule.save(update_fields=['status', 'delivered_time', 'updated_at'])
 
     logger.info('Schedule %d delivered at %s', schedule.pk, delivered_time)
+    _cleanup_media_blob(schedule)
     _sync_parent_status(schedule)
 
 
@@ -648,6 +670,7 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
         'Schedule %d delivery failed (%s): %s',
         schedule.pk, failure_category, error_message,
     )
+    _cleanup_media_blob(schedule)
     _sync_parent_status(schedule)
 
 

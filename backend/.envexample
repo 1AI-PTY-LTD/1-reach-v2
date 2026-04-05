@@ -22,7 +22,8 @@ CLERK_WEBHOOK_SIGNING_SECRET=
 STORAGE_PROVIDER_CLASS=app.utils.storage.AzureBlobStorageProvider
 
 # Azure Blob Storage (required if using AzureBlobStorageProvider)
-AZURE_BLOB_URL=https://<account>.blob.core.windows.net/?<sas-token>
+AZURE_STORAGE_ACCOUNT_NAME=<account-name>
+AZURE_STORAGE_ACCOUNT_KEY=<account-key>
 AZURE_CONTAINER=media
 
 # Sentry (optional - disabled if not set)
