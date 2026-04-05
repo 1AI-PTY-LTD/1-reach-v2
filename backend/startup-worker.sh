@@ -3,6 +3,18 @@ set -e
 export DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-1}
 export DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-4}
 
+# Minimal HTTP server so Azure App Service health probes get a response.
+python -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'ok')
+    def log_message(self, *a): pass
+HTTPServer(('0.0.0.0', ${PORT:-8000}), H).serve_forever()
+" &
+
 # Wait for database before starting worker.
 # Redis reconnection is handled by Celery (CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP).
 echo "Waiting for database..."
