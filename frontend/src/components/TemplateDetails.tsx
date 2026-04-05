@@ -48,7 +48,7 @@ export default function TemplateDetails({
 
     const handleDelete = async () => {
         try {
-            await updateTemplate.mutateAsync({ id: template.id, is_active: false });
+            await updateTemplate.mutateAsync({ id: template.id, name: template.name, text: template.text, is_active: false });
             toast.success("Template deleted");
         } catch {
             toast.error("Failed to delete template");
