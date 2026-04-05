@@ -23,7 +23,14 @@ import {
   apiRequest,
   setOrgBalance,
   createConfig, deleteConfig,
+  uploadFile, sendMms,
 } from './helpers'
+
+// Minimal valid PNG (1x1 transparent pixel)
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 // ---------------------------------------------------------------------------
 // Shared fixture data
@@ -140,12 +147,73 @@ test.describe('Send SMS — success flow', () => {
   })
 })
 
-test.describe('Send MMS — success flow', () => {
-  test('MMS send returns 202 and shows success summary', async ({ page }) => {
+test.describe('MMS — file upload and send', () => {
+  test('file upload returns accessible URL', async ({ page }) => {
+    const result = await uploadFile(page, TINY_PNG, 'test.png', 'image/png')
+    expect(result.success).toBe(true)
+    expect(result.url).toBeTruthy()
+    expect(result.file_id).toBeTruthy()
+
+    // The returned URL must be publicly accessible (this catches stripped SAS tokens)
+    const res = await page.request.fetch(result.url)
+    expect(res.status()).toBe(200)
+  })
+
+  test('MMS send via API succeeds end-to-end', async ({ page }) => {
+    const upload = await uploadFile(page, TINY_PNG, 'mms-test.png', 'image/png')
+    const result = await sendMms(page, {
+      message: 'E2E MMS test',
+      media_url: upload.url,
+      recipients: [{ phone: '0416111111', contact_id: contact.id }],
+    })
+    expect(result.schedule_id).toBeTruthy()
+
+    // Verify schedule is not in a failed state
+    const schedule = await apiRequest(page, 'GET', `/api/schedules/${result.schedule_id}/`)
+    expect(['queued', 'processing', 'sent', 'delivered']).toContain(schedule.status)
+  })
+
+  test('MMS send via UI with file upload', async ({ page }) => {
     await page.goto('/app/send')
-    await fillAndSubmitSmsForm(page, 'Check this out!')
+
+    // Upload image via the file input
+    const fileInput = page.locator('input[type="file"]')
+    await fileInput.setInputFiles({
+      name: 'test-image.png',
+      mimeType: 'image/png',
+      buffer: TINY_PNG,
+    })
+
+    // Wait for upload to complete (spinner gone, no error)
+    await expect(page.getByText(/uploading/i)).not.toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/upload failed/i)).not.toBeVisible()
+
+    // Verify MMS indicator appears
+    await expect(page.getByText(/^MMS - Characters:/)).toBeVisible()
+
+    // Fill message and recipient, then send
+    await fillAndSubmitSmsForm(page, 'MMS from UI test')
     await expect(page.getByText(/messages queued/i)).toBeVisible({ timeout: 8000 })
-    await expect(page.getByText('Queued', { exact: true }).first()).toBeVisible()
+  })
+
+  test('file upload rejects invalid file type', async ({ page }) => {
+    const txtBuffer = Buffer.from('not an image')
+    try {
+      await uploadFile(page, txtBuffer, 'test.txt', 'text/plain')
+      throw new Error('Expected upload to fail')
+    } catch (e: any) {
+      expect(e.message).toContain('400')
+    }
+  })
+
+  test('file upload rejects oversized file', async ({ page }) => {
+    const largeBuffer = Buffer.alloc(500 * 1024, 0) // 500KB
+    try {
+      await uploadFile(page, largeBuffer, 'large.png', 'image/png')
+      throw new Error('Expected upload to fail')
+    } catch (e: any) {
+      expect(e.message).toContain('400')
+    }
   })
 })
 

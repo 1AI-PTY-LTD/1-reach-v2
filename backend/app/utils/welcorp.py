@@ -115,15 +115,16 @@ class WelcorpSMSProvider(SMSProvider):
                 http_status=api_status,
             )
 
-        errors = data.get('errors', 'Unknown error')
+        errors = data.get('errors')
+        error_detail = f'Welcorp {payload.get("job_type")} error (HTTP {api_status}): {errors or data}'
         logger.warning(
-            'Welcorp API error',
-            extra={'status': api_status, 'errors': errors, 'job_type': payload.get('job_type')},
+            'Welcorp API error: status=%s job_type=%s errors=%s response=%s',
+            api_status, payload.get('job_type'), errors, data,
         )
-        fc, retryable = classify_failure(None, api_status, str(errors))
+        fc, retryable = classify_failure(None, api_status, str(errors or ''))
         return SendResult(
             success=False,
-            error=str(errors),
+            error=error_detail,
             http_status=api_status,
             retryable=retryable,
             failure_category=fc.value,

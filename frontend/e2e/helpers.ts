@@ -193,6 +193,27 @@ export const deleteConfig   = (p: Page, id: number) => apiRequest(p, 'DELETE', `
 export const setOrgBalance  = (p: Page, balance: number) =>
   apiRequest(p, 'PATCH', '/api/billing/test-set-balance/', { balance })
 
+// MMS helpers
+export async function uploadFile(page: Page, fileBuffer: Buffer, filename: string, contentType: string) {
+  const token = await getAuthToken(page)
+  const res = await page.request.fetch(`${API_BASE}/api/sms/upload-file/`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    multipart: {
+      file: { name: filename, mimeType: contentType, buffer: fileBuffer },
+    },
+  })
+  if (!res.ok()) throw new Error(`upload-file → ${res.status()}: ${await res.text()}`)
+  return res.json()
+}
+
+export async function sendMms(
+  page: Page,
+  data: { message: string; media_url: string; recipients: { phone: string; contact_id?: number }[]; subject?: string },
+) {
+  return apiRequest(page, 'POST', '/api/sms/send-mms/', data)
+}
+
 // Retry-safe helpers — on duplicate key (retry scenario), fetch the existing record instead
 export async function ensureContact(page: Page, data: { phone: string; first_name: string; last_name: string }) {
   try {
