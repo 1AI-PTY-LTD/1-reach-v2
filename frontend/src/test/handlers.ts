@@ -116,6 +116,12 @@ export const handlers = [
     return HttpResponse.json({ ...template, ...body })
   }),
 
+  http.delete(`${BASE_URL}/api/templates/:id/`, ({ params }) => {
+    const template = templates.find((t) => t.id === Number(params.id))
+    if (!template) return HttpResponse.json({ error: 'Template not found' }, { status: 404 })
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   // Schedules
   http.get(`${BASE_URL}/api/schedules/`, () => {
     return HttpResponse.json(paginate(schedules))

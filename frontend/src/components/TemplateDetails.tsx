@@ -4,8 +4,7 @@ import { Divider } from "../ui/divider";
 import { Heading } from "../ui/heading";
 import { Text } from "../ui/text";
 import type { Template } from "../types/template.types";
-import type { UpdateTemplate } from "../types/template.types";
-import { useUpdateTemplateMutation } from "../api/templatesApi";
+import { useDeleteTemplateMutation } from "../api/templatesApi";
 import { useApiClient } from "../lib/ApiClientProvider";
 import Logger from "../utils/logger";
 import { Alert, AlertTitle, AlertDescription, AlertActions } from "../ui/alert";
@@ -32,7 +31,7 @@ export default function TemplateDetails({
 
     const [isAlertOpen, setIsAlertOpen] = useState(false);
     const client = useApiClient();
-    const updateTemplate = useUpdateTemplateMutation(client);
+    const deleteTemplateMutation = useDeleteTemplateMutation(client);
 
     const handleEdit = () => {
         Logger.info("Opening edit template modal", {
@@ -46,17 +45,12 @@ export default function TemplateDetails({
         setIsOpen(true);
     };
 
-    const archiveTemplate = async () => {
-        const updateTemplateProps: UpdateTemplate = {
-            id: template.id,
-            name: template.name,
-            text: template.text,
-        };
+    const handleDelete = async () => {
         try {
-            await updateTemplate.mutateAsync({ ...updateTemplateProps });
-            toast.success("Template archived");
+            await deleteTemplateMutation.mutateAsync(template.id);
+            toast.success("Template deleted");
         } catch {
-            toast.error("Failed to archive template");
+            toast.error("Failed to delete template");
         }
     };
 
@@ -76,7 +70,7 @@ export default function TemplateDetails({
                     onClick={() => setIsAlertOpen(true)}
                 >
                     <TrashIcon />
-                    Archive
+                    Delete
                 </Button>
                 <Button
                     color="light"
@@ -90,9 +84,9 @@ export default function TemplateDetails({
                 open={isAlertOpen}
                 onClose={() => setIsAlertOpen(false)}
             >
-                <AlertTitle>Are you sure you want to archive this template?</AlertTitle>
+                <AlertTitle>Are you sure you want to delete this template?</AlertTitle>
                 <AlertDescription>
-                    The template will be removed from the list of templates.
+                    The template will be permanently removed from the list.
                 </AlertDescription>
                 <AlertActions>
                     <Button plain onClick={() => setIsAlertOpen(false)}>
@@ -101,17 +95,17 @@ export default function TemplateDetails({
                     <Button
                         color="red"
                         onClick={async () => {
-                            await archiveTemplate();
+                            await handleDelete();
                             setIsAlertOpen(false);
                         }}
-                        disabled={updateTemplate.isPending}
+                        disabled={deleteTemplateMutation.isPending}
                     >
-                        {updateTemplate.isPending ? (
+                        {deleteTemplateMutation.isPending ? (
                             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                         ) : (
                             <>
                                 <TrashIcon />
-                                Archive
+                                Delete
                             </>
                         )}
                     </Button>

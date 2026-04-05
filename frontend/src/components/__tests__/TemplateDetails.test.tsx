@@ -61,33 +61,33 @@ describe('TemplateDetails', () => {
     expect(setIsOpen).toHaveBeenCalledWith(true)
   })
 
-  it('shows archive confirmation dialog on archive click', async () => {
+  it('shows delete confirmation dialog on delete click', async () => {
     const user = userEvent.setup()
     const template = createTemplate()
 
     renderWithProviders(<TemplateDetails template={template} {...defaultProps} />)
 
-    await user.click(screen.getByText('Archive'))
+    await user.click(screen.getByText('Delete'))
 
     await waitFor(() => {
-      expect(screen.getByText('Are you sure you want to archive this template?')).toBeInTheDocument()
+      expect(screen.getByText('Are you sure you want to delete this template?')).toBeInTheDocument()
     })
   })
 
-  it('closes archive dialog on cancel', async () => {
+  it('closes delete dialog on cancel', async () => {
     const user = userEvent.setup()
     const template = createTemplate()
 
     renderWithProviders(<TemplateDetails template={template} {...defaultProps} />)
 
-    await user.click(screen.getByText('Archive'))
+    await user.click(screen.getByText('Delete'))
     await waitFor(() => {
-      expect(screen.getByText('Are you sure you want to archive this template?')).toBeInTheDocument()
+      expect(screen.getByText('Are you sure you want to delete this template?')).toBeInTheDocument()
     })
 
     await user.click(screen.getByText('Cancel'))
     await waitFor(() => {
-      expect(screen.queryByText('Are you sure you want to archive this template?')).not.toBeInTheDocument()
+      expect(screen.queryByText('Are you sure you want to delete this template?')).not.toBeInTheDocument()
     })
   })
 })
