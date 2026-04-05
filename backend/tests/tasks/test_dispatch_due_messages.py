@@ -87,7 +87,7 @@ class TestDispatchDueMessages:
             mock_batch.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_batch.delay.assert_called_once_with(parent.pk)
         mock_send.delay.assert_not_called()
 
@@ -104,7 +104,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -118,7 +118,7 @@ class TestDispatchDueMessages:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_called_once_with(parent.pk)
         mock_batch.delay.assert_not_called()
 
@@ -142,7 +142,7 @@ class TestDispatchDueMessages:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_called_once_with(individual.pk)
         mock_batch.delay.assert_not_called()
         individual.refresh_from_db()
@@ -158,7 +158,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -173,7 +173,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -183,7 +183,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -198,7 +198,7 @@ class TestDispatchDueMessages:
             mock_batch.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_batch.delay.assert_called_once_with(parent.pk)
         mock_send.delay.assert_not_called()
 
@@ -255,7 +255,7 @@ class TestDispatchBatchSize:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 500}
+        assert result == {'dispatched': 500, 'recovered_queued': 0, 'recovered_processing': 0}
         assert mock_send.delay.call_count == 500
         mock_batch.delay.assert_not_called()
         # Remaining 10 stay PENDING, picked up next tick
@@ -282,7 +282,7 @@ class TestDispatchRetrying:
             mock_batch.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_batch.delay.assert_called_once_with(parent.pk)
         mock_send.delay.assert_not_called()
         parent.refresh_from_db()
@@ -309,7 +309,7 @@ class TestDispatchRetrying:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_called_once_with(individual.pk)
         mock_batch.delay.assert_not_called()
         individual.refresh_from_db()
@@ -326,7 +326,7 @@ class TestDispatchRetrying:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
         parent.refresh_from_db()

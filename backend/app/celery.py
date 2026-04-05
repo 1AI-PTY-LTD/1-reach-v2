@@ -492,7 +492,6 @@ def dispatch_due_messages() -> dict:
     now = timezone.now()
     batch_size = 500
     has_children = Schedule.objects.filter(parent_id=OuterRef('pk'))
-
     # --- Recover stale QUEUED schedules (Celery task lost before worker pickup) ----------
     # If the broker dropped the task (crash, Redis flush, worker restart before ack),
     # the schedule stays QUEUED forever. Re-enqueue the task and bump updated_at so it
@@ -513,6 +512,7 @@ def dispatch_due_messages() -> dict:
         .values_list('pk', flat=True)
     )
     all_stale_queued = stale_queued_individual_pks + stale_queued_parent_pks
+    recovered_queued = len(all_stale_queued)
     if all_stale_queued:
         Schedule.objects.filter(pk__in=all_stale_queued).update(updated_at=now)
         for pk in stale_queued_individual_pks:
@@ -556,6 +556,7 @@ def dispatch_due_messages() -> dict:
     )
 
     all_stale = stale_individual_pks + stale_parent_pks + stale_child_pks
+    recovered_processing = len(all_stale)
     if all_stale:
         Schedule.objects.filter(pk__in=all_stale).update(status=ScheduleStatus.QUEUED)
         for pk in stale_individual_pks:
@@ -581,7 +582,7 @@ def dispatch_due_messages() -> dict:
         )
 
         if not due:
-            return {'dispatched': 0}
+            return {'dispatched': 0, 'recovered_queued': recovered_queued, 'recovered_processing': recovered_processing}
 
         Schedule.objects.filter(pk__in=due).update(
             status=ScheduleStatus.QUEUED,
@@ -601,7 +602,7 @@ def dispatch_due_messages() -> dict:
             send_message.delay(schedule_id)
 
     logger.info('dispatch_due_messages: dispatched %d schedules', len(due))
-    return {'dispatched': len(due)}
+    return {'dispatched': len(due), 'recovered_queued': recovered_queued, 'recovered_processing': recovered_processing}
 
 
 # ---------------------------------------------------------------------------
