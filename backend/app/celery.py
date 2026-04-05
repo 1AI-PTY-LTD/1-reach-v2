@@ -31,7 +31,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
 import django
 from celery import Celery, shared_task
-from celery.signals import worker_process_init
+from celery.signals import beat_init, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
 from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef, Q
@@ -50,6 +50,21 @@ from app.utils.failure_classifier import classify_failure
 from app.utils.sms import SendResult, get_sms_provider
 
 logger = logging.getLogger(__name__)
+
+
+@beat_init.connect
+def _on_beat_init(**kwargs):
+    logger.info('celery beat started (pid=%d)', os.getpid())
+
+
+@worker_ready.connect
+def _on_worker_ready(**kwargs):
+    logger.info('celery worker ready (pid=%d)', os.getpid())
+
+
+@worker_shutting_down.connect
+def _on_worker_shutting_down(sig=None, how=None, **kwargs):
+    logger.warning('celery worker shutting down (sig=%s, how=%s, pid=%d)', sig, how, os.getpid())
 
 
 @worker_process_init.connect

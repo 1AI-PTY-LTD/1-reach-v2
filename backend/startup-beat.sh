@@ -18,6 +18,10 @@ connection.ensure_connection()
   sleep 5
 done
 
+trap 'echo "$(date -u +%Y-%m-%dT%H:%M:%S) beat received SIGTERM, shutting down..."' TERM
+
 celery -A app.celery beat \
   --loglevel=info \
-  --scheduler django_celery_beat.schedulers:DatabaseScheduler
+  --scheduler django_celery_beat.schedulers:DatabaseScheduler &
+BEAT_PID=$!
+wait $BEAT_PID
