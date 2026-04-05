@@ -27,6 +27,7 @@ jobs:
         with:
           name: backend
           path: backend
+          retention-days: 7
 
   deploy-api:
     needs: build

@@ -387,6 +387,35 @@ From codebase inspection, these items need to be addressed before production:
 - Confirm Clerk email templates (invitation, sign-up, magic link) are correctly branded for the corporate account before sending to real users
 - Configure Clerk to require verified email addresses before allowing users to be created or organisations to be joined (Clerk Dashboard → User & Authentication → Email, Phone, Username → enable "Require verified email address")
 
+### 5. Staging-to-Production Readiness
+
+The current Azure deployment is a working staging environment. The following items are needed before serving production traffic.
+
+#### Infrastructure (Azure Portal)
+
+- **Deployment slots** — Add a staging slot to the API App Service. Deploy to staging first, verify health, then swap staging→production for zero-downtime deploys. Worker and beat don't need slots (they have no user-facing traffic; the stop/start cycle is acceptable).
+- **Custom domains + SSL** — Configure custom domains for both the Static Web App (frontend) and API App Service (backend). Azure provides free managed SSL certificates for App Service custom domains. Update `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CLERK_AUTHORIZED_PARTIES`, and Clerk Dashboard origins to match.
+- **PostgreSQL High Availability** — Enable HA on the Flexible Server (zone-redundant or same-zone standby). This provides automatic failover if the primary instance fails. Verify the automated backup retention period (default 7 days) and test a point-in-time restore to confirm backups work.
+- **Application Insights** — See [Monitoring & Alerts](#monitoring--alerts) below.
+- **Azure health check probes** — Configure custom health check paths in the Azure Portal for each App Service (Settings → Health check → Path: `/api/health/` for API, `/` for worker/beat). This is more reliable than relying on Always On pings alone — Azure uses health check probes to route traffic away from unhealthy instances during scaling.
+
+#### Configuration
+
+- **Sentry** — Set `SENTRY_DSN` and `SENTRY_ENVIRONMENT=production` on all three App Services. Optional: adjust `SENTRY_TRACES_SAMPLE_RATE` (default `0.1` = 10% of requests traced).
+- **CORS** — Tighten `CORS_ALLOWED_ORIGINS` to the production frontend domain only (no `localhost`).
+- **Security cookies** — Verify `SESSION_COOKIE_SECURE=True` and `CSRF_COOKIE_SECURE=True` are set on all App Services (they're env-var driven in `settings.py`).
+
+#### CI/CD improvements
+
+- **Post-deploy smoke test** — Extend the `verify-health` job to also hit an authenticated endpoint (e.g., create a test contact, verify 201, delete it) to confirm DB writes and auth work end-to-end, not just the health endpoint.
+- **Secret rotation** — Rotate publish profiles and service principal credentials quarterly. Rotate immediately if a team member with access leaves.
+- **Rollback strategy** — Automated rollback is not feasible when database migrations are involved: rolling back the code doesn't undo schema changes, which can leave the app in an inconsistent state. Instead: (1) always make migrations backwards-compatible (add columns as nullable, don't remove columns in the same deploy), (2) if a deploy breaks, fix forward with a hotfix commit rather than reverting.
+
+#### Not needed
+
+- **Deployment Center Source** — GitHub Actions workflows are the deployment mechanism. Deployment Center in the Azure Portal does not need a configured source.
+- **Redis AOF persistence** — The `dispatch_due_messages` beat task recovers stale QUEUED and PROCESSING schedules every 60 seconds. If Redis loses data (restart, flush), tasks are re-dispatched within 1-2 minutes. The brief delay is acceptable and doesn't cause data loss.
+
 ---
 
 ## Azure Deployment
@@ -601,6 +630,36 @@ The startup scripts (`startup-worker.sh`, `startup-beat.sh`) set smaller default
 - **`PoolTimeout` errors in Sentry:** The pool is full and requests are waiting longer than `DB_POOL_TIMEOUT`. Increase `DB_POOL_MAX_SIZE` or investigate slow queries.
 - **`remaining connection slots are reserved`:** Total connections across all processes exceed PostgreSQL's `max_connections`. Reduce `DB_POOL_MAX_SIZE`, scale down instances, or enable PgBouncer.
 - **Celery tasks hanging after deploy:** Forked worker processes may have inherited stale connections from the parent. The `worker_process_init` signal handler in `celery.py` closes these automatically, but if you see issues, restart the worker App Service.
+
+### Monitoring & Alerts
+
+#### Application Insights
+
+Enable Application Insights on all three App Services: Settings → Application Insights → Turn on → Create new resource (or link to an existing one). This provides request tracing, dependency tracking, failure analysis, and live metrics at no extra cost for the included data.
+
+#### Recommended alert rules
+
+Set up these alert rules in Azure Monitor (App Service → Monitoring → Alerts → Create alert rule):
+
+| Alert | Condition | Threshold | Severity |
+|-------|-----------|-----------|----------|
+| API errors | HTTP 5xx count | > 10 in 5 minutes | Sev 1 |
+| API latency | Avg response time | > 5 seconds for 5 minutes | Sev 2 |
+| App Service down | Availability | < 100% for 5 minutes | Sev 1 |
+| Beat stopped | No `dispatch_due_messages` log | > 5 minutes gap (custom log query) | Sev 1 |
+
+For the beat monitoring alert, use a Log Analytics query on the beat App Service logs:
+
+```kusto
+AppServiceConsoleLogs
+| where ResultDescription contains "Scheduler: Sending due task"
+| summarize LastSeen = max(TimeGenerated)
+| where LastSeen < ago(5m)
+```
+
+#### Sentry
+
+Set `SENTRY_DSN` on all three App Services for exception tracking. Celery task failures are automatically captured. Optional env vars: `SENTRY_ENVIRONMENT` (default `production`), `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`).
 
 ### Gotchas & Troubleshooting
 

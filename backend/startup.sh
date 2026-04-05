@@ -15,7 +15,7 @@ connection.ensure_connection()
   sleep 5
 done
 
-python manage.py migrate --no-input
+python manage.py migrate --no-input || { echo "Migration failed — aborting startup"; exit 1; }
 python manage.py collectstatic --no-input
 gunicorn app.asgi:application \
   -k uvicorn.workers.UvicornWorker \
