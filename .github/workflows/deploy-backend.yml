@@ -68,7 +68,10 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Restart worker
-        run: az webapp restart --name ${{ secrets.AZURE_WORKER_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          az webapp stop --name ${{ secrets.AZURE_WORKER_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+          sleep 5
+          az webapp start --name ${{ secrets.AZURE_WORKER_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
 
   deploy-beat:
     needs: build
@@ -93,7 +96,10 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Restart beat
-        run: az webapp restart --name ${{ secrets.AZURE_BEAT_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+        run: |
+          az webapp stop --name ${{ secrets.AZURE_BEAT_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+          sleep 5
+          az webapp start --name ${{ secrets.AZURE_BEAT_APP_NAME }} --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
 
   verify-health:
     needs: [deploy-api, deploy-worker, deploy-beat]
