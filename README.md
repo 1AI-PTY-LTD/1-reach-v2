@@ -613,6 +613,7 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_CREDENTIALS` | Service principal JSON — see [Creating AZURE_CREDENTIALS](#creating-azure_credentials) below |
 | `AZURE_RESOURCE_GROUP` | Resource group name containing all App Services |
 | `AZURE_POSTGRES_SERVER_NAME` | PostgreSQL Flexible Server name (for pre-deploy backups) |
+| `AZURE_POSTGRES_RESOURCE_GROUP` | Resource group containing the PostgreSQL server (may differ from App Services resource group) |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` (also used by backend deploy's post-deploy health check) |

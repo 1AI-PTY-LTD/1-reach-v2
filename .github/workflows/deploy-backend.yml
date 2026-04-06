@@ -21,12 +21,12 @@ jobs:
           BACKUP_NAME="pre-deploy-$(date -u +%Y%m%d-%H%M%S)"
           echo "Creating backup: $BACKUP_NAME"
           az postgres flexible-server backup create \
-            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
             --backup-name "$BACKUP_NAME"
           echo "✓ Backup created: $BACKUP_NAME"
           echo "  To restore: az postgres flexible-server restore \\"
-          echo "    --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \\"
+          echo "    --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \\"
           echo "    --name <new-server-name> \\"
           echo "    --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \\"
           echo "    --backup-name $BACKUP_NAME"
