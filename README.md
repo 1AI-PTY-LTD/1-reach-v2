@@ -409,12 +409,73 @@ The current Azure deployment is a working staging environment. The following ite
 
 - **Post-deploy smoke test** — Extend the `verify-health` job to also hit an authenticated endpoint (e.g., create a test contact, verify 201, delete it) to confirm DB writes and auth work end-to-end, not just the health endpoint.
 - **Secret rotation** — Rotate publish profiles and service principal credentials quarterly. Rotate immediately if a team member with access leaves.
-- **Rollback strategy** — Automated rollback is not feasible when database migrations are involved: rolling back the code doesn't undo schema changes, which can leave the app in an inconsistent state. Instead: (1) always make migrations backwards-compatible (add columns as nullable, don't remove columns in the same deploy), (2) if a deploy breaks, fix forward with a hotfix commit rather than reverting.
+- **Zero-downtime deployment with safe migrations** — see [Zero-Downtime Deployment Strategy](#zero-downtime-deployment-strategy) below.
+- **Secret rotation** — Rotate publish profiles and service principal credentials quarterly. Rotate immediately if a team member with access leaves.
 
 #### Not needed
 
 - **Deployment Center Source** — GitHub Actions workflows are the deployment mechanism. Deployment Center in the Azure Portal does not need a configured source.
 - **Redis AOF persistence** — The `dispatch_due_messages` beat task recovers stale QUEUED and PROCESSING schedules every 60 seconds. If Redis loses data (restart, flush), tasks are re-dispatched within 1-2 minutes. The brief delay is acceptable and doesn't cause data loss.
+
+#### Zero-Downtime Deployment Strategy
+
+The current dev workflow deploys code and runs migrations during startup. This has brief downtime and risk if a migration fails. For production, use a blue/green database strategy with deployment slots.
+
+**Prerequisites:** Standard S1+ App Service Plan (for deployment slots), PostgreSQL Flexible Server with replica support.
+
+**Deploy flow (GitHub Actions):**
+
+```
+1. Pre-deploy backup
+   └─ az postgres flexible-server backup create
+
+2. Create DB replica (near-real-time replication from production)
+   └─ az postgres flexible-server replica create
+
+3. Promote replica to read-write (disconnects from primary)
+   └─ az postgres flexible-server replica stop-replication
+
+4. Run migration on replica
+   └─ If FAILS → delete replica, production untouched, workflow fails
+   └─ If OK → continue
+
+5. Deploy new code to staging slot (POSTGRES_HOST points to replica)
+   └─ az webapp deployment slot create / az webapp deploy --slot staging
+
+6. Health check staging slot
+   └─ If FAILS → delete replica, production untouched
+   └─ If OK → continue
+
+7. Swap slots (instant, zero downtime)
+   └─ az webapp deployment slot swap
+   └─ Production now runs new code against migrated replica
+
+8. Decommission old DB server (after confirming everything works)
+```
+
+**Data loss window:** Between step 3 (replica promoted, replication stops) and step 7 (swap), writes to the old production DB won't appear on the replica. For this app's traffic volume, steps 3–7 take seconds. Minimise risk by running the workflow during low-traffic periods.
+
+**Simpler alternative for safe migrations:** If the migration is backwards-compatible (additive only), both old and new code work with the updated schema. Use a shared DB without a replica:
+
+1. Backup DB
+2. Deploy new code to staging slot (shared DB)
+3. Run migration from staging slot
+4. Health check staging slot
+5. Swap staging→production
+
+This only risks downtime if the migration itself errors mid-apply (the pre-deploy backup covers recovery). Reserve the full blue/green DB approach for risky migrations (column renames, type changes, data transforms).
+
+**Backwards-compatible migration patterns:**
+
+| Change | Approach | Deploys |
+|--------|----------|---------|
+| Add column | Add as nullable — old code ignores it | 1 |
+| Remove column | Deploy 1: remove all code references. Deploy 2: drop column | 2 |
+| Rename column | Add new column → write to both → backfill → read from new → drop old | 3–4 |
+| Add NOT NULL constraint | Deploy 1: ensure all rows satisfy constraint + set default. Deploy 2: add constraint | 2 |
+| Change column type | Add new column with new type → migrate data → swap code → drop old | 3–4 |
+
+**Worker/beat:** Don't need deployment slots. They have no user-facing traffic — the existing stop/start cycle is acceptable. They connect to whichever DB `POSTGRES_HOST` points to.
 
 ---
 
@@ -551,6 +612,7 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_BEAT_PUBLISH_PROFILE` | Beat App Service → Download publish profile |
 | `AZURE_CREDENTIALS` | Service principal JSON — see [Creating AZURE_CREDENTIALS](#creating-azure_credentials) below |
 | `AZURE_RESOURCE_GROUP` | Resource group name containing all App Services |
+| `AZURE_POSTGRES_SERVER_NAME` | PostgreSQL Flexible Server name (for pre-deploy backups) |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` (also used by backend deploy's post-deploy health check) |
@@ -722,6 +784,30 @@ Azure App Service expects every container to respond to HTTP health probes on `$
 
 #### Worker/beat don't restart automatically after deploy
 `azure/webapps-deploy` pushes code but doesn't reliably restart non-web App Services. The API restarts because Azure detects new code for web processes, but worker and beat may continue running old code (or not run at all). **Fix:** The deploy workflow uses `az webapp stop` + `az webapp start` after deploying worker and beat. This requires `AZURE_CREDENTIALS` and `AZURE_RESOURCE_GROUP` secrets. Note: `az webapp restart` alone is insufficient — it's a soft restart that Azure may ignore for idle non-web containers. The stop/start cycle forces Azure to tear down and recreate the container.
+
+#### Failed database migration recovery
+The deploy workflow creates an on-demand PostgreSQL backup before every deployment (`pre-deploy-YYYYMMDD-HHMMSS`). If a migration fails mid-apply, the database may be in a partially-migrated state where neither old nor new code works. Recovery:
+
+1. **Find the backup:** Azure Portal → PostgreSQL Flexible Server → Backups, or check the `pre-deploy` job logs for the backup name
+2. **Restore to a new server:**
+   ```bash
+   az postgres flexible-server restore \
+     --resource-group <RG> --name <new-server-name> \
+     --source-server <current-server> \
+     --backup-name <pre-deploy-YYYYMMDD-HHMMSS>
+   ```
+3. **Update `POSTGRES_HOST`** on all three App Services (API, worker, beat) to point to the restored server
+4. **Restart all App Services** — Stop, then Start each one
+5. **Fix the migration** and redeploy
+
+To manually rollback a specific migration without a full DB restore:
+```bash
+# From the App Service SSH console:
+python manage.py migrate <app_label> <previous_migration_name>
+```
+This only works if the migration has a valid `reverse()` operation (Django auto-generates reverses for most operations, but not `RunPython` or `RunSQL` unless you provide them).
+
+**New secret required:** `AZURE_POSTGRES_SERVER_NAME` — the PostgreSQL Flexible Server name, used by the pre-deploy backup step.
 
 #### Deployment artifacts can disappear on container recycle
 When Azure recycles a non-web App Service container (which happens periodically), the fresh container may boot with an empty `/home/site/wwwroot` — no build manifest, no virtual environment, no startup script. The log shows `Could not find build manifest file` followed by `bash: startup-worker.sh: No such file or directory`. The HTTP health responder in the startup scripts prevents most recycling by keeping the container alive. If it does happen, re-trigger the deploy workflow or manually stop/start the App Service.

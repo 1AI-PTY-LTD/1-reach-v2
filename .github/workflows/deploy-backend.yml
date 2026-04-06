@@ -8,7 +8,31 @@ on:
   workflow_dispatch:
 
 jobs:
+  pre-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Create pre-deploy database backup
+        run: |
+          BACKUP_NAME="pre-deploy-$(date -u +%Y%m%d-%H%M%S)"
+          echo "Creating backup: $BACKUP_NAME"
+          az postgres flexible-server backup create \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --backup-name "$BACKUP_NAME"
+          echo "✓ Backup created: $BACKUP_NAME"
+          echo "  To restore: az postgres flexible-server restore \\"
+          echo "    --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \\"
+          echo "    --name <new-server-name> \\"
+          echo "    --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \\"
+          echo "    --backup-name $BACKUP_NAME"
+
   build:
+    needs: pre-deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
