@@ -418,21 +418,23 @@ The current Azure deployment is a working staging environment. The following ite
 
 #### Migration Safety (implemented)
 
-The deploy workflow tests every migration on a database replica before applying to production. This is implemented in `deploy-backend.yml` and runs automatically on every deploy:
+The deploy workflow checks for pending migrations against the production DB and, if any are found, tests them on a disposable replica before applying to production. Implemented in `deploy-backend.yml`, runs automatically on every deploy:
 
 ```
-1. Create DB replica → promote to read-write
-2. Temporarily add GitHub runner IP to PostgreSQL firewall
-3. Test migration on replica
+1. Temporarily add GitHub runner IP to PostgreSQL firewall
+2. Check for pending migrations (manage.py migrate --check against production DB)
+   → If NONE: skip to step 8 (no replica, no backup, fast path)
+3. Create DB replica → promote to read-write
+4. Test migration on replica
    → If FAILS: delete replica, remove firewall rule, abort (production untouched)
-4. Backup production DB (on-demand, taken right before real migration)
-5. Run migration on production DB (proven safe in step 3)
-6. Delete replica (cleanup)
-7. Remove firewall rule (cleanup)
-8. Deploy code, restart services, verify health (existing flow)
+5. Backup production DB (on-demand, taken right before real migration)
+6. Run migration on production DB (proven safe in step 4)
+7. Delete replica (cleanup)
+8. Remove firewall rule (cleanup)
+9. Deploy code, restart services, verify health (existing flow)
 ```
 
-Cleanup steps (6-7) run with `if: always()` so they execute even if earlier steps fail.
+Cleanup steps (7-8) run with `if: always()` so they execute even if earlier steps fail. When there are no pending migrations (the common case), only steps 1-2 and 8 run (~10 seconds total).
 
 The PostgreSQL server may host databases for other apps. This is safe because:
 - The replica is always temporary — created and deleted within the workflow

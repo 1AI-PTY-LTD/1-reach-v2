@@ -40,7 +40,29 @@ jobs:
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
 
+      - name: Check for pending migrations
+        id: check
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: app.settings
+          DJANGO_SECRET_KEY: test-migration-key
+          POSTGRES_HOST: ${{ secrets.AZURE_POSTGRES_HOST }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PORT: "5432"
+        run: |
+          if python manage.py migrate --check 2>/dev/null; then
+            echo "No pending migrations — skipping replica test."
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Pending migrations detected:"
+            python manage.py showmigrations --plan | grep "\[ \]" || true
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create and promote DB replica
+        if: steps.check.outputs.pending == 'true'
         id: replica
         run: |
           REPLICA_NAME="${{ secrets.AZURE_POSTGRES_SERVER_NAME }}-replica"
@@ -61,6 +83,7 @@ jobs:
           echo "name=$REPLICA_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Test migration on replica
+        if: steps.check.outputs.pending == 'true'
         working-directory: backend
         env:
           DJANGO_SETTINGS_MODULE: app.settings
@@ -77,6 +100,7 @@ jobs:
           python manage.py migrate --no-input
 
       - name: Backup production DB
+        if: steps.check.outputs.pending == 'true'
         run: |
           BACKUP_NAME="pre-deploy-$(date -u +%Y%m%d-%H%M%S)"
           echo "Creating production backup: $BACKUP_NAME"
@@ -87,6 +111,7 @@ jobs:
           echo "Backup created: $BACKUP_NAME"
 
       - name: Run migration on production DB
+        if: steps.check.outputs.pending == 'true'
         working-directory: backend
         env:
           DJANGO_SETTINGS_MODULE: app.settings
@@ -99,7 +124,7 @@ jobs:
         run: python manage.py migrate --no-input
 
       - name: Delete replica
-        if: always()
+        if: steps.check.outputs.pending == 'true' && always()
         run: |
           az postgres flexible-server delete \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
