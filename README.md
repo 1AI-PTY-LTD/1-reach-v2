@@ -409,63 +409,59 @@ The current Azure deployment is a working staging environment. The following ite
 
 - **Post-deploy smoke test** — Extend the `verify-health` job to also hit an authenticated endpoint (e.g., create a test contact, verify 201, delete it) to confirm DB writes and auth work end-to-end, not just the health endpoint.
 - **Secret rotation** — Rotate publish profiles and service principal credentials quarterly. Rotate immediately if a team member with access leaves.
-- **Zero-downtime deployment with safe migrations** — see [Zero-Downtime Deployment Strategy](#zero-downtime-deployment-strategy) below.
-- **Secret rotation** — Rotate publish profiles and service principal credentials quarterly. Rotate immediately if a team member with access leaves.
+- **Zero-downtime deployment with deployment slots** — see [Production Zero-Downtime Strategy](#production-zero-downtime-strategy) below. The current dev platform already has replica-tested migrations implemented.
 
 #### Not needed
 
 - **Deployment Center Source** — GitHub Actions workflows are the deployment mechanism. Deployment Center in the Azure Portal does not need a configured source.
 - **Redis AOF persistence** — The `dispatch_due_messages` beat task recovers stale QUEUED and PROCESSING schedules every 60 seconds. If Redis loses data (restart, flush), tasks are re-dispatched within 1-2 minutes. The brief delay is acceptable and doesn't cause data loss.
 
-#### Zero-Downtime Deployment Strategy
+#### Migration Safety (implemented)
 
-The current dev workflow deploys code and runs migrations during startup. This has brief downtime and risk if a migration fails. For production, use a blue/green database strategy with deployment slots.
-
-**Prerequisites:** Standard S1+ App Service Plan (for deployment slots), PostgreSQL Flexible Server with replica support.
-
-**Deploy flow (GitHub Actions):**
+The deploy workflow tests every migration on a database replica before applying to production. This is implemented in `deploy-backend.yml` and runs automatically on every deploy:
 
 ```
-1. Pre-deploy backup
-   └─ az postgres flexible-server backup create
-
-2. Create DB replica (near-real-time replication from production)
-   └─ az postgres flexible-server replica create
-
-3. Promote replica to read-write (disconnects from primary)
-   └─ az postgres flexible-server replica stop-replication
-
-4. Run migration on replica
-   └─ If FAILS → delete replica, production untouched, workflow fails
-   └─ If OK → continue
-
-5. Deploy new code to staging slot (POSTGRES_HOST points to replica)
-   └─ az webapp deployment slot create / az webapp deploy --slot staging
-
-6. Health check staging slot
-   └─ If FAILS → delete replica, production untouched
-   └─ If OK → continue
-
-7. Swap slots (instant, zero downtime)
-   └─ az webapp deployment slot swap
-   └─ Production now runs new code against migrated replica
-
-8. Decommission old DB server (after confirming everything works)
+1. Create DB replica → promote to read-write
+2. Temporarily add GitHub runner IP to PostgreSQL firewall
+3. Test migration on replica
+   → If FAILS: delete replica, remove firewall rule, abort (production untouched)
+4. Backup production DB (on-demand, taken right before real migration)
+5. Run migration on production DB (proven safe in step 3)
+6. Delete replica (cleanup)
+7. Remove firewall rule (cleanup)
+8. Deploy code, restart services, verify health (existing flow)
 ```
 
-**Data loss window:** Between step 3 (replica promoted, replication stops) and step 7 (swap), writes to the old production DB won't appear on the replica. For this app's traffic volume, steps 3–7 take seconds. Minimise risk by running the workflow during low-traffic periods.
+Cleanup steps (6-7) run with `if: always()` so they execute even if earlier steps fail.
 
-**Simpler alternative for safe migrations:** If the migration is backwards-compatible (additive only), both old and new code work with the updated schema. Use a shared DB without a replica:
+The PostgreSQL server may host databases for other apps. This is safe because:
+- The replica is always temporary — created and deleted within the workflow
+- The replica is never promoted to production — it's only used for testing
+- Other apps' databases on the original server are never touched
+- The on-demand backup creates a snapshot, not a new server
 
-1. Backup DB
-2. Deploy new code to staging slot (shared DB)
-3. Run migration from staging slot
-4. Health check staging slot
-5. Swap staging→production
+`startup.sh` has a safety-net migration check: if migrations were somehow missed by the workflow (e.g., manual deploy), it detects and applies them on startup.
 
-This only risks downtime if the migration itself errors mid-apply (the pre-deploy backup covers recovery). Reserve the full blue/green DB approach for risky migrations (column renames, type changes, data transforms).
+**Secrets required:** `AZURE_POSTGRES_HOST`, `AZURE_POSTGRES_SERVER_NAME`, `AZURE_POSTGRES_RESOURCE_GROUP`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`.
 
-**Backwards-compatible migration patterns:**
+#### Production Zero-Downtime Strategy
+
+For production, add deployment slots to eliminate downtime during deploys. The replica-tested migration (above) ensures migrations are safe before the full flow runs.
+
+**Prerequisites:** Standard S1+ App Service Plan (for deployment slots).
+
+**Production deploy flow:**
+
+```
+1–7. Replica-tested migration (same as above)
+8.   Deploy new code to staging slot (points at production DB — already migrated)
+9.   Health check staging slot
+10.  Swap slots (instant, zero downtime)
+     → If health check fails: swap back, old code still works
+11.  Restart worker/beat
+```
+
+**Backwards-compatible migrations are still recommended** — during the window between migration (step 5) and slot swap (step 10), the production slot runs old code against the new schema. Additive migrations (nullable columns, new tables) are always safe. For destructive changes:
 
 | Change | Approach | Deploys |
 |--------|----------|---------|
@@ -475,7 +471,7 @@ This only risks downtime if the migration itself errors mid-apply (the pre-deplo
 | Add NOT NULL constraint | Deploy 1: ensure all rows satisfy constraint + set default. Deploy 2: add constraint | 2 |
 | Change column type | Add new column with new type → migrate data → swap code → drop old | 3–4 |
 
-**Worker/beat:** Don't need deployment slots. They have no user-facing traffic — the existing stop/start cycle is acceptable. They connect to whichever DB `POSTGRES_HOST` points to.
+**Worker/beat:** Don't need deployment slots. They have no user-facing traffic — the existing stop/start cycle is acceptable.
 
 ---
 
@@ -800,6 +796,8 @@ The deploy workflow creates an on-demand PostgreSQL backup before every deployme
 3. **Update `POSTGRES_HOST`** on all three App Services (API, worker, beat) to point to the restored server
 4. **Restart all App Services** — Stop, then Start each one
 5. **Fix the migration** and redeploy
+
+Restore creates a **new server** — the original server and all other databases on it are untouched. This is safe for shared PostgreSQL servers.
 
 To manually rollback a specific migration without a full DB restore:
 ```bash

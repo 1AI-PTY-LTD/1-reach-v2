@@ -8,31 +8,113 @@ on:
   workflow_dispatch:
 
 jobs:
-  pre-deploy:
+  migrate:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
       - name: Azure login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Create pre-deploy database backup
+      - name: Get runner IP
+        id: ip
+        run: echo "ip=$(curl -s https://api.ipify.org)" >> "$GITHUB_OUTPUT"
+
+      - name: Add runner IP to PostgreSQL firewall
+        run: |
+          az postgres flexible-server firewall-rule create \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --rule-name github-runner \
+            --start-ip-address ${{ steps.ip.outputs.ip }} \
+            --end-ip-address ${{ steps.ip.outputs.ip }}
+
+      - name: Create and promote DB replica
+        id: replica
+        run: |
+          REPLICA_NAME="${{ secrets.AZURE_POSTGRES_SERVER_NAME }}-replica"
+          echo "Creating replica: $REPLICA_NAME"
+          az postgres flexible-server replica create \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --replica-name "$REPLICA_NAME"
+          echo "Promoting replica to read-write..."
+          az postgres flexible-server replica stop-replication \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name "$REPLICA_NAME" --yes
+          REPLICA_HOST=$(az postgres flexible-server show \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name "$REPLICA_NAME" \
+            --query fullyQualifiedDomainName -o tsv)
+          echo "host=$REPLICA_HOST" >> "$GITHUB_OUTPUT"
+          echo "name=$REPLICA_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Test migration on replica
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: app.settings
+          DJANGO_SECRET_KEY: test-migration-key
+          POSTGRES_HOST: ${{ steps.replica.outputs.host }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PORT: "5432"
+        run: |
+          echo "Pending migrations:"
+          python manage.py showmigrations --plan | grep "\[ \]" || echo "  (none)"
+          echo "Running test migration on replica..."
+          python manage.py migrate --no-input
+
+      - name: Backup production DB
         run: |
           BACKUP_NAME="pre-deploy-$(date -u +%Y%m%d-%H%M%S)"
-          echo "Creating backup: $BACKUP_NAME"
+          echo "Creating production backup: $BACKUP_NAME"
           az postgres flexible-server backup create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
             --backup-name "$BACKUP_NAME"
-          echo "✓ Backup created: $BACKUP_NAME"
-          echo "  To restore: az postgres flexible-server restore \\"
-          echo "    --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \\"
-          echo "    --name <new-server-name> \\"
-          echo "    --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \\"
-          echo "    --backup-name $BACKUP_NAME"
+          echo "Backup created: $BACKUP_NAME"
+
+      - name: Run migration on production DB
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: app.settings
+          DJANGO_SECRET_KEY: test-migration-key
+          POSTGRES_HOST: ${{ secrets.AZURE_POSTGRES_HOST }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PORT: "5432"
+        run: python manage.py migrate --no-input
+
+      - name: Delete replica
+        if: always()
+        run: |
+          az postgres flexible-server delete \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name "${{ steps.replica.outputs.name }}" --yes 2>/dev/null || true
+
+      - name: Remove runner IP from firewall
+        if: always()
+        run: |
+          az postgres flexible-server firewall-rule delete \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --rule-name github-runner --yes 2>/dev/null || true
 
   build:
-    needs: pre-deploy
+    needs: migrate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
