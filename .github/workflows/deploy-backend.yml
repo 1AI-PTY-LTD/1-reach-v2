@@ -72,7 +72,7 @@ jobs:
             --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
             --replica-name "$REPLICA_NAME"
           echo "Promoting replica to read-write..."
-          az postgres flexible-server replica stop-replication \
+          az postgres flexible-server replica promote \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "$REPLICA_NAME" --yes
           REPLICA_HOST=$(az postgres flexible-server show \
