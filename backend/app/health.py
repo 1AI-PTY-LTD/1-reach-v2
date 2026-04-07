@@ -11,6 +11,9 @@ from rest_framework.views import APIView
 
 logger = logging.getLogger(__name__)
 
+# Replaced by CI with the git SHA at build time (see deploy-backend.yml).
+DEPLOY_SHA = 'dev'
+
 
 def _get_redis_client():
     """Create a Redis client from the Celery broker URL, handling Azure TLS."""
@@ -47,7 +50,7 @@ class HealthCheckView(APIView):
 
         all_ok = all(v == 'ok' for v in checks.values())
         status = 200 if all_ok else 503
-        return Response({'status': 'ok' if all_ok else 'degraded', 'checks': checks}, status=status)
+        return Response({'status': 'ok' if all_ok else 'degraded', 'checks': checks, 'version': DEPLOY_SHA}, status=status)
 
 
 class SmokeCheckView(APIView):
@@ -86,4 +89,4 @@ class SmokeCheckView(APIView):
 
         all_ok = all(v == 'ok' for v in checks.values())
         status = 200 if all_ok else 503
-        return Response({'status': 'ok' if all_ok else 'degraded', 'checks': checks}, status=status)
+        return Response({'status': 'ok' if all_ok else 'degraded', 'checks': checks, 'version': DEPLOY_SHA}, status=status)

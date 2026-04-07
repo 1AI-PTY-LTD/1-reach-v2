@@ -173,6 +173,9 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
+      - name: Stamp deploy version
+        run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
+
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
         with:
@@ -257,38 +260,24 @@ jobs:
     needs: [deploy-api, deploy-worker, deploy-beat]
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for API to be healthy
+      - name: Wait for new instance (smoke test + version check)
         run: |
-          URL="${{ secrets.VITE_API_BASE_URL }}/api/health/"
-          echo "Polling $URL for healthy response..."
+          URL="${{ secrets.VITE_API_BASE_URL }}/api/health/smoke/"
+          EXPECTED_SHA="${{ github.sha }}"
+          echo "Polling $URL until version=$EXPECTED_SHA..."
           for i in $(seq 1 30); do
-            RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 10 "$URL" 2>/dev/null) || true
+            RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
             STATUS=$(echo "$RESP" | tail -1)
             BODY=$(echo "$RESP" | sed '$d')
             echo "Attempt $i/30: HTTP $STATUS — $BODY"
-            if [ "$STATUS" = "200" ]; then
-              echo "API is healthy."
+            if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q "$EXPECTED_SHA"; then
+              echo "New instance confirmed — smoke test passed."
               exit 0
             fi
             sleep 10
           done
-          echo "API did not become healthy within 5 minutes."
+          echo "New instance did not become healthy within 5 minutes."
           exit 1
-
-      - name: Run smoke test (DB write + Redis write)
-        run: |
-          URL="${{ secrets.VITE_API_BASE_URL }}/api/health/smoke/"
-          echo "Running smoke test at $URL..."
-          RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
-          STATUS=$(echo "$RESP" | tail -1)
-          BODY=$(echo "$RESP" | sed '$d')
-          echo "HTTP $STATUS — $BODY"
-          if [ "$STATUS" = "200" ]; then
-            echo "Smoke test passed."
-          else
-            echo "Smoke test failed."
-            exit 1
-          fi
 
       - name: Create Sentry release
         if: env.SENTRY_AUTH_TOKEN != ''

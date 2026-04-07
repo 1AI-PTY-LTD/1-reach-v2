@@ -109,6 +109,8 @@ cp frontend/.envexample frontend/.env
 |---|---|---|
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key (`pk_...`) |
 | `VITE_API_BASE_URL` | No | Backend URL (default: `http://localhost:8000`) |
+| `VITE_SENTRY_DSN` | No | Sentry DSN for frontend error tracking (disabled if not set) |
+| `VITE_SENTRY_ENVIRONMENT` | No | Sentry environment tag (default: `production`) |
 
 ### Running Locally
 
@@ -143,7 +145,9 @@ backend/
 │   ├── authentication.py  # ClerkJWTAuthentication — extracts org context from JWT
 │   ├── permissions.py     # IsOrgMember, IsOrgAdmin
 │   ├── filters.py         # django-filter (search, date, group)
-│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent tasks
+│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent tasks + task_failure signal handler
+│   ├── worker.py          # UvicornWorker subclass with lifespan=off (Django doesn't handle ASGI lifespan events)
+│   ├── health.py          # HealthCheckView (DB + Redis connectivity) + SmokeCheckView (DB write + Redis write) + DEPLOY_SHA version tracking
 │   ├── middleware/        # RequestLoggingMiddleware, ClerkTenantMiddleware
 │   ├── utils/
 │   │   ├── billing.py          # grant_credits, check_can_send, record_usage, refund_usage, etc.
@@ -153,7 +157,7 @@ backend/
 │   │   ├── welcorp.py          # Welcorp SMS/MMS provider (API integration + delivery callbacks + job polling)
 │   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 645 tests
+└── tests/                 # 670 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
@@ -178,7 +182,7 @@ Celery worker (both paths):
 
 Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults to ~1m → 2m → 4m → 8m, capped at 1h. A `dispatch_due_messages` beat task runs every 60 s to pick up scheduled sends and recover stuck RETRYING/PROCESSING schedules.
 
-**Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED. All three startup scripts include DB readiness wait loops (up to 2.5 minutes). Worker and beat scripts also start a background HTTP server on `$PORT` so Azure App Service health probes get a response (without this, Azure kills the container — see [gotchas](#workerbbeat-require-an-http-listener)). Lifecycle events are logged via Celery signals: `beat_init`, `worker_ready`, `worker_shutting_down`. Shell-level SIGTERM traps in the startup scripts log when Azure sends a graceful shutdown signal.
+**Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED. All three startup scripts include DB readiness wait loops (up to 2.5 minutes). Worker and beat scripts also start a background HTTP server on `$PORT` so Azure App Service health probes get a response (without this, Azure kills the container — see [gotchas](#workerbbeat-require-an-http-listener)). Lifecycle events are logged via Celery signals: `beat_init`, `worker_ready`, `worker_shutting_down`, `task_failure`. Shell-level SIGTERM traps in the startup scripts log when Azure sends a graceful shutdown signal. The API uses `app.worker.Worker` (a `UvicornWorker` subclass with `lifespan=off`) because Django doesn't handle ASGI lifespan events — without this, Sentry is flooded with `ValueError` on every worker start (see [gotchas](#uvicorn-lifespan-events)).
 
 **Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
 
@@ -247,8 +251,9 @@ Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in 
 | Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history (admin only) |
 | Configs | `GET/POST/PUT/PATCH/DELETE /api/configs/`, `GET/PUT/PATCH/DELETE /api/configs/:id/` |
 | Webhooks | `POST /api/webhooks/clerk/`, `POST /api/webhooks/sms-delivery/` |
+| Health | `GET /api/health/` (DB + Redis connectivity), `GET /api/health/smoke/` (DB write + Redis write + deploy version) |
 
-All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
+All endpoints require Clerk JWT authentication except health/smoke endpoints (unauthenticated). Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
 
 ---
 
@@ -260,7 +265,7 @@ All endpoints require Clerk JWT authentication. Most require `IsOrgMember`; user
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-645 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+670 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -372,6 +377,13 @@ Docker is used for local development only. The production target is Azure:
 - ~~Frontend UX fixes: `_layout.send.index.tsx` (blank page), `__root.tsx` (raw JSON error boundary), missing `errorComponent` on billing/users routes~~ ✓
 - ~~`.github/workflows/` — CI (pytest + vitest on PRs) and CD (deploy to Azure on `main`)~~ ✓
 - ~~TypeScript build errors — fix ~35 errors caught by `tsc -b` (unused imports, missing status colors, null safety, HeadlessUI/TanStack type conflicts)~~ ✓
+- ~~Frontend security headers — `Content-Security-Policy` (allows self, Clerk, Google Fonts, Azure Blob) and `Permissions-Policy` (denies camera, mic, geo, etc.) in `staticwebapp.config.json`~~ ✓
+- ~~Backend Sentry — `sentry-sdk[django,celery]` with explicit `DjangoIntegration()` + `CeleryIntegration()`, `task_failure` signal handler, permanent failures logged at ERROR~~ ✓
+- ~~Frontend Sentry — `@sentry/react` init in `main.tsx`, `Sentry.captureException` in root error boundary, `VITE_SENTRY_DSN` env var~~ ✓
+- ~~Smoke test endpoint — `GET /api/health/smoke/` (DB write/read via ORM + Redis write/read, rolled back via `transaction.set_rollback`)~~ ✓
+- ~~Deploy version tracking — `DEPLOY_SHA` baked into `health.py` by CI, returned in health/smoke responses; deploy workflow polls until new SHA is live~~ ✓
+- ~~ASGI lifespan fix — `app.worker.Worker` subclass with `lifespan=off` (Django doesn't handle uvicorn lifespan events)~~ ✓
+- ~~CI/CD Sentry releases — `getsentry/action-release` in both deploy workflows, `VITE_SENTRY_DSN` passed at frontend build time~~ ✓
 
 **Azure provisioning — see [Azure Deployment](#azure-deployment) below.**
 
@@ -407,7 +419,7 @@ The current Azure deployment is a working staging environment. The following ite
 
 #### CI/CD improvements
 
-- **Post-deploy smoke test** — Extend the `verify-health` job to also hit an authenticated endpoint (e.g., create a test contact, verify 201, delete it) to confirm DB writes and auth work end-to-end, not just the health endpoint.
+- ~~**Post-deploy smoke test**~~ ✓ — The `verify-health` job now polls `GET /api/health/smoke/` which tests DB write/read (ORM + rollback) and Redis write/read/delete. It also checks the `DEPLOY_SHA` version field to confirm the new instance (not the old one) is serving before passing.
 - **Secret rotation** — Rotate publish profiles and service principal credentials quarterly. Rotate immediately if a team member with access leaves.
 - **Zero-downtime deployment with deployment slots** — see [Production Zero-Downtime Strategy](#production-zero-downtime-strategy) below. The current dev platform already has replica-tested migrations implemented.
 
@@ -550,9 +562,10 @@ In your GitHub repo → Settings → Secrets and variables → Actions, set the 
 
 Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab. The backend deploy workflow:
 
-1. Deploys code to all three App Services via `azure/webapps-deploy`
-2. Explicitly stops and starts the worker and beat services via `az webapp stop/start` (Azure doesn't reliably restart non-web App Services after zip deploy — see [gotcha below](#workerbbeat-require-an-http-listener))
-3. Polls `/api/health/` for up to 5 minutes, failing the workflow if the API does not become healthy
+1. Stamps the git SHA into `health.py` (`DEPLOY_SHA` constant) during the build step
+2. Deploys code to all three App Services via `azure/webapps-deploy`
+3. Explicitly stops and starts the worker and beat services via `az webapp stop/start` (Azure doesn't reliably restart non-web App Services after zip deploy — see [gotcha below](#workerbbeat-require-an-http-listener))
+4. Polls `GET /api/health/smoke/` for up to 5 minutes, checking both HTTP 200 and the expected git SHA — this confirms the **new** instance is serving (not the old one), DB writes work, and Redis works
 
 #### 7. Verify
 
@@ -619,6 +632,11 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` (also used by backend deploy's post-deploy health check) |
+| `VITE_SENTRY_DSN` | Sentry DSN for frontend (baked into JS bundle at build time) |
+| `SENTRY_AUTH_TOKEN` | Sentry auth token for CI release tracking (optional — releases skipped if not set) |
+| `SENTRY_ORG` | Sentry organization slug |
+| `SENTRY_PROJECT_BACKEND` | Sentry project slug for backend |
+| `SENTRY_PROJECT_FRONTEND` | Sentry project slug for frontend |
 
 #### Creating AZURE_CREDENTIALS
 
@@ -724,7 +742,11 @@ AppServiceConsoleLogs
 
 #### Sentry
 
-Set `SENTRY_DSN` on all three App Services for exception tracking. Celery task failures are automatically captured. Optional env vars: `SENTRY_ENVIRONMENT` (default `production`), `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`).
+**Backend:** Set `SENTRY_DSN` on all three App Services. `settings.py` initialises `sentry_sdk` with explicit `DjangoIntegration()` (request context, unhandled exceptions) and `CeleryIntegration()` (task failures with task name, args, retry count). A `task_failure` Celery signal handler also logs all task failures at ERROR level for Azure Log Analytics. Permanent send failures, delivery failures, webhook signature errors, and Clerk API errors are logged at ERROR (not WARNING) so they appear in Sentry and can trigger Azure Monitor alerts. Optional env vars: `SENTRY_ENVIRONMENT` (default `production`), `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`).
+
+**Frontend:** `@sentry/react` initialised in `main.tsx` (conditional on `VITE_SENTRY_DSN`). The root error boundary in `__root.tsx` calls `Sentry.captureException()` to capture unhandled React errors. `VITE_SENTRY_DSN` is baked into the JS bundle at build time via the `deploy-frontend.yml` workflow.
+
+**CI/CD releases:** Both deploy workflows create a Sentry release tagged with the git SHA via `getsentry/action-release@v3` (skipped if `SENTRY_AUTH_TOKEN` is not set). This links Sentry errors to specific deploys.
 
 ### Gotchas & Troubleshooting
 
@@ -774,6 +796,9 @@ Azure Redis access keys are base64 strings that may end in `=`. Do **not** URL-e
 
 #### Azure Cache for Redis — `redis.from_url()` and TLS `ssl_cert_reqs`
 The `_ensure_redis_ssl()` helper in `settings.py` appends `ssl_cert_reqs=CERT_NONE` to `rediss://` URLs. Celery reads this via its own `CELERY_BROKER_USE_SSL` setting, but `redis.from_url()` (used in the health endpoint and startup scripts) rejects the string `"CERT_NONE"` from the URL query param — it expects the `ssl.CERT_NONE` integer constant passed as a keyword argument. The health endpoint (`health.py`) strips the query param and passes `ssl_cert_reqs=ssl.CERT_NONE` explicitly. If you create new `redis.from_url()` calls, do the same.
+
+#### Uvicorn lifespan events
+Uvicorn sends ASGI `lifespan.startup` events when workers start. Django (as of 6.0) doesn't handle these — `ASGIHandler.__call__` raises `ValueError: Django can only handle ASGI/HTTP connections, not lifespan.` This is a known Django limitation (there's a `# FIXME` in their source). Without a fix, every worker start floods Sentry with `ValueError`. **Fix:** `startup.sh` uses `-k app.worker.Worker` — a one-line `UvicornWorker` subclass that sets `CONFIG_KWARGS = {..., "lifespan": "off"}`. This is the standard community workaround since gunicorn's `-k` flag is the only way to pass uvicorn config through gunicorn.
 
 #### Worker/beat require an HTTP listener
 Azure App Service expects every container to respond to HTTP health probes on `$PORT` (default 8000). The API service satisfies this via gunicorn, but Celery worker and beat have no HTTP listener. Without one:

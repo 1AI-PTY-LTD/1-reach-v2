@@ -17,6 +17,7 @@ class TestHealthCheck:
         assert response.data['status'] == 'ok'
         assert response.data['checks']['db'] == 'ok'
         assert response.data['checks']['redis'] == 'ok'
+        assert response.data['version'] == 'dev'
 
     def test_no_auth_required(self):
         """Unauthenticated request succeeds — endpoint uses AllowAny."""
@@ -64,6 +65,7 @@ class TestSmokeCheck:
         assert response.data['status'] == 'ok'
         assert response.data['checks']['db_write'] == 'ok'
         assert response.data['checks']['redis_write'] == 'ok'
+        assert response.data['version'] == 'dev'
 
     def test_no_auth_required(self):
         response = self.client.get('/api/health/smoke/')
