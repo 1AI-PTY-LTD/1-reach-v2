@@ -8,6 +8,9 @@ on:
   workflow_dispatch:
 
 jobs:
+  # TODO (az CLI 2.86.0, May 2026): update deprecated postgres flexible-server args:
+  #   firewall-rule: --name (server) → --server-name, --rule-name (rule) → --name
+  #   backup create: --name (server) → --server-name, --backup-name → --name
   migrate:
     runs-on: ubuntu-latest
     steps:
@@ -81,7 +84,7 @@ jobs:
           az postgres flexible-server replica create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --replica-name "$REPLICA_NAME"
+            --name "$REPLICA_NAME"
           echo "Promoting replica to read-write..."
           az postgres flexible-server replica promote \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \

@@ -817,6 +817,22 @@ This only works if the migration has a valid `reverse()` operation (Django auto-
 #### Deployment artifacts can disappear on container recycle
 When Azure recycles a non-web App Service container (which happens periodically), the fresh container may boot with an empty `/home/site/wwwroot` — no build manifest, no virtual environment, no startup script. The log shows `Could not find build manifest file` followed by `bash: startup-worker.sh: No such file or directory`. The HTTP health responder in the startup scripts prevents most recycling by keeping the container alive. If it does happen, re-trigger the deploy workflow or manually stop/start the App Service.
 
+#### Azure CLI `az postgres flexible-server` deprecation (v2.86.0, May 2026)
+Several `az postgres flexible-server` argument names are being renamed in CLI version 2.86.0. The deploy workflow uses the current args (which produce warnings but work correctly). When updating to 2.86.0+, apply these changes:
+
+| Command | Current arg | New arg (2.86.0) |
+|---------|------------|------------------|
+| `firewall-rule create/delete` | `--name` (server name) | `--server-name` |
+| `firewall-rule create/delete` | `--rule-name` (rule name) | `--name` |
+| `backup create` | `--name` (server name) | `--server-name` |
+| `backup create` | `--backup-name` | `--name` |
+| `replica create` | `--replica-name` | `--name` (already updated) |
+
+A `TODO` comment in `deploy-backend.yml` marks the affected lines.
+
+#### PostgreSQL Burstable tier does not support replicas
+The replica-tested migration flow requires General Purpose or Memory Optimized tier. On Burstable tier (dev/staging), the replica creation step fails with `Read replica is not supported for the Burstable pricing tier`. The workflow should be updated to gracefully skip the replica test and fall back to backup + migrate directly on Burstable (see [Migration Safety](#migration-safety-implemented)). For production, use General Purpose or higher.
+
 ---
 
 See [v1_migration.md](v1_migration.md) for v1 → v2 migration details.
