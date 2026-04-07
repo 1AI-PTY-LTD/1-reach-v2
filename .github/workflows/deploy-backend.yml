@@ -66,6 +66,7 @@ jobs:
         id: replica
         run: |
           REPLICA_NAME="${{ secrets.AZURE_POSTGRES_SERVER_NAME }}-replica"
+          echo "name=$REPLICA_NAME" >> "$GITHUB_OUTPUT"
           echo "Creating replica: $REPLICA_NAME"
           az postgres flexible-server replica create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
@@ -80,7 +81,6 @@ jobs:
             --name "$REPLICA_NAME" \
             --query fullyQualifiedDomainName -o tsv)
           echo "host=$REPLICA_HOST" >> "$GITHUB_OUTPUT"
-          echo "name=$REPLICA_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Test migration on replica
         if: steps.check.outputs.pending == 'true'
