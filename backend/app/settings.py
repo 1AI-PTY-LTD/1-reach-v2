@@ -16,6 +16,8 @@ import os
 import ssl as _ssl
 from decimal import Decimal as _Decimal
 import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -306,6 +308,10 @@ if SENTRY_DSN:
         environment=os.environ.get('SENTRY_ENVIRONMENT', 'production'),
         traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.1')),
         send_default_pii=False,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+        ],
     )
 
 

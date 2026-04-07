@@ -4,7 +4,7 @@ from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from rest_framework.routers import DefaultRouter
 
-from app.health import HealthCheckView
+from app.health import HealthCheckView, SmokeCheckView
 from app.views import *
 
 
@@ -22,6 +22,7 @@ router.register(r'billing', BillingViewSet, basename='billing')
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/health/', HealthCheckView.as_view(), name='health'),
+    path('api/health/smoke/', SmokeCheckView.as_view(), name='health-smoke'),
     path('api/webhooks/clerk/', ClerkWebhookView.as_view(), name='clerk-webhook'),
     path('api/webhooks/sms-delivery/', SMSDeliveryWebhookView.as_view(), name='sms-delivery-webhook'),
     path('api/stats/monthly/', StatsView.as_view(), name='stats-monthly'),

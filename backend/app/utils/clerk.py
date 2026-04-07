@@ -145,7 +145,7 @@ def _handle_subscription_active(data):
             )
             logger.info('Clerk org %s billing_suspended cleared', org_id)
         except Exception:
-            logger.warning(
+            logger.error(
                 'Failed to clear Clerk billing_suspended for org %s', org_id, exc_info=True
             )
     else:
@@ -188,11 +188,11 @@ def _handle_subscription_past_due(data):
                     )
                     logger.info('Clerk org %s marked billing_suspended=True', org_id)
                 except Exception:
-                    logger.warning(
+                    logger.error(
                         'Failed to set Clerk billing_suspended for org %s', org_id, exc_info=True
                     )
         except Exception:
-            logger.warning(
+            logger.error(
                 'Error processing subscription.past_due for org %s', org_id, exc_info=True
             )
 

@@ -274,3 +274,29 @@ jobs:
           done
           echo "API did not become healthy within 5 minutes."
           exit 1
+
+      - name: Run smoke test (DB write + Redis write)
+        run: |
+          URL="${{ secrets.VITE_API_BASE_URL }}/api/health/smoke/"
+          echo "Running smoke test at $URL..."
+          RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
+          STATUS=$(echo "$RESP" | tail -1)
+          BODY=$(echo "$RESP" | sed '$d')
+          echo "HTTP $STATUS — $BODY"
+          if [ "$STATUS" = "200" ]; then
+            echo "Smoke test passed."
+          else
+            echo "Smoke test failed."
+            exit 1
+          fi
+
+      - name: Create Sentry release
+        if: env.SENTRY_AUTH_TOKEN != ''
+        uses: getsentry/action-release@v3
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT_BACKEND }}
+        with:
+          environment: production
+          version: ${{ github.sha }}

@@ -5,7 +5,7 @@ django-cors-headers
 drf-spectacular
 pylint-django
 python-dotenv
-sentry-sdk[django]
+sentry-sdk[django,celery]
 psycopg[binary]>=3.1.18
 PyJWT[crypto]
 svix

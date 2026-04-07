@@ -31,7 +31,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
 import django
 from celery import Celery, shared_task
-from celery.signals import beat_init, worker_process_init, worker_ready, worker_shutting_down
+from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
 from django.db import OperationalError, transaction
 from django.db.models import Exists, OuterRef, Q
@@ -76,6 +76,17 @@ def _close_db_connections_on_fork(**kwargs):
     connection pool so the child starts fresh.
     """
     connections.close_all()
+
+
+@task_failure.connect
+def _on_task_failure(sender=None, task_id=None, exception=None, traceback=None, **kwargs):
+    logger.error(
+        'celery task failed: task=%s id=%s error=%s',
+        sender.name if sender else 'unknown',
+        task_id,
+        str(exception),
+        exc_info=(type(exception), exception, traceback) if exception else None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +209,7 @@ def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_cat
         schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
         refund_usage(org, schedule)
 
-    logger.warning(
+    logger.error(
         'Schedule %d permanently failed (%s): %s',
         schedule.pk, failure_category, result.error,
     )
@@ -486,7 +497,7 @@ def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: di
 
         _cleanup_media_blob(parent)
 
-        logger.warning(
+        logger.error(
             'Batch send permanently failed: parent %d (%s): %s',
             parent.pk, failure_category, error,
         )
@@ -682,7 +693,7 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
         schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
         refund_usage(org, schedule)
 
-    logger.warning(
+    logger.error(
         'Schedule %d delivery failed (%s): %s',
         schedule.pk, failure_category, error_message,
     )
@@ -704,7 +715,7 @@ def process_delivery_event(event_data: dict) -> dict:
     delivery_status = event_data.get('status')
 
     if not provider_message_id:
-        logger.warning('process_delivery_event: missing provider_message_id')
+        logger.error('process_delivery_event: missing provider_message_id')
         return {'skipped': True, 'reason': 'missing provider_message_id'}
 
     schedule = _find_schedule(provider_message_id, recipient_phone)

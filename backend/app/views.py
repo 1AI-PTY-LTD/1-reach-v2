@@ -180,7 +180,7 @@ class ClerkWebhookView(APIView):
                 wh = Webhook(signing_secret)
                 payload = wh.verify(request.body, headers)
             except WebhookVerificationError:
-                logger.warning('Clerk webhook signature verification failed')
+                logger.error('Clerk webhook signature verification failed')
                 return Response({'error': 'Invalid signature'}, status=400)
 
         event_type = payload.get('type')
