@@ -86,7 +86,7 @@ test.describe('Send SMS Page', () => {
     await recipientInput.press('Enter')
     // Submit with no message
     await page.getByRole('button', { name: /send/i }).first().click()
-    await expect(page.getByText(/Please select a template or enter a custom message/i)).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/Please select a template, enter a custom message, or upload an image/i)).toBeVisible({ timeout: 5000 })
   })
 
   test('shows recipients count', async ({ page }) => {

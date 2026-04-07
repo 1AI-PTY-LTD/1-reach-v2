@@ -77,6 +77,11 @@ test.beforeAll(async ({ browser }) => {
     }))
   )
   results.forEach(r => pipelineScheduleIds.push(r.schedule_id))
+
+  // Wait for the Celery worker to finish processing all dispatched tasks
+  // before overriding statuses — otherwise the worker may change them back.
+  await page.waitForTimeout(3000)
+
   await Promise.all(
     PIPELINE_STATES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
   )
@@ -188,8 +193,8 @@ test.describe('MMS — file upload and send', () => {
     await expect(page.getByText(/uploading/i)).not.toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/upload failed/i)).not.toBeVisible()
 
-    // Verify MMS indicator appears
-    await expect(page.getByText(/^MMS - Characters:/)).toBeVisible()
+    // Verify MMS indicator appears (format: "MMS · N / 306 characters · ...")
+    await expect(page.getByText(/MMS · \d+ \/ \d+ characters/)).toBeVisible()
 
     // Fill message and recipient, then send
     await fillAndSubmitSmsForm(page, 'MMS from UI test')

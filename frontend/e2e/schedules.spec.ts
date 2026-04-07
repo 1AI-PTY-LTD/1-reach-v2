@@ -32,6 +32,11 @@ test.beforeAll(async ({ browser }) => {
     }))
   )
   results.forEach(r => scheduleIds.push(r.schedule_id))
+
+  // Wait for the Celery worker to finish processing all dispatched tasks
+  // before overriding statuses — otherwise the worker may change them back.
+  await page.waitForTimeout(3000)
+
   await Promise.all(
     SCHEDULES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
   )
@@ -99,10 +104,10 @@ test.describe('Schedule Page', () => {
   test('shows async pipeline status badges — queued, retrying, delivered, failed', async ({ page }) => {
     await page.goto('/app/schedule')
     await expect(page.getByText('Hello Charlie').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText(/queued/i).first()).toBeVisible()
-    await expect(page.getByText(/retrying/i).first()).toBeVisible()
-    await expect(page.getByText(/delivered/i).first()).toBeVisible()
-    await expect(page.getByText(/failed/i).first()).toBeVisible()
+    await expect(page.getByText(/queued/i).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/retrying/i).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/delivered/i).first()).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText(/failed/i).first()).toBeVisible({ timeout: 5000 })
   })
 
   test('can expand a row to see message details', async ({ page }) => {
@@ -121,6 +126,8 @@ test.describe('Schedule Page', () => {
   })
 
   test('cancelling a pending message keeps it visible with cancelled status', async ({ page }) => {
+    // Re-force to pending immediately before the test in case beat dispatched it
+    await forceStatus(page, scheduleIds[0], 'pending')
     await page.goto('/app/schedule')
     await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
 
