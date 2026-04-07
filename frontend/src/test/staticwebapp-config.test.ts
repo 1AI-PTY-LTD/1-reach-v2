@@ -34,10 +34,11 @@ describe('staticwebapp.config.json CSP', () => {
     expect(values).toContain('https://fonts.gstatic.com')
   })
 
-  it('img-src allows self and Azure Blob Storage', () => {
+  it('img-src allows self, Azure Blob Storage, and Clerk images', () => {
     const values = directives.get('img-src')!
     expect(values).toContain("'self'")
     expect(values).toContain('https://*.blob.core.windows.net')
+    expect(values).toContain('https://img.clerk.com')
   })
 
   it('connect-src allows self, Clerk, backend, and Sentry', () => {
