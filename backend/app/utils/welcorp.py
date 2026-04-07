@@ -19,7 +19,8 @@ Future features to implement:
 
 import logging
 from typing import Optional
-from urllib.parse import urljoin
+from pathlib import PurePosixPath
+from urllib.parse import urljoin, urlparse
 
 import requests
 from django.conf import settings
@@ -335,11 +336,29 @@ class WelcorpSMSProvider(SMSProvider):
 
         return events
 
+    @staticmethod
+    def _media_filename(media_url: str) -> str | None:
+        """Extract extension from media URL and return 'media.ext'.
+
+        Returns None if the URL has no file extension.
+        """
+        path = urlparse(media_url).path
+        ext = PurePosixPath(path).suffix.lower()
+        return f'media{ext}' if ext else None
+
     def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
+        filename = self._media_filename(media_url)
+        if not filename:
+            return SendResult(
+                success=False,
+                error=f'media_url missing file extension: {media_url}',
+                failure_category='invalid_request',
+            )
+
         payload = {
             'job_type': 'mms',
             'message': message,
-            'files': [{'name': 'media', 'url': media_url}],
+            'files': [{'name': filename, 'url': media_url}],
             'recipients': [{'destination': self._to_international(to)}],
         }
         if subject:
@@ -361,10 +380,23 @@ class WelcorpSMSProvider(SMSProvider):
         message = recipients[0]['message'] if recipients else ''
         subject = recipients[0].get('subject') if recipients else None
 
+        filename = self._media_filename(media_url)
+        if not filename:
+            return {
+                'success': False,
+                'results': [
+                    {'to': r['to'], 'message_parts': 1, 'success': False, 'message_id': None, 'error': 'media_url missing file extension'}
+                    for r in recipients
+                ],
+                'error': f'media_url missing file extension: {media_url}',
+                'retryable': False,
+                'failure_category': 'invalid_request',
+            }
+
         payload: dict = {
             'job_type': 'mms',
             'message': message,
-            'files': [{'name': 'media', 'url': media_url}],
+            'files': [{'name': filename, 'url': media_url}],
             'recipients': welcorp_recipients,
         }
         if subject:

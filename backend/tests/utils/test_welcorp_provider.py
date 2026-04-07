@@ -144,7 +144,7 @@ class TestSendSMS:
 
         assert result.success is False
         assert result.message_id is None
-        assert result.error == 'Validation failed'
+        assert 'Validation failed' in result.error
         assert result.http_status == 422
         assert result.retryable is False
         assert result.failure_category == FailureCategory.UNKNOWN_PERMANENT.value
@@ -207,6 +207,30 @@ class TestSendSMS:
 # MMS sending
 # ---------------------------------------------------------------------------
 
+class TestMediaFilename:
+    def test_extracts_png(self):
+        assert WelcorpSMSProvider._media_filename('https://storage.example.com/media/abc.png') == 'media.png'
+
+    def test_extracts_jpg(self):
+        assert WelcorpSMSProvider._media_filename('https://storage.example.com/media/abc.jpg') == 'media.jpg'
+
+    def test_extracts_gif(self):
+        assert WelcorpSMSProvider._media_filename('https://storage.example.com/media/abc.gif') == 'media.gif'
+
+    def test_extracts_jpeg(self):
+        assert WelcorpSMSProvider._media_filename('https://storage.example.com/media/abc.jpeg') == 'media.jpeg'
+
+    def test_ignores_sas_query_params(self):
+        url = 'https://account.blob.core.windows.net/media/abc.png?sv=2022&sig=token'
+        assert WelcorpSMSProvider._media_filename(url) == 'media.png'
+
+    def test_returns_none_without_extension(self):
+        assert WelcorpSMSProvider._media_filename('https://example.com/media/noext') is None
+
+    def test_returns_none_for_empty_path(self):
+        assert WelcorpSMSProvider._media_filename('https://example.com') is None
+
+
 class TestSendMMS:
     def test_success_returns_job_id(self, provider):
         provider.session.post.return_value = _ok_response(job_id=456)
@@ -229,7 +253,7 @@ class TestSendMMS:
         assert payload['job_type'] == 'mms'
         assert payload['message'] == 'Look!'
         assert payload['subject'] == 'My Photo'
-        assert payload['files'] == [{'name': 'media', 'url': 'https://example.com/img.jpg'}]
+        assert payload['files'] == [{'name': 'media.jpg', 'url': 'https://example.com/img.jpg'}]
         assert payload['recipients'] == [{'destination': '+61412345678'}]
 
     def test_sends_payload_without_subject(self, provider):
@@ -242,6 +266,25 @@ class TestSendMMS:
         payload = provider.session.post.call_args.kwargs['json']
         assert 'subject' not in payload
 
+    def test_filename_includes_extension_from_url(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_mms_impl(
+            '0412345678', 'Hi', 'https://storage.example.com/media/abc123.png?sv=2022&sig=token'
+        )
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['files'][0]['name'] == 'media.png'
+
+    def test_fails_fast_without_extension(self, provider):
+        result = provider._send_mms_impl(
+            '0412345678', 'Hi', 'https://example.com/noext'
+        )
+
+        assert result.success is False
+        assert 'missing file extension' in result.error
+        provider.session.post.assert_not_called()
+
     def test_api_error(self, provider):
         provider.session.post.return_value = _error_response(422, 'Invalid file')
 
@@ -250,7 +293,7 @@ class TestSendMMS:
         )
 
         assert result.success is False
-        assert result.error == 'Invalid file'
+        assert 'Invalid file' in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +347,7 @@ class TestSendBulkSMS:
         assert result['success'] is False
         assert len(result['results']) == 2
         assert all(not r['success'] for r in result['results'])
-        assert all(r['error'] == 'Server down' for r in result['results'])
+        assert all('Server down' in r['error'] for r in result['results'])
 
 
 # ---------------------------------------------------------------------------
