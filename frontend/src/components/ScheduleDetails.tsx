@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 import { Divider } from '../ui/divider';
 import { Button } from '../ui/button';
-import { PencilIcon, XMarkIcon } from '@heroicons/react/16/solid';
+import { ArrowPathIcon, PencilIcon, XMarkIcon } from '@heroicons/react/16/solid';
 import type { Contact } from '../types/contact.types';
 import type { Schedule } from '../types/schedule.types';
 import { ContactMessageModal } from './contacts/CustomerMessageModal';
@@ -9,7 +9,7 @@ import { useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import Logger from '../utils/logger';
 import { Alert, AlertActions, AlertDescription, AlertTitle } from '../ui/alert';
-import { useCancelScheduleMutation, getScheduleRecipientsQueryOptions } from '../api/schedulesApi';
+import { useCancelScheduleMutation, useRetryScheduleMutation, getScheduleRecipientsQueryOptions } from '../api/schedulesApi';
 import { useApiClient } from '../lib/ApiClientProvider';
 import { useQuery } from '@tanstack/react-query';
 import { StatusBadge } from './StatusBadge';
@@ -78,8 +78,10 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 
 	const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 	const [isAlertOpen, setIsAlertOpen] = useState<boolean>(false);
+	const [isRetryAlertOpen, setIsRetryAlertOpen] = useState<boolean>(false);
 	const client = useApiClient();
 	const cancelMutation = useCancelScheduleMutation(client);
+	const retryMutation = useRetryScheduleMutation(client);
 
 	if (!message) {
 		Logger.debug('No message data', {
@@ -125,8 +127,30 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 		}
 	};
 
+	const handleRetry = async () => {
+		Logger.info('Message retry requested', {
+			component: 'ScheduleDetails',
+			data: { messageId: message.id },
+		});
+
+		try {
+			await retryMutation.mutateAsync(message.id);
+			Logger.info('Message retry initiated', {
+				component: 'ScheduleDetails',
+				data: { messageId: message.id },
+			});
+		} catch (error) {
+			Logger.error('Failed to retry message', {
+				component: 'ScheduleDetails',
+				data: { messageId: message.id, error },
+			});
+			throw error;
+		}
+	};
+
 	const canCancel = message.status === 'pending';
 	const canEdit = message.status === 'pending' && dayjs(message.scheduled_time).isAfter(dayjs());
+	const canRetry = message.status === 'failed';
 	const isBatchParent = (message.recipient_count ?? 0) > 0;
 
 	return (
@@ -150,12 +174,18 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 				</>
 			)}
 			<Divider />
-			{(canCancel || canEdit) && (
+			{(canCancel || canEdit || canRetry) && (
 				<div className="flex justify-between mt-4">
 					{canCancel && (
 						<Button color="red" onClick={() => setIsAlertOpen(true)}>
 							<XMarkIcon />
 							Cancel
+						</Button>
+					)}
+					{canRetry && (
+						<Button color="amber" onClick={() => setIsRetryAlertOpen(true)}>
+							<ArrowPathIcon />
+							Retry
 						</Button>
 					)}
 					{canEdit && (
@@ -198,6 +228,32 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 							<>
 								<XMarkIcon />
 								Yes, cancel
+							</>
+						)}
+					</Button>
+				</AlertActions>
+			</Alert>
+			<Alert open={isRetryAlertOpen} onClose={() => setIsRetryAlertOpen(false)}>
+				<AlertTitle>Retry this message?</AlertTitle>
+				<AlertDescription>The message will be re-queued for delivery.</AlertDescription>
+				<AlertActions>
+					<Button plain onClick={() => setIsRetryAlertOpen(false)}>
+						No, keep it
+					</Button>
+					<Button
+						color="amber"
+						onClick={async () => {
+							await handleRetry();
+							setIsRetryAlertOpen(false);
+						}}
+						disabled={retryMutation.isPending}
+					>
+						{retryMutation.isPending ? (
+							<span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+						) : (
+							<>
+								<ArrowPathIcon />
+								Yes, retry
 							</>
 						)}
 					</Button>

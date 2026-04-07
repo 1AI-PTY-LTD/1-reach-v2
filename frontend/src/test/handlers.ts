@@ -142,6 +142,12 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
+  http.post(`${BASE_URL}/api/schedules/:id/retry/`, ({ params }) => {
+    const schedule = schedules.find((s) => s.id === Number(params.id))
+    if (!schedule) return HttpResponse.json({ error: 'Schedule not found' }, { status: 404 })
+    return HttpResponse.json({ ...schedule, status: 'queued', error: null, retry_count: 0 })
+  }),
+
   http.get(`${BASE_URL}/api/schedules/:id/recipients/`, () => {
     return HttpResponse.json([
       createSchedule({ id: 10, text: 'Hello Alice', phone: '0412111111', status: 'sent' }),

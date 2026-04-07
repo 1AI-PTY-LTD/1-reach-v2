@@ -19,6 +19,10 @@ process_delivery_event(event_data)
 reconcile_stale_sent()
     Beat task. Logs warnings for schedules stuck in SENT status for >24h without
     a delivery callback.
+
+cleanup_stale_media_blobs()
+    Beat task (daily). Deletes media blobs for failed MMS schedules older than
+    7 days, allowing manual retries within that window.
 """
 
 import logging
@@ -215,7 +219,8 @@ def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_cat
         schedule.pk, failure_category, result.error,
     )
 
-    _cleanup_media_blob(schedule)
+    # Media blob cleanup deferred to cleanup_stale_media_blobs beat task
+    # so the user can manually retry failed MMS within 7 days.
     _sync_parent_status(schedule)
 
 
@@ -497,7 +502,7 @@ def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: di
         parent.error = error
         parent.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
 
-        _cleanup_media_blob(parent)
+        # Media blob cleanup deferred to cleanup_stale_media_blobs beat task.
 
         logger.error(
             'Batch send permanently failed: parent %d (%s): %s',
@@ -699,7 +704,7 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
         'Schedule %d delivery failed (%s): %s',
         schedule.pk, failure_category, error_message,
     )
-    _cleanup_media_blob(schedule)
+    # Media blob cleanup deferred to cleanup_stale_media_blobs beat task.
     _sync_parent_status(schedule)
 
 
@@ -787,3 +792,34 @@ def reconcile_stale_sent() -> dict:
 
     logger.info('reconcile_stale_sent: polled %d jobs, dispatched %d events', len(stale_ids), total_events)
     return {'polled': len(stale_ids), 'events': total_events}
+
+
+# ---------------------------------------------------------------------------
+# Media blob cleanup
+# ---------------------------------------------------------------------------
+
+@shared_task(name='app.celery.cleanup_stale_media_blobs')
+def cleanup_stale_media_blobs() -> dict:
+    """Delete media blobs for failed schedules older than 7 days.
+
+    Media blobs are not deleted immediately on failure so that users can
+    manually retry failed MMS messages. This task runs daily to clean up
+    blobs that are past the retry window.
+    """
+    cutoff = timezone.now() - timedelta(days=7)
+    stale = Schedule.objects.filter(
+        status=ScheduleStatus.FAILED,
+        media_url__isnull=False,
+        updated_at__lt=cutoff,
+    ).exclude(media_url='')
+
+    cleaned = 0
+    for schedule in stale.iterator():
+        _cleanup_media_blob(schedule)
+        # Clear media_url so we don't re-attempt on the next run
+        schedule.media_url = None
+        schedule.save(update_fields=['media_url', 'updated_at'])
+        cleaned += 1
+
+    logger.info('cleanup_stale_media_blobs: cleaned %d blobs', cleaned)
+    return {'cleaned': cleaned}

@@ -458,6 +458,49 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
         schedule.save(update_fields=['status'])
         return Response({'status': schedule.status})
 
+    @action(detail=True, methods=['post'], url_path='retry')
+    def retry(self, request, pk=None):
+        """POST /api/schedules/{id}/retry/ — re-enqueue a failed schedule."""
+        schedule = self.get_object()
+
+        if schedule.status != ScheduleStatus.FAILED:
+            raise ValidationError('Only failed schedules can be retried.')
+
+        org = schedule.organisation
+        failed_children = Schedule.objects.filter(parent=schedule, status=ScheduleStatus.FAILED)
+        is_batch_parent = failed_children.exists()
+
+        # Billing gate
+        fmt = schedule.format or 'sms'
+        units = sum(c.message_parts for c in failed_children) if is_batch_parent else schedule.message_parts
+        can_send, error = check_can_send(org, units=units, format=fmt)
+        if not can_send:
+            return Response({'detail': error}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
+        # Reset state + re-charge trial credits in one transaction
+        reset_fields = dict(status=ScheduleStatus.QUEUED, retry_count=0,
+                            error=None, failure_category=None, next_retry_at=None)
+        with transaction.atomic():
+            for field, value in reset_fields.items():
+                setattr(schedule, field, value)
+            schedule.save(update_fields=[*reset_fields.keys(), 'updated_at'])
+
+            if is_batch_parent:
+                failed_children.update(**reset_fields)
+
+            if org.billing_mode == org.BILLING_TRIAL:
+                for s in (list(failed_children) if is_batch_parent else [schedule]):
+                    record_usage(
+                        org, s.message_parts, format=s.format or 'sms',
+                        description=f"Retry {(s.format or 'sms').upper()} to {s.phone}",
+                        user=request.user, schedule=s,
+                    )
+
+        (send_batch_message_task if is_batch_parent else send_message_task).delay(schedule.pk)
+
+        serializer = self.get_serializer(schedule)
+        return Response(serializer.data)
+
 
 class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
     """Manages group schedules — a parent Schedule linked to per-member child Schedules.

@@ -5,6 +5,7 @@ import {
   getSchedulesByContactIdQueryOptions,
   getAllSchedulesInfiniteOptions,
   getSchedulesByContactIdInfiniteOptions,
+  getScheduleRecipientsQueryOptions,
 } from '../schedulesApi'
 import { createMockApiClient } from '../../test/test-utils'
 import { server } from '../../test/handlers'
@@ -31,9 +32,9 @@ describe('schedulesApi', () => {
       expect(Array.isArray(result.results)).toBe(true)
     })
 
-    it('has refetchInterval set', () => {
+    it('has dynamic refetchInterval', () => {
       const options = getAllSchedulesQueryOptions(client, '2026-01-15')
-      expect(options.refetchInterval).toBe(60000)
+      expect(typeof options.refetchInterval).toBe('function')
     })
   })
 
@@ -97,9 +98,9 @@ describe('schedulesApi', () => {
       expect(result).toHaveProperty('pagination')
     })
 
-    it('has refetchInterval set', () => {
+    it('has dynamic refetchInterval', () => {
       const options = getAllSchedulesInfiniteOptions(client, '2026-01-15')
-      expect(options.refetchInterval).toBe(60000)
+      expect(typeof options.refetchInterval).toBe('function')
     })
   })
 
@@ -145,6 +146,92 @@ describe('schedulesApi', () => {
     })
   })
 
+  describe('dynamic refetchInterval', () => {
+    it('returns 2000ms when schedules have transient statuses', () => {
+      const options = getAllSchedulesQueryOptions(client, '2026-01-15')
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: {
+            results: [
+              { status: 'queued' },
+              { status: 'delivered' },
+            ],
+            pagination: { total: 2, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
+          },
+        },
+      }
+      expect(refetchInterval(query)).toBe(2000)
+    })
+
+    it('returns 60000ms when all schedules are terminal', () => {
+      const options = getAllSchedulesQueryOptions(client, '2026-01-15')
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: {
+            results: [
+              { status: 'delivered' },
+              { status: 'failed' },
+            ],
+            pagination: { total: 2, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
+          },
+        },
+      }
+      expect(refetchInterval(query)).toBe(60000)
+    })
+
+    it('returns 60000ms when data is not yet loaded', () => {
+      const options = getAllSchedulesQueryOptions(client, '2026-01-15')
+      const refetchInterval = options.refetchInterval as Function
+      expect(refetchInterval({ state: { data: undefined } })).toBe(60000)
+    })
+
+    it('infinite query returns 2000ms for transient schedules', () => {
+      const options = getAllSchedulesInfiniteOptions(client, '2026-01-15')
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: {
+            pages: [
+              { results: [{ status: 'sent' }], pagination: {} },
+              { results: [{ status: 'processing' }], pagination: {} },
+            ],
+          },
+        },
+      }
+      expect(refetchInterval(query)).toBe(2000)
+    })
+
+    it('recipients query returns false when all terminal', () => {
+      const options = getScheduleRecipientsQueryOptions(client, 1)
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: [
+            { status: 'delivered' },
+            { status: 'failed' },
+          ],
+        },
+      }
+      expect(refetchInterval(query)).toBe(false)
+    })
+
+    it('recipients query returns 2000ms when transient', () => {
+      const options = getScheduleRecipientsQueryOptions(client, 1)
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: [
+            { status: 'delivered' },
+            { status: 'retrying' },
+          ],
+        },
+      }
+      expect(refetchInterval(query)).toBe(2000)
+    })
+  })
+
   describe('error handling', () => {
     it('getAllSchedulesQueryOptions rejects when API returns 500', async () => {
       server.use(
@@ -164,6 +251,15 @@ describe('schedulesApi', () => {
       )
       const options = getSchedulesByContactIdQueryOptions(client, 1)
       await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('retrySchedule rejects when API returns 402', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/schedules/:id/retry/', () =>
+          HttpResponse.json({ detail: 'Insufficient credits' }, { status: 402 })
+        )
+      )
+      await expect(client.post('/api/schedules/1/retry/')).rejects.toThrow()
     })
 
     it('cancelSchedule rejects when API returns 400', async () => {

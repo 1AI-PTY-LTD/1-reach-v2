@@ -13,6 +13,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 - Group messaging with scheduling
 - Template library
 - SMS/MMS sending — single or batch (multi-recipient), async dispatch via Celery with automatic retry and credit refund on failure
+- Manual retry — failed messages can be retried from the schedule page UI (billing re-checked, credits re-charged for trial orgs)
 - Scheduled sends — Celery beat dispatches due messages every 60 s
 - Org user management — invite, deactivate, grant/revoke admin
 - Usage stats dashboard
@@ -128,7 +129,7 @@ This starts six services:
 | ReDoc | http://localhost:8000/api/redoc/ | API reference |
 | Redis | localhost:6379 | Celery broker + result backend |
 | Celery worker | — | Processes `send_message` tasks (async SMS/MMS dispatch) |
-| Celery beat | — | Runs `dispatch_due_messages` every 60 s + `reconcile_stale_sent` (polls provider for missed callbacks) |
+| Celery beat | — | Runs `dispatch_due_messages` every 60 s, `reconcile_stale_sent` (polls provider for missed callbacks), `cleanup_stale_media_blobs` (daily — deletes MMS media blobs for failed schedules >7 days old) |
 
 ---
 
@@ -145,7 +146,7 @@ backend/
 │   ├── authentication.py  # ClerkJWTAuthentication — extracts org context from JWT
 │   ├── permissions.py     # IsOrgMember, IsOrgAdmin
 │   ├── filters.py         # django-filter (search, date, group)
-│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent tasks + task_failure signal handler
+│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent + cleanup_stale_media_blobs tasks + task_failure signal handler
 │   ├── worker.py          # UvicornWorker subclass with lifespan=off (Django doesn't handle ASGI lifespan events)
 │   ├── health.py          # HealthCheckView (DB + Redis connectivity) + SmokeCheckView (DB write + Redis write) + DEPLOY_SHA version tracking
 │   ├── middleware/        # RequestLoggingMiddleware, ClerkTenantMiddleware
@@ -178,13 +179,16 @@ Celery worker (both paths):
   QUEUED → PROCESSING → SENT → DELIVERED (receipt)
                       ↓ transient fail → RETRYING (backoff)
                       ↓ permanent fail → FAILED + refund
+
+Manual retry (UI):
+  FAILED → POST /api/schedules/{id}/retry/ → QUEUED → (re-enters pipeline)
 ```
 
 Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults to ~1m → 2m → 4m → 8m, capped at 1h. A `dispatch_due_messages` beat task runs every 60 s to pick up scheduled sends and recover stuck RETRYING/PROCESSING schedules.
 
 **Worker startup:** `celery.py` calls `django.setup()` after `app.config_from_object(...)` and before any model imports. This is required because the worker starts a fresh Python process where Django's app registry is not yet populated. Without it, model imports raise `AppRegistryNotReady` and the worker exits silently, leaving all dispatched messages stuck in QUEUED. All three startup scripts include DB readiness wait loops (up to 2.5 minutes). Worker and beat scripts also start a background HTTP server on `$PORT` so Azure App Service health probes get a response (without this, Azure kills the container — see [gotchas](#workerbbeat-require-an-http-listener)). Lifecycle events are logged via Celery signals: `beat_init`, `worker_ready`, `worker_shutting_down`, `task_failure`. Shell-level SIGTERM traps in the startup scripts log when Azure sends a graceful shutdown signal. The API uses `app.worker.Worker` (a `UvicornWorker` subclass with `lifespan=off`) because Django doesn't handle ASGI lifespan events — without this, Sentry is flooded with `ValueError` on every worker start (see [gotchas](#uvicorn-lifespan-events)).
 
-**Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`.
+**Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`. MMS media blobs are **not** deleted on failure — they are retained for 7 days to allow manual retry, then cleaned up by the `cleanup_stale_media_blobs` daily beat task.
 
 **Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed` | `past_due`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. `check_can_send` blocks all sends when `billing_mode='past_due'`. Clerk Billing is live: `subscription.active` sets `billing_mode='subscribed'` and clears the Clerk `billing_suspended` metadata flag; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` sets `billing_mode='past_due'` and sets `billing_suspended=True` in Clerk org metadata. Per-SMS/MMS metered billing is tracked internally via `CreditTransaction` (for manual invoicing); native Clerk metered billing will be wired into `record_usage()` when Clerk adds support.
 
@@ -230,6 +234,8 @@ frontend/
 
 Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in `index.html`.
 
+**Schedule page polling:** All schedule queries use dynamic `refetchInterval` — when any visible schedule is in a transient state (pending, queued, processing, retrying), the page polls every 2 seconds for updates. When all schedules are terminal (sent, delivered, failed, cancelled), polling slows to 60 seconds.
+
 **API client pattern:** All components use `useApiClient()` to get an `ApiClient` instance pre-authenticated with a Clerk JWT. API modules (`src/api/`) export TanStack Query options and mutation hooks that accept the client as their first argument.
 
 **Clerk mutations:** Role and status mutations use a 2-second delayed query invalidation to account for the race condition between the API response and webhook processing.
@@ -243,7 +249,7 @@ Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in 
 | Contacts | `GET/POST /api/contacts/`, `GET/PUT/PATCH /api/contacts/:id/`, `GET /api/contacts/:id/schedules/`, `POST /api/contacts/import/` |
 | Groups | `GET/POST /api/groups/`, `GET/PUT/PATCH/DELETE /api/groups/:id/`, `POST/DELETE /api/groups/:id/members/` |
 | Templates | `GET/POST /api/templates/`, `GET/PUT/PATCH /api/templates/:id/` |
-| Schedules | `GET/POST /api/schedules/`, `GET/PUT/PATCH /api/schedules/:id/`, `GET /api/schedules/:id/recipients/` |
+| Schedules | `GET/POST /api/schedules/`, `GET/PUT/PATCH /api/schedules/:id/`, `GET /api/schedules/:id/recipients/`, `POST /api/schedules/:id/retry/` → re-queue failed schedule |
 | Group Schedules | `GET/POST /api/group-schedules/`, `GET/PUT/DELETE /api/group-schedules/:id/` |
 | Users | `GET /api/users/`, `GET /api/users/me/`, `PATCH /api/users/:id/role/`, `PATCH /api/users/:id/status/`, `POST /api/users/invite/` |
 | SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/` |

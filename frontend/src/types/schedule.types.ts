@@ -10,6 +10,14 @@ export type ScheduleStatus =
   | 'failed'
   | 'cancelled'
 
+export const TRANSIENT_STATUSES: ReadonlySet<ScheduleStatus> = new Set([
+  'pending', 'queued', 'processing', 'retrying',
+])
+
+export function hasTransientSchedule(schedules: Array<{ status: ScheduleStatus }>): boolean {
+  return schedules.some(s => TRANSIENT_STATUSES.has(s.status))
+}
+
 export type Schedule = {
   id: number
   name?: string | null

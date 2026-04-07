@@ -1,5 +1,6 @@
 import { queryOptions, infiniteQueryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Schedule, CreateSchedule, UpdateSchedule } from '../types/schedule.types'
+import { hasTransientSchedule } from '../types/schedule.types'
 import type { PaginatedResponse } from '../types/pagination.types'
 import type { ApiClient } from '../lib/helper'
 import Logger from '../utils/logger'
@@ -32,7 +33,11 @@ export function getAllSchedulesQueryOptions(client: ApiClient, date: string, pag
       })
       return data
     },
-    refetchInterval: 60000,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return 60000
+      return hasTransientSchedule(data.results) ? 2000 : 60000
+    },
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
@@ -68,7 +73,11 @@ export function getSchedulesByContactIdQueryOptions(
       })
       return data
     },
-    refetchInterval: 60000,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return 60000
+      return hasTransientSchedule(data.results) ? 2000 : 60000
+    },
     staleTime: page === 1 ? 0 : 30000,
     refetchOnWindowFocus: true,
   })
@@ -93,7 +102,12 @@ export function getAllSchedulesInfiniteOptions(client: ApiClient, date: string, 
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
-    refetchInterval: 60000,
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages
+      if (!pages) return 60000
+      const allSchedules = pages.flatMap(p => p.results)
+      return hasTransientSchedule(allSchedules) ? 2000 : 60000
+    },
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
@@ -123,7 +137,12 @@ export function getSchedulesByContactIdInfiniteOptions(
     initialPageParam: 1,
     getNextPageParam: (lastPage) =>
       lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
-    refetchInterval: 60000,
+    refetchInterval: (query) => {
+      const pages = query.state.data?.pages
+      if (!pages) return 60000
+      const allSchedules = pages.flatMap(p => p.results)
+      return hasTransientSchedule(allSchedules) ? 2000 : 60000
+    },
     staleTime: 0,
     refetchOnWindowFocus: true,
   })
@@ -135,6 +154,11 @@ export function getScheduleRecipientsQueryOptions(client: ApiClient, scheduleId:
     queryKey: ['schedules', scheduleId, 'recipients'],
     queryFn: () => client.get<Schedule[]>(`/api/schedules/${scheduleId}/recipients/`),
     enabled: !!scheduleId,
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return false
+      return hasTransientSchedule(data) ? 2000 : false
+    },
   })
 }
 
@@ -181,6 +205,32 @@ export function useCancelScheduleMutation(client: ApiClient) {
     onError: (error) => {
       Logger.error('Error cancelling schedule', {
         component: 'schedulesApi.cancelSchedule',
+        data: { error: error.message },
+      })
+    },
+  })
+}
+
+export function useRetryScheduleMutation(client: ApiClient) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => {
+      Logger.debug('Retrying schedule', {
+        component: 'schedulesApi.retrySchedule',
+        data: { scheduleId: id },
+      })
+      return client.post<Schedule>(`/api/schedules/${id}/retry/`)
+    },
+    onSuccess: (_, id) => {
+      Logger.info('Schedule retry initiated', {
+        component: 'schedulesApi.retrySchedule',
+        data: { scheduleId: id },
+      })
+      queryClient.invalidateQueries({ queryKey: ['schedules'] })
+    },
+    onError: (error) => {
+      Logger.error('Error retrying schedule', {
+        component: 'schedulesApi.retrySchedule',
         data: { error: error.message },
       })
     },

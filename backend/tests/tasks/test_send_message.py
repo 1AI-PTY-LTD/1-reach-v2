@@ -460,10 +460,10 @@ class TestMediaBlobCleanup:
             send_message(schedule_queued.pk)
             mock_storage.assert_not_called()
 
-    def test_mms_blob_deleted_on_permanent_failure(
+    def test_mms_blob_not_deleted_on_permanent_failure(
         self, db, organisation, contact, user, mock_sms_provider_permanent_fail
     ):
-        """Media blob is deleted when MMS send permanently fails."""
+        """Media blob is NOT deleted on permanent failure — deferred to cleanup_stale_media_blobs."""
         schedule = _make_queued(
             db, organisation, user, contact,
             format=MessageFormat.MMS,
@@ -471,10 +471,9 @@ class TestMediaBlobCleanup:
         )
 
         with patch('app.celery.get_storage_provider') as mock_storage:
-            mock_provider = mock_storage.return_value
             send_message(schedule.pk)
 
-            mock_provider.delete_blob.assert_called_once_with('def456.png')
+            mock_storage.assert_not_called()
 
     def test_mms_sent_status_without_blob_cleanup(
         self, db, organisation, contact, user, mock_sms_provider

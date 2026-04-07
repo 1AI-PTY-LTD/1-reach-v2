@@ -253,6 +253,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'app.celery.dispatch_due_messages',
         'schedule': 60.0,  # every 60 seconds
     },
+    'cleanup-stale-media-blobs': {
+        'task': 'app.celery.cleanup_stale_media_blobs',
+        'schedule': 86400.0,  # every 24 hours
+    },
 }
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
