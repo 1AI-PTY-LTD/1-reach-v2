@@ -86,6 +86,13 @@ jobs:
           az postgres flexible-server replica promote \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "$REPLICA_NAME" --yes
+          echo "Adding runner IP to replica firewall..."
+          az postgres flexible-server firewall-rule create \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name "$REPLICA_NAME" \
+            --rule-name github-runner \
+            --start-ip-address ${{ steps.ip.outputs.ip }} \
+            --end-ip-address ${{ steps.ip.outputs.ip }}
           REPLICA_HOST=$(az postgres flexible-server show \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "$REPLICA_NAME" \
