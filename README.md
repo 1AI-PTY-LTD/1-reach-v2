@@ -444,7 +444,7 @@ The PostgreSQL server may host databases for other apps. This is safe because:
 
 `startup.sh` has a safety-net migration check: if migrations were somehow missed by the workflow (e.g., manual deploy), it detects and applies them on startup.
 
-**Secrets required:** `AZURE_POSTGRES_HOST`, `AZURE_POSTGRES_SERVER_NAME`, `AZURE_POSTGRES_RESOURCE_GROUP`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`.
+**Secrets required:** `AZURE_POSTGRES_HOST`, `AZURE_POSTGRES_SERVER_NAME`, `AZURE_POSTGRES_RESOURCE_GROUP`, `AZURE_POSTGRES_DB`, `AZURE_POSTGRES_USER`, `AZURE_POSTGRES_PASSWORD`.
 
 #### Production Zero-Downtime Strategy
 
@@ -613,9 +613,9 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `AZURE_POSTGRES_HOST` | PostgreSQL server FQDN (e.g. `server.postgres.database.azure.com`) — used for migration check and production migrate |
 | `AZURE_POSTGRES_SERVER_NAME` | PostgreSQL Flexible Server name (for replica creation and backups) |
 | `AZURE_POSTGRES_RESOURCE_GROUP` | Resource group containing the PostgreSQL server (may differ from App Services resource group) |
-| `POSTGRES_DB` | Database name (same value as App Service env var) |
-| `POSTGRES_USER` | Database user (same value as App Service env var) |
-| `POSTGRES_PASSWORD` | Database password (same value as App Service env var) |
+| `AZURE_POSTGRES_DB` | Azure database name |
+| `AZURE_POSTGRES_USER` | Azure PostgreSQL admin username |
+| `AZURE_POSTGRES_PASSWORD` | Azure PostgreSQL admin password |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Static Web App → Manage deployment token |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk dashboard |
 | `VITE_API_BASE_URL` | `https://<api-app-name>.azurewebsites.net` (also used by backend deploy's post-deploy health check) |
@@ -812,7 +812,7 @@ python manage.py migrate <app_label> <previous_migration_name>
 ```
 This only works if the migration has a valid `reverse()` operation (Django auto-generates reverses for most operations, but not `RunPython` or `RunSQL` unless you provide them).
 
-**Secrets required:** `AZURE_POSTGRES_HOST`, `AZURE_POSTGRES_SERVER_NAME`, `AZURE_POSTGRES_RESOURCE_GROUP`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` — see [GitHub Secrets](#github-secrets-cd).
+**Secrets required:** `AZURE_POSTGRES_HOST`, `AZURE_POSTGRES_SERVER_NAME`, `AZURE_POSTGRES_RESOURCE_GROUP`, `AZURE_POSTGRES_DB`, `AZURE_POSTGRES_USER`, `AZURE_POSTGRES_PASSWORD` — see [GitHub Secrets](#github-secrets-cd).
 
 #### Deployment artifacts can disappear on container recycle
 When Azure recycles a non-web App Service container (which happens periodically), the fresh container may boot with an empty `/home/site/wwwroot` — no build manifest, no virtual environment, no startup script. The log shows `Could not find build manifest file` followed by `bash: startup-worker.sh: No such file or directory`. The HTTP health responder in the startup scripts prevents most recycling by keeping the container alive. If it does happen, re-trigger the deploy workflow or manually stop/start the App Service.

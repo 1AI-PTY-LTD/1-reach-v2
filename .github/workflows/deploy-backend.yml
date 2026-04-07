@@ -47,9 +47,9 @@ jobs:
           DJANGO_SETTINGS_MODULE: app.settings
           DJANGO_SECRET_KEY: test-migration-key
           POSTGRES_HOST: ${{ secrets.AZURE_POSTGRES_HOST }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.AZURE_POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.AZURE_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.AZURE_POSTGRES_PASSWORD }}
           POSTGRES_PORT: "5432"
         run: |
           # First verify we can connect to the database
@@ -99,9 +99,9 @@ jobs:
           DJANGO_SETTINGS_MODULE: app.settings
           DJANGO_SECRET_KEY: test-migration-key
           POSTGRES_HOST: ${{ steps.replica.outputs.host }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.AZURE_POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.AZURE_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.AZURE_POSTGRES_PASSWORD }}
           POSTGRES_PORT: "5432"
         run: |
           echo "Pending migrations:"
@@ -127,9 +127,9 @@ jobs:
           DJANGO_SETTINGS_MODULE: app.settings
           DJANGO_SECRET_KEY: test-migration-key
           POSTGRES_HOST: ${{ secrets.AZURE_POSTGRES_HOST }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.AZURE_POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.AZURE_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.AZURE_POSTGRES_PASSWORD }}
           POSTGRES_PORT: "5432"
         run: python manage.py migrate --no-input
 
