@@ -17,7 +17,7 @@ from app.models import (
     Schedule,
     ScheduleStatus,
 )
-from app.celery import send_message, _cleanup_media_blob
+from app.celery import send_message
 from app.utils.sms import SendResult
 from app.utils.billing import get_balance, grant_credits
 
@@ -437,10 +437,10 @@ class TestParentStatusSync:
 
 @pytest.mark.django_db
 class TestMediaBlobCleanup:
-    def test_mms_blob_deleted_on_success(
+    def test_mms_blob_not_deleted_on_sent(
         self, db, organisation, contact, user, mock_sms_provider
     ):
-        """Media blob is deleted when MMS send succeeds."""
+        """Media blob is NOT deleted on SENT — Welcorp still needs to fetch it."""
         schedule = _make_queued(
             db, organisation, user, contact,
             format=MessageFormat.MMS,
@@ -448,10 +448,9 @@ class TestMediaBlobCleanup:
         )
 
         with patch('app.celery.get_storage_provider') as mock_storage:
-            mock_provider = mock_storage.return_value
             send_message(schedule.pk)
 
-            mock_provider.delete_blob.assert_called_once_with('abc123.png')
+            mock_storage.assert_not_called()
 
     def test_sms_no_blob_cleanup(
         self, schedule_queued, mock_sms_provider
@@ -477,10 +476,10 @@ class TestMediaBlobCleanup:
 
             mock_provider.delete_blob.assert_called_once_with('def456.png')
 
-    def test_blob_deletion_failure_does_not_affect_schedule(
+    def test_mms_sent_status_without_blob_cleanup(
         self, db, organisation, contact, user, mock_sms_provider
     ):
-        """Blob deletion failure is non-fatal — schedule still marked as SENT."""
+        """MMS schedule reaches SENT without touching blob storage."""
         schedule = _make_queued(
             db, organisation, user, contact,
             format=MessageFormat.MMS,
@@ -488,9 +487,8 @@ class TestMediaBlobCleanup:
         )
 
         with patch('app.celery.get_storage_provider') as mock_storage:
-            mock_provider = mock_storage.return_value
-            mock_provider.delete_blob.return_value = False
             send_message(schedule.pk)
+            mock_storage.assert_not_called()
 
         schedule.refresh_from_db()
         assert schedule.status == ScheduleStatus.SENT

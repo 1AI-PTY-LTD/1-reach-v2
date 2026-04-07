@@ -174,7 +174,8 @@ def _handle_success(schedule: Schedule, result: SendResult) -> None:
                 schedule=schedule,
             )
 
-    _cleanup_media_blob(schedule)
+    # Media blob cleanup is deferred until delivery callback (DELIVERED/FAILED)
+    # so Welcorp has time to fetch the media URL asynchronously.
     _sync_parent_status(schedule)
 
 
@@ -435,7 +436,8 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
     parent.sent_time = now
     parent.save(update_fields=['status', 'sent_time', 'updated_at'])
 
-    _cleanup_media_blob(parent)
+    # Media blob cleanup is deferred until delivery callback (DELIVERED/FAILED)
+    # so Welcorp has time to fetch the media URL asynchronously.
 
     logger.info(
         'Batch send succeeded: parent %d, %d children sent',
