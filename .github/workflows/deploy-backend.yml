@@ -52,7 +52,17 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_PORT: "5432"
         run: |
-          if python manage.py migrate --check 2>/dev/null; then
+          # First verify we can connect to the database
+          python -c "
+          import django, os
+          os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
+          django.setup()
+          from django.db import connection
+          connection.ensure_connection()
+          print('Database connection OK')
+          " || { echo "::error::Cannot connect to production database. Check AZURE_POSTGRES_HOST secret."; exit 1; }
+
+          if python manage.py migrate --check; then
             echo "No pending migrations — skipping replica test."
             echo "pending=false" >> "$GITHUB_OUTPUT"
           else
