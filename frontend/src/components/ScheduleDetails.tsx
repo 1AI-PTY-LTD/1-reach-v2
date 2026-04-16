@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 import { Divider } from '../ui/divider';
 import { Button } from '../ui/button';
-import { ArrowPathIcon, PencilIcon, XMarkIcon } from '@heroicons/react/16/solid';
+import { ArrowPathIcon, EnvelopeIcon, PencilIcon, XMarkIcon } from '@heroicons/react/16/solid';
 import type { Contact } from '../types/contact.types';
 import type { Schedule } from '../types/schedule.types';
 import { ContactMessageModal } from './contacts/CustomerMessageModal';
@@ -148,6 +148,22 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 		}
 	};
 
+	const handleContactSupport = () => {
+		const subject = encodeURIComponent(`1Reach Support - Failed Message #${message.id}`);
+		const body = encodeURIComponent(
+			[
+				`Message ID: ${message.id}`,
+				`Phone: ${message.phone || message.contact_detail?.phone || 'N/A'}`,
+				`Error: ${message.error || 'N/A'}`,
+				`Failure Category: ${message.failure_category || 'N/A'}`,
+				'',
+				'Please describe your issue below:',
+				'',
+			].join('\n')
+		);
+		window.location.href = `mailto:support@1ai.net.au?subject=${subject}&body=${body}`;
+	};
+
 	const canCancel = message.status === 'pending';
 	const canEdit = message.status === 'pending' && dayjs(message.scheduled_time).isAfter(dayjs());
 	const canRetry = message.status === 'failed';
@@ -183,10 +199,16 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 						</Button>
 					)}
 					{canRetry && (
-						<Button color="amber" onClick={() => setIsRetryAlertOpen(true)}>
-							<ArrowPathIcon />
-							Retry
-						</Button>
+						<>
+							<Button color="amber" onClick={() => setIsRetryAlertOpen(true)}>
+								<ArrowPathIcon />
+								Retry
+							</Button>
+							<Button outline onClick={handleContactSupport}>
+								<EnvelopeIcon />
+								Contact Support
+							</Button>
+						</>
 					)}
 					{canEdit && (
 						<Button color="emerald" onClick={handleEdit} className="ml-auto">

@@ -12,6 +12,7 @@ import {
   NavbarSpacer,
 } from '../../ui/navbar'
 import { UserButton, useOrganization } from '@clerk/clerk-react'
+import { EnvelopeIcon } from '@heroicons/react/16/solid'
 
 export const Route = createFileRoute('/app/_layout')({
   component: AppLayout,
@@ -93,6 +94,15 @@ function AppLayout() {
             ))}
           </NavbarSection>
           <NavbarSpacer />
+          <NavbarItem
+            aria-label="Contact Support"
+            onClick={() => {
+              window.location.href = 'mailto:support@1ai.net.au?subject=' + encodeURIComponent('1Reach Support Request')
+            }}
+          >
+            <EnvelopeIcon data-slot="icon" />
+            Support
+          </NavbarItem>
           <UserButton afterSignOutUrl="/" />
         </Navbar>
       }

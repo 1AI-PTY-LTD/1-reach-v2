@@ -166,6 +166,69 @@ describe('ScheduleDetails', () => {
     })
   })
 
+  describe('contact support button', () => {
+    it('shows Contact Support button for failed messages', () => {
+      const message = createSchedule({
+        status: 'failed',
+        contact: 1,
+        contact_detail: contactDetail,
+        error: 'Number unreachable',
+        failure_category: 'network_error',
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+      expect(screen.getByText('Contact Support')).toBeInTheDocument()
+    })
+
+    const nonFailedStatuses: ScheduleStatus[] = [
+      'pending', 'queued', 'processing', 'sent', 'delivered', 'cancelled', 'retrying',
+    ]
+
+    it.each(nonFailedStatuses)(
+      'does not show Contact Support button for %s status',
+      (status) => {
+        const message = createSchedule({
+          status,
+          contact: 1,
+          contact_detail: contactDetail,
+        })
+        renderWithProviders(<ScheduleDetails message={message} />)
+        expect(screen.queryByText('Contact Support')).not.toBeInTheDocument()
+      }
+    )
+
+    it('opens mailto link with message details when clicked', async () => {
+      const user = userEvent.setup()
+      let capturedHref = ''
+      const originalLocation = window.location
+      Object.defineProperty(window, 'location', {
+        writable: true,
+        value: { ...originalLocation, set href(url: string) { capturedHref = url } },
+      })
+
+      const message = createSchedule({
+        id: 42,
+        status: 'failed',
+        contact: 1,
+        contact_detail: contactDetail,
+        phone: '0412345678',
+        error: 'Number unreachable',
+        failure_category: 'network_error',
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      await user.click(screen.getByText('Contact Support'))
+
+      expect(capturedHref).toContain('mailto:support@1ai.net.au')
+      expect(capturedHref).toContain('Failed%20Message%20%2342')
+      expect(capturedHref).toContain('Number%20unreachable')
+
+      Object.defineProperty(window, 'location', {
+        writable: true,
+        value: originalLocation,
+      })
+    })
+  })
+
   describe('edit modal', () => {
     it('does not render ContactMessageModal on initial render', () => {
       const message = createSchedule({ contact: 1, contact_detail: contactDetail })
