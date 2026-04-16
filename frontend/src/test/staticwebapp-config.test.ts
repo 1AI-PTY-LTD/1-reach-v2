@@ -16,10 +16,11 @@ describe('staticwebapp.config.json CSP', () => {
   const csp = config.globalHeaders['Content-Security-Policy'] as string
   const directives = parseCSP(csp)
 
-  it('script-src allows self and Clerk JS', () => {
+  it('script-src allows self, Clerk JS, and Cloudflare Turnstile', () => {
     const values = directives.get('script-src')!
     expect(values).toContain("'self'")
     expect(values).toContain('https://*.clerk.accounts.dev')
+    expect(values).toContain('https://challenges.cloudflare.com')
   })
 
   it('style-src allows self and Google Fonts CSS', () => {
@@ -47,12 +48,14 @@ describe('staticwebapp.config.json CSP', () => {
     expect(values).toContain('https://*.clerk.com')
     expect(values).toContain('https://*.clerk.accounts.dev')
     expect(values).toContain('https://*.azurewebsites.net')
+    expect(values).toContain('https://clerk-telemetry.com')
     expect(values).toContain('https://*.ingest.us.sentry.io')
   })
 
-  it('frame-src allows Clerk iframes', () => {
+  it('frame-src allows Clerk iframes and Cloudflare Turnstile', () => {
     const values = directives.get('frame-src')!
     expect(values).toContain('https://*.clerk.com')
     expect(values).toContain('https://*.clerk.accounts.dev')
+    expect(values).toContain('https://challenges.cloudflare.com')
   })
 })
