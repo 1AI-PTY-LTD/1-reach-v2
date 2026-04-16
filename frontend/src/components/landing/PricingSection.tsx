@@ -76,15 +76,15 @@ const plans = [
 
 export function PricingSection() {
   return (
-    <section id="pricing" className="bg-[#0a0025] py-24">
+    <section id="pricing" className="bg-white dark:bg-[#0a0025] py-24">
       <div className="mx-auto max-w-7xl px-6">
         <div className="mx-auto max-w-2xl text-center">
           <p className="text-sm font-semibold uppercase tracking-wider text-brand-purple">Pricing</p>
-          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-white font-mono sm:text-4xl">
+          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-950 dark:text-white font-mono sm:text-4xl">
             Simple,{" "}
             <span style={{ background: "linear-gradient(135deg, #7400f6 0%, #9d30a0 50%, #048fb5 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>transparent pricing</span>
           </h2>
-          <p className="mt-4 text-pretty text-lg leading-relaxed text-[#a99cc4]">
+          <p className="mt-4 text-pretty text-lg leading-relaxed text-zinc-500 dark:text-[#a99cc4]">
             No hidden fees. No lock-in contracts. Scale up or down as your needs change.
           </p>
         </div>
@@ -95,8 +95,8 @@ export function PricingSection() {
               key={plan.name}
               className={`relative flex flex-col rounded-xl border p-8 transition-all ${
                 plan.featured
-                  ? "border-brand-purple/50 bg-white/[0.05] shadow-xl shadow-brand-purple/10 ring-1 ring-brand-purple/20"
-                  : "border-white/5 bg-white/[0.03] hover:border-brand-purple/30"
+                  ? "border-brand-purple/50 bg-white shadow-xl shadow-brand-purple/10 ring-1 ring-brand-purple/20 dark:bg-white/[0.05]"
+                  : "border-zinc-200 dark:border-white/5 bg-white shadow-sm dark:bg-white/[0.03] dark:shadow-none hover:border-brand-purple/30"
               }`}
             >
               {plan.featured && (
@@ -110,20 +110,20 @@ export function PricingSection() {
                 <plan.icon className={`h-5 w-5 ${plan.iconColor}`} />
               </div>
 
-              <h3 className="mt-4 h-7 text-lg font-semibold text-white">{plan.name}</h3>
-              <p className="mt-2 h-[5rem] text-sm leading-relaxed text-[#a99cc4]">{plan.description}</p>
+              <h3 className="mt-4 h-7 text-lg font-semibold text-zinc-950 dark:text-white">{plan.name}</h3>
+              <p className="mt-2 h-[5rem] text-sm leading-relaxed text-zinc-500 dark:text-[#a99cc4]">{plan.description}</p>
 
               <div className="mt-8 flex h-12 items-end gap-1">
-                <span className="text-4xl font-semibold leading-none text-white font-mono">{plan.price}</span>
+                <span className="text-4xl font-semibold leading-none text-zinc-950 dark:text-white font-mono">{plan.price}</span>
                 {plan.period && (
-                  <span className="mb-1 text-sm text-[#a99cc4]">{plan.period}</span>
+                  <span className="mb-1 text-sm text-zinc-500 dark:text-[#a99cc4]">{plan.period}</span>
                 )}
               </div>
               <p className="mt-2 h-5 text-xs font-medium text-brand-purple">{plan.credit}</p>
 
               <ul className="mt-8 flex flex-1 flex-col gap-3">
                 {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-3 text-sm text-[#a99cc4]">
+                  <li key={feature} className="flex items-start gap-3 text-sm text-zinc-500 dark:text-[#a99cc4]">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-purple" />
                     {feature}
                   </li>
@@ -132,7 +132,7 @@ export function PricingSection() {
 
               {plan.ctaHref.startsWith('#') ? (
                 <Button
-                  className="mt-8 w-full border border-white/20 bg-transparent text-white hover:bg-white/5"
+                  className="mt-8 w-full border border-zinc-200 dark:border-white/20 bg-transparent text-zinc-950 dark:text-white hover:bg-zinc-100 dark:hover:bg-white/5"
                   asChild
                 >
                   <a href={plan.ctaHref}>{plan.cta}</a>
@@ -143,7 +143,7 @@ export function PricingSection() {
                     className={`mt-8 w-full ${
                       plan.featured
                         ? "bg-brand-purple text-white hover:bg-brand-purple/80"
-                        : "border border-white/20 bg-transparent text-white hover:bg-white/5"
+                        : "border border-zinc-200 dark:border-white/20 bg-transparent text-zinc-950 dark:text-white hover:bg-zinc-100 dark:hover:bg-white/5"
                     }`}
                   >
                     {plan.cta}

@@ -218,7 +218,7 @@ frontend/
 
 **Scheduling UI:** All scheduling flows (Send page, Contact message modal, Group schedule modal) use a unified `ScheduleDateTimePicker` component. It renders a `datetime-local` input with a `min` attribute set to the current time (preventing past-time selection), outputs UTC ISO strings, and shows contextual status messages (past time warning, immediate send notice, or scheduled confirmation).
 
-**Landing page:** Unauthenticated visitors see a marketing landing page (`src/components/landing/`) rendered via Clerk's `<SignedOut>` gate in `__root.tsx`. It includes a hero section with animated canvas background, features grid, pricing tiers, and CTA sections. Sign In / Sign Up buttons open Clerk modals. Once authenticated, users are redirected to `/app/send`.
+**Landing page:** Unauthenticated visitors see a marketing landing page (`src/components/landing/`) rendered via Clerk's `<SignedOut>` gate in `__root.tsx`. It includes a hero section with animated canvas background, features grid, pricing tiers, and CTA sections. Sign In / Sign Up buttons open Clerk modals. Once authenticated, users are redirected to `/app/send`. The landing page supports both light and dark mode via `prefers-color-scheme` media queries — light mode uses white/gray backgrounds with dark text (matching the logged-in app's light palette), while dark mode uses the branded navy backgrounds with white text. The `AnimatedMessagesBg` canvas component detects the colour scheme at runtime via `matchMedia` and reduces particle opacity in light mode.
 
 **Brand colours:** Defined in `tailwind.config.cjs` under `theme.extend.colors.brand`:
 

@@ -173,6 +173,7 @@ export function AnimatedMessagesBg() {
   const particlesRef = useRef<Particle[]>([])
   const animRef = useRef<number>(0)
   const sizeRef = useRef({ w: 0, h: 0 })
+  const isDarkRef = useRef(true)
 
   const resize = useCallback(() => {
     const canvas = canvasRef.current
@@ -196,6 +197,11 @@ export function AnimatedMessagesBg() {
     resize()
     window.addEventListener("resize", resize)
 
+    const mql = window.matchMedia("(prefers-color-scheme: dark)")
+    isDarkRef.current = mql.matches
+    const handleSchemeChange = (e: MediaQueryListEvent) => { isDarkRef.current = e.matches }
+    mql.addEventListener("change", handleSchemeChange)
+
     const { w, h } = sizeRef.current
     particlesRef.current = Array.from({ length: 40 }, () => createParticle(w || 800, h || 600))
 
@@ -207,6 +213,8 @@ export function AnimatedMessagesBg() {
 
       const { w: cw, h: ch } = sizeRef.current
       ctx.clearRect(0, 0, cw, ch)
+
+      const opacityScale = isDarkRef.current ? 1 : 0.4
 
       for (const p of particlesRef.current) {
         p.x += p.speedX
@@ -220,8 +228,11 @@ export function AnimatedMessagesBg() {
         if (p.x < -p.size * 3) p.x = cw + p.size * 3
         if (p.x > cw + p.size * 3) p.x = -p.size * 3
 
+        const origOpacity = p.opacity
+        p.opacity *= opacityScale
         const fn = drawFns[p.type]
         if (fn) fn(ctx, p)
+        p.opacity = origOpacity
       }
 
       animRef.current = requestAnimationFrame(animate)
@@ -231,6 +242,7 @@ export function AnimatedMessagesBg() {
 
     return () => {
       window.removeEventListener("resize", resize)
+      mql.removeEventListener("change", handleSchemeChange)
       cancelAnimationFrame(animRef.current)
     }
   }, [resize])

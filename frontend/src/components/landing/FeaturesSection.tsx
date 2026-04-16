@@ -53,16 +53,16 @@ const features = [
 
 export function FeaturesSection() {
   return (
-    <section id="features" className="bg-[#0a0025] py-24">
+    <section id="features" className="bg-white dark:bg-[#0a0025] py-24">
       <div className="mx-auto max-w-7xl px-6">
         {/* Section heading */}
         <div className="mx-auto max-w-2xl text-center">
           <p className="text-sm font-semibold uppercase tracking-wider text-brand-purple">Features</p>
-          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-white font-mono sm:text-4xl">
+          <h2 className="mt-3 text-balance text-3xl font-semibold tracking-tight text-zinc-950 dark:text-white font-mono sm:text-4xl">
             Everything you need to{" "}
             <span style={{ background: "linear-gradient(135deg, #7400f6 0%, #9d30a0 50%, #048fb5 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>reach your audience</span>
           </h2>
-          <p className="mt-4 text-pretty text-lg leading-relaxed text-[#a99cc4]">
+          <p className="mt-4 text-pretty text-lg leading-relaxed text-zinc-500 dark:text-[#a99cc4]">
             One platform, multiple features. Send messages the way your customers want to receive them.
           </p>
         </div>
@@ -72,13 +72,13 @@ export function FeaturesSection() {
           {features.map((feature) => (
             <div
               key={feature.title}
-              className="group rounded-xl border border-white/5 bg-white/[0.03] p-8 transition-all hover:border-brand-purple/30 hover:bg-white/[0.05]"
+              className="group rounded-xl border border-zinc-200 dark:border-white/5 bg-white shadow-sm dark:bg-white/[0.03] dark:shadow-none p-8 transition-all hover:border-brand-purple/30 hover:bg-gray-50 dark:hover:bg-white/[0.05]"
             >
               <div className={`inline-flex h-12 w-12 items-center justify-center rounded-lg ${feature.bgColor}`}>
                 <feature.icon className={`h-6 w-6 ${feature.color}`} />
               </div>
-              <h3 className="mt-5 text-lg font-semibold text-white">{feature.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[#a99cc4]">
+              <h3 className="mt-5 text-lg font-semibold text-zinc-950 dark:text-white">{feature.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-[#a99cc4]">
                 {feature.description}
               </p>
             </div>
