@@ -143,7 +143,7 @@ function BillingContent() {
 
         {/* Subscription management */}
         <div className="mt-4">
-          <PricingTable for="organization" appearance={isDark ? { baseTheme: dark } : undefined} />
+          <PricingTable for="organization" ctaPosition="top" collapseFeatures appearance={isDark ? { baseTheme: dark } : undefined} />
         </div>
       </div>
 
