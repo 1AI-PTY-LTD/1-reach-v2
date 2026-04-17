@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useOrganization } from '@clerk/clerk-react'
+import { useOrganization, OrganizationProfile } from '@clerk/clerk-react'
 import { Suspense, useRef } from 'react'
 import { Badge } from '../../ui/badge'
 import {
@@ -147,6 +147,22 @@ function BillingContent() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Manage Subscription */}
+      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
+        <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">Manage Subscription</h3>
+        <OrganizationProfile
+          routing="hash"
+          appearance={{
+            elements: {
+              rootBox: 'w-full',
+              cardBox: 'shadow-none w-full',
+              navbar: 'hidden',
+              pageScrollBox: 'p-0',
+            },
+          }}
+        />
       </div>
 
       {/* Transaction history */}
