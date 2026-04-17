@@ -2,7 +2,9 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useOrganization } from '@clerk/clerk-react'
 import { CheckoutButton, SubscriptionDetailsButton, useSubscription } from '@clerk/clerk-react/experimental'
+import { dark } from '@clerk/themes'
 import { Suspense, useRef } from 'react'
+import { usePrefersDark } from '../../hooks/usePrefersDark'
 import { Badge } from '../../ui/badge'
 import {
   Table,
@@ -36,9 +38,12 @@ function BillingContent() {
   const client = useApiClient()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'
+  const isDark = usePrefersDark()
   const { data: subscription } = useSubscription({ for: 'organization' })
   const hasSubscription = subscription?.status === 'active' || subscription?.status === 'past_due'
+  const planName = subscription?.subscriptionItems?.find((item: { status: string }) => item.status === 'active')?.plan?.name
   const planId = import.meta.env.VITE_CLERK_PLAN_ID
+  const darkAppearance = isDark ? { baseTheme: dark } : undefined
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
@@ -81,7 +86,7 @@ function BillingContent() {
   const balanceColor = balance <= 0 ? 'red' : balance < 1 ? 'yellow' : 'green'
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 h-[calc(100svh-9.5rem)]">
       {/* Mode + Balance */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Billing</h2>
@@ -130,16 +135,18 @@ function BillingContent() {
 
           {/* Subscription action card */}
           <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg flex flex-col justify-between">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">Subscription</p>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Subscription: {hasSubscription ? (planName ?? 'Professional') : 'Free'}
+            </p>
             <div className="mt-2">
               {hasSubscription ? (
-                <SubscriptionDetailsButton for="organization">
+                <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: darkAppearance }}>
                   <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">
                     Manage Subscription
                   </button>
                 </SubscriptionDetailsButton>
               ) : planId ? (
-                <CheckoutButton planId={planId} for="organization">
+                <CheckoutButton planId={planId} for="organization" checkoutProps={{ appearance: darkAppearance }}>
                   <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors">
                     Subscribe
                   </button>

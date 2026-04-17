@@ -305,24 +305,29 @@ describe('subscription buttons', () => {
     mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
   })
 
-  it('shows Subscribe button when org has no subscription', async () => {
+  it('shows Subscribe button and Free label when org has no subscription', async () => {
     mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
       expect(screen.getByTestId('checkout-button')).toBeInTheDocument()
     })
+    expect(screen.getByText('Subscription: Free')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
     expect(screen.queryByTestId('subscription-details-button')).not.toBeInTheDocument()
   })
 
-  it('shows Manage Subscription button when org has active subscription', async () => {
-    mockUseSubscription.mockReturnValue({ data: { status: 'active' }, isLoading: false })
+  it('shows Manage Subscription button and plan name when org has active subscription', async () => {
+    mockUseSubscription.mockReturnValue({
+      data: { status: 'active', subscriptionItems: [{ status: 'active', plan: { name: 'Professional' } }] },
+      isLoading: false,
+    })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
       expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
     })
+    expect(screen.getByText('Subscription: Professional')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Manage Subscription' })).toBeInTheDocument()
     expect(screen.queryByTestId('checkout-button')).not.toBeInTheDocument()
   })
