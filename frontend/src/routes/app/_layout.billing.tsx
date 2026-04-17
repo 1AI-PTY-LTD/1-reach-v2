@@ -43,7 +43,27 @@ function BillingContent() {
   const hasSubscription = subscription?.status === 'active' || subscription?.status === 'past_due'
   const planName = subscription?.subscriptionItems?.find((item: { status: string }) => item.status === 'active')?.plan?.name
   const planId = import.meta.env.VITE_CLERK_PLAN_ID
-  const darkAppearance = isDark ? { baseTheme: dark } : undefined
+  const clerkAppearance = isDark
+    ? {
+        baseTheme: dark,
+        variables: {
+          colorPrimary: '#7400f6',
+          colorDanger: '#FC7091',
+          colorSuccess: '#2CDFB5',
+          colorWarning: '#FEC200',
+          colorBackground: '#18181b',
+          colorInputBackground: '#27272a',
+          colorNeutral: 'white',
+        },
+      }
+    : {
+        variables: {
+          colorPrimary: '#7400f6',
+          colorDanger: '#FC7091',
+          colorSuccess: '#2CDFB5',
+          colorWarning: '#FEC200',
+        },
+      }
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
@@ -140,13 +160,13 @@ function BillingContent() {
             </p>
             <div className="mt-2">
               {hasSubscription ? (
-                <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: darkAppearance }}>
+                <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: clerkAppearance }}>
                   <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">
                     Manage Subscription
                   </button>
                 </SubscriptionDetailsButton>
               ) : planId ? (
-                <CheckoutButton planId={planId} for="organization" checkoutProps={{ appearance: darkAppearance }}>
+                <CheckoutButton planId={planId} for="organization" checkoutProps={{ appearance: clerkAppearance }}>
                   <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors">
                     Subscribe
                   </button>
