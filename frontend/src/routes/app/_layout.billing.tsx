@@ -94,7 +94,7 @@ function BillingContent() {
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           {/* Balance / Plan card */}
           <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -126,16 +126,6 @@ function BillingContent() {
               <p className="text-xs text-zinc-500 dark:text-zinc-400">no limit set</p>
             )}
           </div>
-
-          {/* Mode card */}
-          <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">Mode</p>
-            <div className="mt-1">
-              <Badge color={isPastDue ? 'red' : isSubscribed ? 'green' : 'zinc'}>
-                {isPastDue ? 'Past Due' : isSubscribed ? 'Subscribed' : 'Trial'}
-              </Badge>
-            </div>
-          </div>
         </div>
 
         {/* Per-format usage inline */}
@@ -150,12 +140,11 @@ function BillingContent() {
             ))}
           </div>
         )}
-      </div>
 
-      {/* Manage Subscription */}
-      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
-        <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">Manage Subscription</h3>
-        <PricingTable for="organization" appearance={isDark ? { baseTheme: dark } : undefined} />
+        {/* Subscription management */}
+        <div className="mt-4">
+          <PricingTable for="organization" appearance={isDark ? { baseTheme: dark } : undefined} />
+        </div>
       </div>
 
       {/* Transaction history */}

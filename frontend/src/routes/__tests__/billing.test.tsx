@@ -300,7 +300,6 @@ describe('PricingTable integration', () => {
       expect(screen.getByTestId('pricing-table')).toBeInTheDocument()
     })
     expect(screen.getByTestId('pricing-table')).toHaveAttribute('data-for', 'organization')
-    expect(screen.getByText('Manage Subscription')).toBeInTheDocument()
   })
 
   it('does not render PricingTable for non-admin users', async () => {
