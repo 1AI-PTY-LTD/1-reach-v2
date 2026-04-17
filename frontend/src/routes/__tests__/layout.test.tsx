@@ -1,22 +1,23 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { EnvelopeIcon } from '@heroicons/react/16/solid'
+import { QuestionMarkCircleIcon } from '@heroicons/react/16/solid'
 
-// Re-create the Support NavbarItem in isolation to test its behaviour
+// Re-create the Support button in isolation to test its behaviour
 // (mirrors the pattern used by other route tests that re-create internal components)
 function SupportButton() {
   return (
     <button
+      type="button"
       aria-label="Contact Support"
+      title="Contact Support"
       onClick={() => {
         window.location.href =
           'mailto:support@1ai.net.au?subject=' +
           encodeURIComponent('1Reach Support Request')
       }}
     >
-      <EnvelopeIcon data-slot="icon" />
-      Support
+      <QuestionMarkCircleIcon className="size-5" />
     </button>
   )
 }
@@ -25,7 +26,6 @@ describe('AppLayout toolbar', () => {
   describe('support button', () => {
     it('renders Support button with accessible label', () => {
       render(<SupportButton />)
-      expect(screen.getByText('Support')).toBeInTheDocument()
       expect(screen.getByLabelText('Contact Support')).toBeInTheDocument()
     })
 
@@ -44,7 +44,7 @@ describe('AppLayout toolbar', () => {
       })
 
       render(<SupportButton />)
-      await user.click(screen.getByText('Support'))
+      await user.click(screen.getByLabelText('Contact Support'))
 
       expect(capturedHref).toContain('mailto:support@1ai.net.au')
       expect(capturedHref).toContain('1Reach%20Support%20Request')

@@ -12,7 +12,7 @@ import {
   NavbarSpacer,
 } from '../../ui/navbar'
 import { UserButton, useOrganization } from '@clerk/clerk-react'
-import { EnvelopeIcon } from '@heroicons/react/16/solid'
+import { QuestionMarkCircleIcon } from '@heroicons/react/16/solid'
 
 export const Route = createFileRoute('/app/_layout')({
   component: AppLayout,
@@ -94,15 +94,17 @@ function AppLayout() {
             ))}
           </NavbarSection>
           <NavbarSpacer />
-          <NavbarItem
+          <button
+            type="button"
             aria-label="Contact Support"
+            title="Contact Support"
+            className="rounded-full p-1 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition-colors"
             onClick={() => {
               window.location.href = 'mailto:support@1ai.net.au?subject=' + encodeURIComponent('1Reach Support Request')
             }}
           >
-            <EnvelopeIcon data-slot="icon" />
-            Support
-          </NavbarItem>
+            <QuestionMarkCircleIcon className="size-5" />
+          </button>
           <UserButton afterSignOutUrl="/" />
         </Navbar>
       }

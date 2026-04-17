@@ -159,7 +159,9 @@ test.describe('Schedule Page', () => {
   test('shows Support button in toolbar', async ({ page }) => {
     await page.goto('/app/schedule')
     await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.getByRole('button', { name: /contact support/i }).first()).toBeVisible()
+    const supportBtn = page.locator('button[aria-label="Contact Support"]').first()
+    await expect(supportBtn).toBeVisible()
+    await expect(supportBtn).toHaveAttribute('title', 'Contact Support')
   })
 
   test('shows pagination info text', async ({ page }) => {
