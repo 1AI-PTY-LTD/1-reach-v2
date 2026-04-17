@@ -17,9 +17,10 @@ vi.mock('@tanstack/react-router', () => ({
   },
 }))
 
-// Use vi.hoisted so mockUseOrganization is available inside vi.mock (which is hoisted)
-const { mockUseOrganization } = vi.hoisted(() => ({
+// Use vi.hoisted so mocks are available inside vi.mock (which is hoisted)
+const { mockUseOrganization, mockUseSubscription } = vi.hoisted(() => ({
   mockUseOrganization: vi.fn().mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true }),
+  mockUseSubscription: vi.fn().mockReturnValue({ data: null, isLoading: false }),
 }))
 
 // Override Clerk mock to include admin membership with mutable useOrganization
@@ -46,8 +47,15 @@ vi.mock('@clerk/clerk-react', () => ({
   SignedIn: ({ children }: { children: React.ReactNode }) => children,
   SignedOut: () => null,
   UserButton: () => null,
-  PricingTable: ({ for: forType }: { for?: string }) => <div data-testid="pricing-table" data-for={forType}>PricingTable</div>,
 }))
+
+vi.mock('@clerk/clerk-react/experimental', () => ({
+  useSubscription: mockUseSubscription,
+  CheckoutButton: ({ children }: { children: React.ReactNode }) => <div data-testid="checkout-button">{children}</div>,
+  SubscriptionDetailsButton: ({ children }: { children: React.ReactNode }) => <div data-testid="subscription-details-button">{children}</div>,
+}))
+
+vi.stubEnv('VITE_CLERK_PLAN_ID', 'plan_test_professional')
 
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { getBillingSummaryQueryOptions } from '../../api/billingApi'
@@ -287,28 +295,56 @@ describe('past_due billing mode', () => {
   })
 })
 
-describe('PricingTable integration', () => {
-  afterEach(() => {
+describe('subscription buttons', () => {
+  beforeEach(() => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
   })
 
-  it('renders PricingTable for organization billing for admin users', async () => {
+  afterEach(() => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
+    mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
+  })
+
+  it('shows Subscribe button when org has no subscription', async () => {
+    mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByTestId('pricing-table')).toBeInTheDocument()
+      expect(screen.getByTestId('checkout-button')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('pricing-table')).toHaveAttribute('data-for', 'organization')
+    expect(screen.getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+    expect(screen.queryByTestId('subscription-details-button')).not.toBeInTheDocument()
   })
 
-  it('does not render PricingTable for non-admin users', async () => {
+  it('shows Manage Subscription button when org has active subscription', async () => {
+    mockUseSubscription.mockReturnValue({ data: { status: 'active' }, isLoading: false })
+    const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
+    renderWithProviders(<RouteComp />)
+    await waitFor(() => {
+      expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Manage Subscription' })).toBeInTheDocument()
+    expect(screen.queryByTestId('checkout-button')).not.toBeInTheDocument()
+  })
+
+  it('shows Manage Subscription button when subscription is past_due', async () => {
+    mockUseSubscription.mockReturnValue({ data: { status: 'past_due' }, isLoading: false })
+    const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
+    renderWithProviders(<RouteComp />)
+    await waitFor(() => {
+      expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: 'Manage Subscription' })).toBeInTheDocument()
+  })
+
+  it('does not show subscription buttons for non-admin users', async () => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:member' }, isLoaded: true })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
       expect(screen.getByText(/Access restricted/i)).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('pricing-table')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('checkout-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('subscription-details-button')).not.toBeInTheDocument()
   })
 })

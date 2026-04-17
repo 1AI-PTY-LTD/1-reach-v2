@@ -1,9 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useOrganization, PricingTable } from '@clerk/clerk-react'
-import { dark } from '@clerk/themes'
+import { useOrganization } from '@clerk/clerk-react'
+import { CheckoutButton, SubscriptionDetailsButton, useSubscription } from '@clerk/clerk-react/experimental'
 import { Suspense, useRef } from 'react'
-import { usePrefersDark } from '../../hooks/usePrefersDark'
 import { Badge } from '../../ui/badge'
 import {
   Table,
@@ -37,7 +36,9 @@ function BillingContent() {
   const client = useApiClient()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'
-  const isDark = usePrefersDark()
+  const { data: subscription } = useSubscription({ for: 'organization' })
+  const hasSubscription = subscription?.status === 'active' || subscription?.status === 'past_due'
+  const planId = import.meta.env.VITE_CLERK_PLAN_ID
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
@@ -94,7 +95,7 @@ function BillingContent() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           {/* Balance / Plan card */}
           <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -126,6 +127,28 @@ function BillingContent() {
               <p className="text-xs text-zinc-500 dark:text-zinc-400">no limit set</p>
             )}
           </div>
+
+          {/* Subscription action card */}
+          <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg flex flex-col justify-between">
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">Subscription</p>
+            <div className="mt-2">
+              {hasSubscription ? (
+                <SubscriptionDetailsButton for="organization">
+                  <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">
+                    Manage Subscription
+                  </button>
+                </SubscriptionDetailsButton>
+              ) : planId ? (
+                <CheckoutButton planId={planId} for="organization">
+                  <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors">
+                    Subscribe
+                  </button>
+                </CheckoutButton>
+              ) : (
+                <Badge color="zinc">Trial</Badge>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Per-format usage inline */}
@@ -140,11 +163,6 @@ function BillingContent() {
             ))}
           </div>
         )}
-
-        {/* Subscription management */}
-        <div className="mt-4">
-          <PricingTable for="organization" ctaPosition="top" collapseFeatures appearance={isDark ? { baseTheme: dark } : undefined} />
-        </div>
       </div>
 
       {/* Transaction history */}
