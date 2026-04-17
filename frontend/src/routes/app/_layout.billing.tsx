@@ -1,7 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useOrganization, OrganizationProfile } from '@clerk/clerk-react'
+import { useOrganization, PricingTable } from '@clerk/clerk-react'
+import { dark } from '@clerk/themes'
 import { Suspense, useRef } from 'react'
+import { usePrefersDark } from '../../hooks/usePrefersDark'
 import { Badge } from '../../ui/badge'
 import {
   Table,
@@ -35,6 +37,7 @@ function BillingContent() {
   const client = useApiClient()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'
+  const isDark = usePrefersDark()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
@@ -77,7 +80,7 @@ function BillingContent() {
   const balanceColor = balance <= 0 ? 'red' : balance < 1 ? 'yellow' : 'green'
 
   return (
-    <div className="flex flex-col gap-6 h-[calc(100svh-9.5rem)]">
+    <div className="flex flex-col gap-6">
       {/* Mode + Balance */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Billing</h2>
@@ -152,17 +155,7 @@ function BillingContent() {
       {/* Manage Subscription */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
         <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">Manage Subscription</h3>
-        <OrganizationProfile
-          routing="hash"
-          appearance={{
-            elements: {
-              rootBox: 'w-full',
-              cardBox: 'shadow-none w-full',
-              navbar: 'hidden',
-              pageScrollBox: 'p-0',
-            },
-          }}
-        />
+        <PricingTable for="organization" appearance={isDark ? { baseTheme: dark } : undefined} />
       </div>
 
       {/* Transaction history */}

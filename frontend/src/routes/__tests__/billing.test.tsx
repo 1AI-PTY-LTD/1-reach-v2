@@ -46,7 +46,7 @@ vi.mock('@clerk/clerk-react', () => ({
   SignedIn: ({ children }: { children: React.ReactNode }) => children,
   SignedOut: () => null,
   UserButton: () => null,
-  OrganizationProfile: () => <div data-testid="org-profile">OrganizationProfile</div>,
+  PricingTable: ({ for: forType }: { for?: string }) => <div data-testid="pricing-table" data-for={forType}>PricingTable</div>,
 }))
 
 import { useSuspenseQuery } from '@tanstack/react-query'
@@ -287,28 +287,29 @@ describe('past_due billing mode', () => {
   })
 })
 
-describe('OrganizationProfile integration', () => {
+describe('PricingTable integration', () => {
   afterEach(() => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
   })
 
-  it('renders OrganizationProfile for admin users', async () => {
+  it('renders PricingTable for organization billing for admin users', async () => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByTestId('org-profile')).toBeInTheDocument()
+      expect(screen.getByTestId('pricing-table')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('pricing-table')).toHaveAttribute('data-for', 'organization')
     expect(screen.getByText('Manage Subscription')).toBeInTheDocument()
   })
 
-  it('does not render OrganizationProfile for non-admin users', async () => {
+  it('does not render PricingTable for non-admin users', async () => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:member' }, isLoaded: true })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
       expect(screen.getByText(/Access restricted/i)).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('org-profile')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('pricing-table')).not.toBeInTheDocument()
   })
 })
