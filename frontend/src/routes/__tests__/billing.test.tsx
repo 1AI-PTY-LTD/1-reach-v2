@@ -51,11 +51,8 @@ vi.mock('@clerk/clerk-react', () => ({
 
 vi.mock('@clerk/clerk-react/experimental', () => ({
   useSubscription: mockUseSubscription,
-  CheckoutButton: ({ children }: { children: React.ReactNode }) => <div data-testid="checkout-button">{children}</div>,
   SubscriptionDetailsButton: ({ children }: { children: React.ReactNode }) => <div data-testid="subscription-details-button">{children}</div>,
 }))
-
-vi.stubEnv('VITE_CLERK_PLAN_ID', 'plan_test_professional')
 
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { getBillingSummaryQueryOptions } from '../../api/billingApi'
@@ -305,21 +302,26 @@ describe('subscription buttons', () => {
     mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
   })
 
-  it('shows Subscribe button and Free label when org has no subscription', async () => {
-    mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
+  it('shows Manage Plan button and Free label for org on free plan', async () => {
+    mockUseSubscription.mockReturnValue({
+      data: { status: 'active', subscriptionItems: [{ status: 'active', plan: { name: 'Free', fee: { amount: 0 } } }] },
+      isLoading: false,
+    })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByTestId('checkout-button')).toBeInTheDocument()
+      expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
     })
     expect(screen.getByText('Subscription: Free')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
-    expect(screen.queryByTestId('subscription-details-button')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
   })
 
-  it('shows Manage Subscription button and plan name when org has active subscription', async () => {
+  it('shows Manage Plan button and Professional label for org on paid plan', async () => {
     mockUseSubscription.mockReturnValue({
-      data: { status: 'active', subscriptionItems: [{ status: 'active', plan: { name: 'Professional' } }] },
+      data: { status: 'active', subscriptionItems: [
+        { status: 'active', plan: { name: 'Free', fee: { amount: 0 } } },
+        { status: 'active', plan: { name: 'Professional', fee: { amount: 2999 } } },
+      ]},
       isLoading: false,
     })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
@@ -328,28 +330,26 @@ describe('subscription buttons', () => {
       expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
     })
     expect(screen.getByText('Subscription: Professional')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Manage Subscription' })).toBeInTheDocument()
-    expect(screen.queryByTestId('checkout-button')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
   })
 
-  it('shows Manage Subscription button when subscription is past_due', async () => {
-    mockUseSubscription.mockReturnValue({ data: { status: 'past_due' }, isLoading: false })
+  it('shows Free label when subscription data is not yet loaded', async () => {
+    mockUseSubscription.mockReturnValue({ data: null, isLoading: true })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
       expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
     })
-    expect(screen.getByRole('button', { name: 'Manage Subscription' })).toBeInTheDocument()
+    expect(screen.getByText('Subscription: Free')).toBeInTheDocument()
   })
 
-  it('does not show subscription buttons for non-admin users', async () => {
+  it('does not show Manage Plan for non-admin users', async () => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:member' }, isLoaded: true })
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
       expect(screen.getByText(/Access restricted/i)).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('checkout-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('subscription-details-button')).not.toBeInTheDocument()
   })
 })

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useOrganization } from '@clerk/clerk-react'
-import { CheckoutButton, SubscriptionDetailsButton, useSubscription } from '@clerk/clerk-react/experimental'
+import { SubscriptionDetailsButton, useSubscription } from '@clerk/clerk-react/experimental'
 import { dark } from '@clerk/themes'
 import { Suspense, useRef } from 'react'
 import { usePrefersDark } from '../../hooks/usePrefersDark'
@@ -40,9 +40,11 @@ function BillingContent() {
   const isAdmin = membership?.role === 'org:admin'
   const isDark = usePrefersDark()
   const { data: subscription } = useSubscription({ for: 'organization' })
-  const hasSubscription = subscription?.status === 'active' || subscription?.status === 'past_due'
-  const planName = subscription?.subscriptionItems?.find((item: { status: string }) => item.status === 'active')?.plan?.name
-  const planId = import.meta.env.VITE_CLERK_PLAN_ID
+  const activePlan = subscription?.subscriptionItems
+    ?.filter((item: { status: string }) => item.status === 'active' || item.status === 'past_due')
+    ?.sort((a: { plan: { fee: { amount: number } } }, b: { plan: { fee: { amount: number } } }) => b.plan.fee.amount - a.plan.fee.amount)
+    ?.[0]
+  const planName = activePlan?.plan?.name ?? 'Free'
   const clerkAppearance = isDark
     ? {
         baseTheme: dark,
@@ -54,6 +56,8 @@ function BillingContent() {
           colorBackground: '#18181b',
           colorInputBackground: '#27272a',
           colorNeutral: 'white',
+          colorForeground: '#fafafa',
+          colorMutedForeground: '#a1a1aa',
         },
       }
     : {
@@ -156,24 +160,14 @@ function BillingContent() {
           {/* Subscription action card */}
           <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg flex flex-col justify-between">
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Subscription: {hasSubscription ? (planName ?? 'Professional') : 'Free'}
+              Subscription: {planName}
             </p>
             <div className="mt-2">
-              {hasSubscription ? (
-                <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: clerkAppearance }}>
-                  <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-white hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">
-                    Manage Subscription
-                  </button>
-                </SubscriptionDetailsButton>
-              ) : planId ? (
-                <CheckoutButton planId={planId} for="organization" checkoutProps={{ appearance: clerkAppearance }}>
-                  <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors">
-                    Subscribe
-                  </button>
-                </CheckoutButton>
-              ) : (
-                <Badge color="zinc">Trial</Badge>
-              )}
+              <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: clerkAppearance }}>
+                <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors">
+                  Manage Plan
+                </button>
+              </SubscriptionDetailsButton>
             </div>
           </div>
         </div>

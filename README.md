@@ -109,7 +109,6 @@ cp frontend/.envexample frontend/.env
 | Variable | Required | Description |
 |---|---|---|
 | `VITE_CLERK_PUBLISHABLE_KEY` | Yes | Clerk publishable key (`pk_...`) |
-| `VITE_CLERK_PLAN_ID` | No | Clerk plan ID for the Professional subscription plan (`plan_...`) — enables the Subscribe button on the billing page |
 | `VITE_API_BASE_URL` | No | Backend URL (default: `http://localhost:8000`) |
 | `VITE_SENTRY_DSN` | No | Sentry DSN for frontend error tracking (disabled if not set) |
 | `VITE_SENTRY_ENVIRONMENT` | No | Sentry environment tag (default: `production`) |
