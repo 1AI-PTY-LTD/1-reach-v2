@@ -318,7 +318,7 @@ describe('Manage Plan dialog', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
     })
-    expect(screen.getByText('Subscription: Free')).toBeInTheDocument()
+    expect(screen.getByText('Free')).toBeInTheDocument()
   })
 
   it('shows Professional label for org on paid plan', async () => {
@@ -332,7 +332,7 @@ describe('Manage Plan dialog', () => {
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByText('Subscription: Professional')).toBeInTheDocument()
+      expect(screen.getByText('Professional')).toBeInTheDocument()
     })
   })
 

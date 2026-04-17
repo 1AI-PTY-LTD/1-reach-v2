@@ -51,6 +51,7 @@ function BillingContent() {
         baseTheme: dark,
         variables: {
           colorPrimary: '#7400f6',
+          colorPrimaryForeground: 'white',
           colorDanger: '#FC7091',
           colorSuccess: '#2CDFB5',
           colorWarning: '#FEC200',
@@ -162,7 +163,7 @@ function BillingContent() {
           {/* Subscription action card */}
           <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-lg flex flex-col justify-between">
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Subscription: {planName}
+              Subscription: <span className="font-semibold text-zinc-900 dark:text-white">{planName}</span>
             </p>
             <div className="mt-2">
               <button
