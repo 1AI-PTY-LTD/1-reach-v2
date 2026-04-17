@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { renderWithProviders, screen, waitFor } from '../../test/test-utils'
+import { renderWithProviders, screen, waitFor, userEvent } from '../../test/test-utils'
 import { http, HttpResponse } from 'msw'
 import { server } from '../../test/handlers'
 import { createBillingSummary, createCreditTransaction } from '../../test/factories'
@@ -47,11 +47,17 @@ vi.mock('@clerk/clerk-react', () => ({
   SignedIn: ({ children }: { children: React.ReactNode }) => children,
   SignedOut: () => null,
   UserButton: () => null,
+  PricingTable: ({ for: forType }: { for?: string }) => <div data-testid="pricing-table" data-for={forType}>PricingTable</div>,
 }))
 
 vi.mock('@clerk/clerk-react/experimental', () => ({
   useSubscription: mockUseSubscription,
-  SubscriptionDetailsButton: ({ children }: { children: React.ReactNode }) => <div data-testid="subscription-details-button">{children}</div>,
+}))
+
+vi.mock('../../ui/dialog', () => ({
+  Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <div data-testid="plan-dialog">{children}</div> : null,
+  DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
+  DialogBody: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
 import { useSuspenseQuery } from '@tanstack/react-query'
@@ -292,7 +298,7 @@ describe('past_due billing mode', () => {
   })
 })
 
-describe('subscription buttons', () => {
+describe('Manage Plan dialog', () => {
   beforeEach(() => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
   })
@@ -310,13 +316,12 @@ describe('subscription buttons', () => {
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
     })
     expect(screen.getByText('Subscription: Free')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
   })
 
-  it('shows Manage Plan button and Professional label for org on paid plan', async () => {
+  it('shows Professional label for org on paid plan', async () => {
     mockUseSubscription.mockReturnValue({
       data: { status: 'active', subscriptionItems: [
         { status: 'active', plan: { name: 'Free', fee: { amount: 0 } } },
@@ -327,20 +332,22 @@ describe('subscription buttons', () => {
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
+      expect(screen.getByText('Subscription: Professional')).toBeInTheDocument()
     })
-    expect(screen.getByText('Subscription: Professional')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
   })
 
-  it('shows Free label when subscription data is not yet loaded', async () => {
-    mockUseSubscription.mockReturnValue({ data: null, isLoading: true })
+  it('opens dialog with PricingTable when Manage Plan is clicked', async () => {
+    const user = userEvent.setup()
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByTestId('subscription-details-button')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
     })
-    expect(screen.getByText('Subscription: Free')).toBeInTheDocument()
+    expect(screen.queryByTestId('plan-dialog')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage Plan' }))
+    expect(screen.getByTestId('plan-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('pricing-table')).toBeInTheDocument()
+    expect(screen.getByTestId('pricing-table')).toHaveAttribute('data-for', 'organization')
   })
 
   it('does not show Manage Plan for non-admin users', async () => {
@@ -350,6 +357,6 @@ describe('subscription buttons', () => {
     await waitFor(() => {
       expect(screen.getByText(/Access restricted/i)).toBeInTheDocument()
     })
-    expect(screen.queryByTestId('subscription-details-button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Manage Plan' })).not.toBeInTheDocument()
   })
 })

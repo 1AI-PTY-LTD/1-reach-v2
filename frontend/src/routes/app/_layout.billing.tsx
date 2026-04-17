@@ -1,11 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useOrganization } from '@clerk/clerk-react'
-import { SubscriptionDetailsButton, useSubscription } from '@clerk/clerk-react/experimental'
+import { useOrganization, PricingTable } from '@clerk/clerk-react'
+import { useSubscription } from '@clerk/clerk-react/experimental'
 import { dark } from '@clerk/themes'
-import { Suspense, useRef } from 'react'
+import { Suspense, useRef, useState } from 'react'
 import { usePrefersDark } from '../../hooks/usePrefersDark'
 import { Badge } from '../../ui/badge'
+import { Dialog, DialogTitle, DialogBody } from '../../ui/dialog'
 import {
   Table,
   TableBody,
@@ -68,6 +69,7 @@ function BillingContent() {
           colorWarning: '#FEC200',
         },
       }
+  const [planDialogOpen, setPlanDialogOpen] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
@@ -163,11 +165,12 @@ function BillingContent() {
               Subscription: {planName}
             </p>
             <div className="mt-2">
-              <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: clerkAppearance }}>
-                <button className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors">
-                  Manage Plan
-                </button>
-              </SubscriptionDetailsButton>
+              <button
+                onClick={() => setPlanDialogOpen(true)}
+                className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors"
+              >
+                Manage Plan
+              </button>
             </div>
           </div>
         </div>
@@ -245,6 +248,13 @@ function BillingContent() {
           </div>
         )}
       </div>
+
+      <Dialog open={planDialogOpen} onClose={() => setPlanDialogOpen(false)} size="2xl">
+        <DialogTitle>Manage Plan</DialogTitle>
+        <DialogBody>
+          <PricingTable for="organization" appearance={clerkAppearance} />
+        </DialogBody>
+      </Dialog>
     </div>
   )
 }
