@@ -163,6 +163,7 @@ export function createBillingSummary(overrides: Partial<BillingSummaryResponse> 
       sms: { spend: '1.00', rate: '0.05' },
       mms: { spend: '0.50', rate: '0.20' },
     },
+    latest_invoice: null,
     results: [createCreditTransaction()],
     pagination: {
       total: 1,

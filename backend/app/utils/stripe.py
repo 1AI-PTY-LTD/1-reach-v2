@@ -30,12 +30,17 @@ logger = logging.getLogger(__name__)
 class StripeMeteredBillingProvider(MeteredBillingProvider):
     """Stripe implementation of the metered billing provider."""
 
+    # Pin the Stripe API version to prevent breaking changes from new versions.
+    # Update this deliberately when upgrading, after verifying compatibility.
+    STRIPE_API_VERSION = '2026-03-25.dahlia'
+
     def __init__(self, secret_key: str, webhook_secret: str = ''):
         if not secret_key:
             raise ValueError('STRIPE_SECRET_KEY is required for StripeMeteredBillingProvider')
         self._secret_key = secret_key
         self._webhook_secret = webhook_secret
         stripe.api_key = secret_key
+        stripe.api_version = self.STRIPE_API_VERSION
 
     def find_customer_by_org(self, org_id: str) -> CustomerResult:
         """Search Stripe for a customer with metadata.organization_id matching the Clerk org ID."""
@@ -200,18 +205,32 @@ class StripeWebhookView(APIView):
         ).update(status=Invoice.STATUS_PAID)
 
         if updated:
-            # Restore org to subscribed if it was past_due due to payment failure
             invoice = Invoice.objects.select_related('organisation').get(
                 provider_invoice_id=invoice_id,
             )
-            if invoice.organisation.billing_mode == Organisation.BILLING_PAST_DUE:
-                Organisation.objects.filter(pk=invoice.organisation.pk).update(
-                    billing_mode=Organisation.BILLING_SUBSCRIBED,
-                )
-                logger.info(
-                    'Restored org %s to subscribed after invoice %s paid',
-                    invoice.organisation.clerk_org_id, invoice_id,
-                )
+            org = invoice.organisation
+            if org.billing_mode == Organisation.BILLING_PAST_DUE:
+                # Only restore to subscribed if no other uncollectable invoices
+                # remain for this org. This prevents incorrectly restoring when:
+                # - Clerk set past_due (subscription fee unpaid, not a Stripe invoice)
+                # - Multiple invoices failed but only one was paid
+                has_other_unpaid = Invoice.objects.filter(
+                    organisation=org,
+                    status=Invoice.STATUS_UNCOLLECTABLE,
+                ).exclude(provider_invoice_id=invoice_id).exists()
+                if not has_other_unpaid:
+                    Organisation.objects.filter(pk=org.pk).update(
+                        billing_mode=Organisation.BILLING_SUBSCRIBED,
+                    )
+                    logger.info(
+                        'Restored org %s to subscribed after invoice %s paid',
+                        org.clerk_org_id, invoice_id,
+                    )
+                else:
+                    logger.info(
+                        'Invoice %s paid for org %s but other unpaid invoices remain — keeping past_due',
+                        invoice_id, org.clerk_org_id,
+                    )
         else:
             logger.warning('invoice.paid: no matching invoice for %s', invoice_id)
 

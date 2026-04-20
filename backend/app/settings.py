@@ -217,8 +217,12 @@ FREE_CREDIT_AMOUNT = _Decimal(os.environ.get('FREE_CREDIT_AMOUNT', '10.00'))
 SMS_RATE = _Decimal(os.environ.get('SMS_RATE', '0.05'))
 MMS_RATE = _Decimal(os.environ.get('MMS_RATE', '0.20'))
 
-# Metered billing provider (change string to switch providers — same pattern as SMS_PROVIDER_CLASS)
-METERED_BILLING_PROVIDER_CLASS = 'app.utils.metered_billing.MockMeteredBillingProvider'
+# Metered billing provider (auto-selects Stripe when STRIPE_SECRET_KEY is set)
+METERED_BILLING_PROVIDER_CLASS = (
+    'app.utils.stripe.StripeMeteredBillingProvider'
+    if os.environ.get('STRIPE_SECRET_KEY')
+    else 'app.utils.metered_billing.MockMeteredBillingProvider'
+)
 METERED_BILLING_PROVIDER_CONFIG = {
     'secret_key': os.environ.get('STRIPE_SECRET_KEY', ''),
     'webhook_secret': os.environ.get('STRIPE_WEBHOOK_SECRET', ''),

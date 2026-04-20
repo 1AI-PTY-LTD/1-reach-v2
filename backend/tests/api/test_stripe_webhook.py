@@ -85,6 +85,42 @@ class TestStripeWebhookView:
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
     @patch('app.utils.stripe.get_billing_provider')
+    def test_invoice_paid_keeps_past_due_when_other_invoices_unpaid(self, mock_get_provider, webhook_client, org_with_invoice):
+        org, invoice = org_with_invoice
+        Organisation.objects.filter(pk=org.pk).update(billing_mode=Organisation.BILLING_PAST_DUE)
+
+        # Create another uncollectable invoice for the same org
+        Invoice.objects.create(
+            organisation=org,
+            provider_invoice_id='inv_other_unpaid',
+            status=Invoice.STATUS_UNCOLLECTABLE,
+            amount=Decimal('10.00'),
+            period_start=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            period_end=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        )
+
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert response.status_code == 200
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_PAID
+        # Should stay past_due because the other invoice is still uncollectable
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+
+    @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_payment_failed_sets_past_due(self, mock_get_provider, webhook_client, org_with_invoice):
         org, invoice = org_with_invoice
         mock_provider = Mock()

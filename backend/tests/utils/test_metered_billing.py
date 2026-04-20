@@ -113,11 +113,17 @@ class TestGetBillingProvider:
     def teardown_method(self):
         _BillingProviderCache.instance = None
 
-    def test_returns_mock_by_default(self):
+    @patch('app.utils.metered_billing.settings')
+    def test_returns_mock_when_configured(self, mock_settings):
+        mock_settings.METERED_BILLING_PROVIDER_CLASS = 'app.utils.metered_billing.MockMeteredBillingProvider'
+        mock_settings.METERED_BILLING_PROVIDER_CONFIG = {}
         provider = get_billing_provider()
         assert isinstance(provider, MockMeteredBillingProvider)
 
-    def test_caches_instance(self):
+    @patch('app.utils.metered_billing.settings')
+    def test_caches_instance(self, mock_settings):
+        mock_settings.METERED_BILLING_PROVIDER_CLASS = 'app.utils.metered_billing.MockMeteredBillingProvider'
+        mock_settings.METERED_BILLING_PROVIDER_CONFIG = {}
         p1 = get_billing_provider()
         p2 = get_billing_provider()
         assert p1 is p2
