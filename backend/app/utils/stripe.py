@@ -165,9 +165,9 @@ class StripeWebhookView(APIView):
     """Handle Stripe webhook events for invoice status updates.
 
     Events handled:
-      - invoice.paid → Invoice.status = 'paid'
-      - invoice.payment_failed → Invoice.status = 'uncollectable',
-                                  Organisation.billing_mode = 'past_due'
+      - invoice.paid → Invoice.status = 'paid'; restore org to subscribed if no other unpaid invoices
+      - invoice.payment_failed → Invoice.status = 'uncollectable'; Organisation.billing_mode = 'past_due'
+      - invoice.overdue → same as payment_failed (blocks sends before Stripe exhausts charge retries)
       - invoice.voided → Invoice.status = 'void'
     """
     authentication_classes = []
@@ -190,7 +190,7 @@ class StripeWebhookView(APIView):
 
         if event_type == 'invoice.paid':
             self._handle_invoice_paid(invoice_id)
-        elif event_type == 'invoice.payment_failed':
+        elif event_type in ('invoice.payment_failed', 'invoice.overdue'):
             self._handle_invoice_payment_failed(invoice_id)
         elif event_type == 'invoice.voided':
             self._handle_invoice_voided(invoice_id)

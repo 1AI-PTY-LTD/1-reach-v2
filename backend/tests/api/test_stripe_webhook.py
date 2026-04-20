@@ -144,6 +144,29 @@ class TestStripeWebhookView:
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
 
     @patch('app.utils.stripe.get_billing_provider')
+    def test_invoice_overdue_sets_past_due(self, mock_get_provider, webhook_client, org_with_invoice):
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'type': 'invoice.overdue',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert response.status_code == 200
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_UNCOLLECTABLE
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+
+    @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_voided_updates_status(self, mock_get_provider, webhook_client, org_with_invoice):
         _, invoice = org_with_invoice
         mock_provider = Mock()
