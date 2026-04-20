@@ -253,7 +253,7 @@ function BillingContent() {
       <Dialog open={planDialogOpen} onClose={() => setPlanDialogOpen(false)} size="2xl">
         <DialogTitle>Manage Plan</DialogTitle>
         <DialogBody>
-          <PricingTable for="organization" appearance={clerkAppearance} />
+          <PricingTable for="organization" appearance={clerkAppearance} checkoutProps={{ appearance: clerkAppearance }} />
         </DialogBody>
       </Dialog>
     </div>

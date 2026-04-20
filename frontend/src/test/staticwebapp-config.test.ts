@@ -16,11 +16,12 @@ describe('staticwebapp.config.json CSP', () => {
   const csp = config.globalHeaders['Content-Security-Policy'] as string
   const directives = parseCSP(csp)
 
-  it('script-src allows self, Clerk JS, and Cloudflare Turnstile', () => {
+  it('script-src allows self, Clerk JS, Cloudflare Turnstile, and Stripe', () => {
     const values = directives.get('script-src')!
     expect(values).toContain("'self'")
     expect(values).toContain('https://*.clerk.accounts.dev')
     expect(values).toContain('https://challenges.cloudflare.com')
+    expect(values).toContain('https://js.stripe.com')
   })
 
   it('style-src allows self and Google Fonts CSS', () => {
@@ -42,7 +43,7 @@ describe('staticwebapp.config.json CSP', () => {
     expect(values).toContain('https://img.clerk.com')
   })
 
-  it('connect-src allows self, Clerk, backend, and Sentry', () => {
+  it('connect-src allows self, Clerk, backend, Sentry, and Stripe', () => {
     const values = directives.get('connect-src')!
     expect(values).toContain("'self'")
     expect(values).toContain('https://*.clerk.com')
@@ -50,12 +51,14 @@ describe('staticwebapp.config.json CSP', () => {
     expect(values).toContain('https://*.azurewebsites.net')
     expect(values).toContain('https://clerk-telemetry.com')
     expect(values).toContain('https://*.ingest.us.sentry.io')
+    expect(values).toContain('https://api.stripe.com')
   })
 
-  it('frame-src allows Clerk iframes and Cloudflare Turnstile', () => {
+  it('frame-src allows Clerk iframes, Cloudflare Turnstile, and Stripe', () => {
     const values = directives.get('frame-src')!
     expect(values).toContain('https://*.clerk.com')
     expect(values).toContain('https://*.clerk.accounts.dev')
     expect(values).toContain('https://challenges.cloudflare.com')
+    expect(values).toContain('https://js.stripe.com')
   })
 })
