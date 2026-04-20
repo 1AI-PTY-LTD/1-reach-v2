@@ -42,6 +42,7 @@ class Organisation(models.Model):
     is_active = models.BooleanField(default=True)
     credit_balance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     billing_mode = models.CharField(max_length=20, choices=BILLING_MODE_CHOICES, default=BILLING_TRIAL)
+    billing_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
 
     class Meta:
         db_table = 'organisations'
@@ -254,3 +255,39 @@ class CreditTransaction(TenantModel, AuditMixin):
 
     def __str__(self):
         return f'{self.transaction_type} ${self.amount} for {self.organisation}'
+
+
+class Invoice(TenantModel, AuditMixin):
+    STATUS_DRAFT = 'draft'
+    STATUS_OPEN = 'open'
+    STATUS_PAID = 'paid'
+    STATUS_VOID = 'void'
+    STATUS_UNCOLLECTABLE = 'uncollectable'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Draft'),
+        (STATUS_OPEN, 'Open'),
+        (STATUS_PAID, 'Paid'),
+        (STATUS_VOID, 'Void'),
+        (STATUS_UNCOLLECTABLE, 'Uncollectable'),
+    ]
+
+    provider_invoice_id = models.CharField(max_length=255, unique=True, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    invoice_url = models.URLField(max_length=500, blank=True, null=True)
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+
+    class Meta:
+        db_table = 'invoices'
+        indexes = [models.Index(fields=['organisation', '-period_start'])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['organisation', 'period_start'],
+                condition=~models.Q(status__in=['void']),
+                name='unique_org_period_active_invoice',
+            )
+        ]
+
+    def __str__(self):
+        return f'Invoice {self.provider_invoice_id} ({self.status}) for {self.organisation}'

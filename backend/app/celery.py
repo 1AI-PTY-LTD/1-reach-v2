@@ -30,6 +30,9 @@ import math
 import os
 import random
 from datetime import timedelta
+from datetime import datetime as dt
+import zoneinfo
+from decimal import Decimal
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
@@ -38,7 +41,7 @@ from celery import Celery, shared_task
 from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
 from django.db import OperationalError, transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.db import connections
@@ -48,9 +51,10 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 django.setup()
 
 from app.utils.storage import StorageProvider, get_storage_provider
-from app.models import MessageFormat, Schedule, ScheduleStatus
-from app.utils.billing import record_usage, refund_usage
+from app.models import Invoice, MessageFormat, Organisation, Schedule, ScheduleStatus, CreditTransaction
+from app.utils.billing import record_usage, refund_usage, get_rate
 from app.utils.failure_classifier import classify_failure
+from app.utils.metered_billing import get_billing_provider, InvoiceLineItem
 from app.utils.sms import SendResult, get_sms_provider
 
 logger = logging.getLogger(__name__)
@@ -823,3 +827,176 @@ def cleanup_stale_media_blobs() -> dict:
 
     logger.info('cleanup_stale_media_blobs: cleaned %d blobs', cleaned)
     return {'cleaned': cleaned}
+
+
+# ---------------------------------------------------------------------------
+# Metered billing
+# ---------------------------------------------------------------------------
+
+@shared_task(name='app.celery.link_billing_customer', bind=True, max_retries=5)
+def link_billing_customer(self, org_pk: int) -> None:
+    """Retry linking a Stripe customer ID to an org after subscription activation.
+
+    Called when the initial lookup in _handle_subscription_active fails
+    (e.g. Clerk hasn't created the Stripe customer yet). Retries with
+    exponential backoff: 60s, 120s, 240s, 480s, 960s.
+    """
+    org = Organisation.objects.get(pk=org_pk)
+    if org.billing_customer_id:
+        return  # already linked
+
+    provider = get_billing_provider()
+    result = provider.find_customer_by_org(org.clerk_org_id)
+    if result.success:
+        Organisation.objects.filter(pk=org.pk).update(
+            billing_customer_id=result.customer_id,
+        )
+        logger.info(
+            'Linked Stripe customer %s for org %s',
+            result.customer_id, org.clerk_org_id,
+        )
+    else:
+        logger.warning(
+            'link_billing_customer: still no Stripe customer for org %s (attempt %d): %s',
+            org.clerk_org_id, self.request.retries + 1, result.error,
+        )
+        raise self.retry(countdown=60 * (2 ** self.request.retries))
+
+
+@shared_task(name='app.celery.generate_monthly_invoices')
+def generate_monthly_invoices() -> dict:
+    """Generate and send invoices for all subscribed orgs for the previous month.
+
+    Runs on the 1st of each month via beat schedule. Aggregates usage from
+    CreditTransaction records, nets refunds, and creates an invoice per org
+    via the configured MeteredBillingProvider.
+
+    Idempotent: skips orgs that already have a non-void invoice for the period.
+    """
+    ADELAIDE_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
+    period_start, period_end = _previous_month_boundaries(ADELAIDE_TZ)
+    provider = get_billing_provider()
+
+    created = 0
+    skipped = 0
+    failed = 0
+
+    for org in Organisation.objects.filter(
+        billing_mode=Organisation.BILLING_SUBSCRIBED,
+        billing_customer_id__isnull=False,
+    ):
+        # Idempotency: skip if a non-void invoice already exists for this period
+        if Invoice.objects.filter(
+            organisation=org,
+            period_start=period_start,
+        ).exclude(status=Invoice.STATUS_VOID).exists():
+            skipped += 1
+            continue
+
+        line_items = _build_line_items(org, period_start, period_end, CreditTransaction, get_rate)
+
+        if not line_items:
+            skipped += 1
+            continue
+
+        result = provider.create_invoice(
+            customer_id=org.billing_customer_id,  # type: ignore[arg-type]  # filtered by __isnull=False
+            line_items=line_items,
+            period_start=period_start,
+            period_end=period_end,
+        )
+
+        if result.success:
+            Invoice.objects.create(
+                organisation=org,
+                provider_invoice_id=result.invoice_id,
+                status=result.status or Invoice.STATUS_OPEN,
+                amount=sum(item.amount for item in line_items),
+                invoice_url=result.invoice_url,
+                period_start=period_start,
+                period_end=period_end,
+            )
+            logger.info(
+                'Created invoice %s ($%s) for org %s, period %s to %s',
+                result.invoice_id,
+                sum(item.amount for item in line_items),
+                org.clerk_org_id,
+                period_start.date(), period_end.date(),
+            )
+            created += 1
+        else:
+            logger.error(
+                'Failed to create invoice for org %s (period %s to %s): %s',
+                org.clerk_org_id, period_start.date(), period_end.date(), result.error,
+            )
+            failed += 1
+
+    logger.info(
+        'generate_monthly_invoices: created=%d, skipped=%d, failed=%d',
+        created, skipped, failed,
+    )
+    return {'created': created, 'skipped': skipped, 'failed': failed}
+
+
+def _previous_month_boundaries(tz) -> tuple:
+    """Return (start, end) datetimes for the previous calendar month in the given timezone."""
+
+    now = dt.now(tz)
+    # First day of current month
+    first_of_current = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Last moment of previous month = first of current - 1 microsecond
+    # But we use period_end as exclusive upper bound, so period_end = first_of_current
+    period_end = first_of_current
+    # First of previous month
+    if now.month == 1:
+        period_start = first_of_current.replace(year=now.year - 1, month=12)
+    else:
+        period_start = first_of_current.replace(month=now.month - 1)
+    return period_start, period_end
+
+
+def _build_line_items(org, period_start, period_end, CreditTransaction, get_rate):
+    """Aggregate CreditTransaction records into invoice line items.
+
+    Groups by format, nets usage minus refunds. Returns a list of
+    InvoiceLineItem dataclasses, or an empty list if net usage is zero.
+    """
+    # Get usage transactions for the period
+    usage_qs = CreditTransaction.objects.filter(
+        organisation=org,
+        created_at__gte=period_start,
+        created_at__lt=period_end,
+        transaction_type__in=[CreditTransaction.USAGE, CreditTransaction.REFUND],
+        format__isnull=False,
+    )
+
+    # Group by format and calculate net amounts
+    formats = usage_qs.values_list('format', flat=True).distinct()
+    line_items = []
+
+    for fmt in formats:
+        usage_total = usage_qs.filter(
+            format=fmt,
+            transaction_type=CreditTransaction.USAGE,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        refund_total = usage_qs.filter(
+            format=fmt,
+            transaction_type=CreditTransaction.REFUND,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        net_amount = usage_total - refund_total
+        if net_amount <= 0:
+            continue
+
+        rate = get_rate(fmt)
+        quantity = int(net_amount / rate) if rate > 0 else 0
+
+        line_items.append(InvoiceLineItem(
+            description=f'{fmt.upper()} usage: {quantity} messages @ ${rate}',
+            amount=net_amount,
+            quantity=quantity,
+            unit_amount=rate,
+        ))
+
+    return line_items

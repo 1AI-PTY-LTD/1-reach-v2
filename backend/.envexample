@@ -40,6 +40,10 @@ FREE_CREDIT_AMOUNT=10.00
 SMS_RATE=0.05
 MMS_RATE=0.20
 
+# Stripe (metered billing — required if using StripeMeteredBillingProvider)
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+
 # Celery (set to Azure Cache for Redis connection string in production)
 CELERY_BROKER_URL=redis://redis:6379/0
 CELERY_RESULT_BACKEND=redis://redis:6379/0

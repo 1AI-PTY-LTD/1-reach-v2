@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import ssl as _ssl
+from celery.schedules import crontab
 from decimal import Decimal as _Decimal
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
@@ -216,6 +217,13 @@ FREE_CREDIT_AMOUNT = _Decimal(os.environ.get('FREE_CREDIT_AMOUNT', '10.00'))
 SMS_RATE = _Decimal(os.environ.get('SMS_RATE', '0.05'))
 MMS_RATE = _Decimal(os.environ.get('MMS_RATE', '0.20'))
 
+# Metered billing provider (change string to switch providers — same pattern as SMS_PROVIDER_CLASS)
+METERED_BILLING_PROVIDER_CLASS = 'app.utils.metered_billing.MockMeteredBillingProvider'
+METERED_BILLING_PROVIDER_CONFIG = {
+    'secret_key': os.environ.get('STRIPE_SECRET_KEY', ''),
+    'webhook_secret': os.environ.get('STRIPE_WEBHOOK_SECRET', ''),
+}
+
 
 # Celery (local dev: redis in docker-compose; production: Azure Cache for Redis)
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
@@ -256,6 +264,10 @@ CELERY_BEAT_SCHEDULE = {
     'cleanup-stale-media-blobs': {
         'task': 'app.celery.cleanup_stale_media_blobs',
         'schedule': 86400.0,  # every 24 hours
+    },
+    'generate-monthly-invoices': {
+        'task': 'app.celery.generate_monthly_invoices',
+        'schedule': crontab(day_of_month=1, hour=2, minute=0),  # 1st of month, 2:00 AM
     },
 }
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'

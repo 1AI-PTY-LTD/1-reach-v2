@@ -5,6 +5,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 from rest_framework.routers import DefaultRouter
 
 from app.health import HealthCheckView, SmokeCheckView
+from app.utils.stripe import StripeWebhookView
 from app.views import *
 
 
@@ -25,6 +26,7 @@ urlpatterns = [
     path('api/health/smoke/', SmokeCheckView.as_view(), name='health-smoke'),
     path('api/webhooks/clerk/', ClerkWebhookView.as_view(), name='clerk-webhook'),
     path('api/webhooks/sms-delivery/', SMSDeliveryWebhookView.as_view(), name='sms-delivery-webhook'),
+    path('api/webhooks/stripe/', StripeWebhookView.as_view(), name='stripe-webhook'),
     path('api/stats/monthly/', StatsView.as_view(), name='stats-monthly'),
     path('api/', include(router.urls)),
 ]

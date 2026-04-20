@@ -1096,12 +1096,29 @@ class BillingViewSet(viewsets.GenericViewSet):
         page = self.paginate_queryset(self.get_queryset())
         tx_data = self.get_serializer(page, many=True).data
         response = self.get_paginated_response(tx_data)
+        # Latest invoice (for subscribed orgs)
+        latest_invoice = None
+        latest = (
+            Invoice.objects.filter(organisation=org)
+            .order_by('-period_start')
+            .first()
+        )
+        if latest:
+            latest_invoice = {
+                'status': latest.status,
+                'amount': str(latest.amount),
+                'invoice_url': latest.invoice_url,
+                'period_start': latest.period_start.isoformat(),
+                'period_end': latest.period_end.isoformat(),
+            }
+
         response.data.update({
             'billing_mode': org.billing_mode,
             'balance': str(org.credit_balance),
             'monthly_limit': str(limit_info['limit']) if limit_info['limit'] is not None else None,
             'total_monthly_spend': str(limit_info['current']),
             'monthly_usage_by_format': monthly_usage_by_format,
+            'latest_invoice': latest_invoice,
         })
         return response
 
