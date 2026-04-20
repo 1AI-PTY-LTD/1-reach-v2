@@ -138,7 +138,7 @@ jobs:
 
       - name: Install Playwright Chromium
         working-directory: frontend
-        run: npx playwright install chromium --with-deps
+        run: ./node_modules/.bin/playwright install chromium --with-deps
 
       - name: Run E2E tests
         working-directory: frontend
@@ -146,7 +146,7 @@ jobs:
           # clerkSetup() reads CLERK_PUBLISHABLE_KEY (not VITE_CLERK_PUBLISHABLE_KEY)
           CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_VITE_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
-        run: npx playwright test
+        run: ./node_modules/.bin/playwright test
 
       - name: Dump backend logs
         if: failure()
