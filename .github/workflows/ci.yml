@@ -134,7 +134,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: frontend
-        run: sudo rm -rf node_modules && npm ci
+        run: sudo rm -rf node_modules ~/.npm/_cacache && npm ci
 
       - name: Install Playwright Chromium
         working-directory: frontend
