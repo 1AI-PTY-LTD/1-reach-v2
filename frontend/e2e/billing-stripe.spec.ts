@@ -76,36 +76,24 @@ test.describe('Stripe Billing Integration', () => {
     // Clerk opens checkout panel — wait for it to render
     await expect(page.getByText('Checkout').first()).toBeVisible({ timeout: 10000 })
 
-    // In development mode, Clerk shows a "Pay with test card" button that
-    // auto-fills the Stripe Elements card fields with test card data.
-    // After clicking it, we still need to click "Pay $300.00" to submit.
+    // Clerk's checkout fields are inside a shadow DOM — use "Pay with test card"
+    // which auto-fills the card. If ZIP validation fails, fix it via shadow-piercing CSS.
     const testCardButton = page.getByRole('button', { name: 'Pay with test card' })
     const payButton = page.getByRole('button', { name: /Pay \$/ })
+    await expect(testCardButton).toBeVisible({ timeout: 10000 })
+    await testCardButton.click()
 
-    if (await testCardButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      // Dev mode shortcut: auto-fills card fields
-      await testCardButton.click()
-      // Clerk auto-fills ZIP as 12345 which Stripe rejects in dev mode.
-      // The ZIP input may be in the page or a Clerk shadow DOM — try multiple selectors.
-      const zipInput = page.getByRole('textbox', { name: /zip/i })
-        .or(page.locator('input[name="postalCode"]'))
-        .or(page.locator('input[autocomplete="postal-code"]'))
-        .first()
-      if (await zipInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await zipInput.clear()
-        await zipInput.fill('10001')
-      }
-      await expect(payButton).toBeEnabled({ timeout: 5000 })
-      await payButton.click()
-    } else {
-      // Production path: manually fill card details in the Stripe Elements iframe
-      const stripeFrame = page.frameLocator('iframe').first()
-      await stripeFrame.getByRole('textbox', { name: 'Card number' }).fill(STRIPE_TEST_CARD)
-      await stripeFrame.getByRole('textbox', { name: /Expiration/ }).fill(STRIPE_TEST_EXPIRY)
-      await stripeFrame.getByRole('textbox', { name: 'Security code' }).fill(STRIPE_TEST_CVC)
-      await expect(payButton).toBeEnabled({ timeout: 5000 })
-      await payButton.click()
+    // "Pay with test card" may auto-fill an invalid ZIP (e.g. 12345).
+    // Use Playwright's shadow-piercing CSS selector to find and fix it.
+    const zipInput = page.locator('input >> visible=true').filter({ hasText: '' }).locator('xpath=//input[contains(@autocomplete,"postal")]').first()
+      .or(page.locator('css=input[autocomplete*="postal"]').first())
+    if (await zipInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await zipInput.clear()
+      await zipInput.fill('10001')
     }
+
+    await expect(payButton).toBeEnabled({ timeout: 5000 })
+    await payButton.click()
 
     // Wait for payment success confirmation and click Continue
     const continueButton = page.getByRole('button', { name: 'Continue' })
