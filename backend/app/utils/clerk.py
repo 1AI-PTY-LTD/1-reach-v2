@@ -4,6 +4,8 @@ from django.conf import settings
 from clerk_backend_api import Clerk
 
 from app.utils.billing import grant_credits
+from app.utils.metered_billing import get_billing_provider
+from app.celery import link_billing_customer
 from ..models import *
 
 logger = logging.getLogger(__name__)
@@ -148,6 +150,27 @@ def _handle_subscription_active(data):
             logger.error(
                 'Failed to clear Clerk billing_suspended for org %s', org_id, exc_info=True
             )
+
+        # Link the Stripe customer that Clerk created during subscription signup
+        org = Organisation.objects.get(clerk_org_id=org_id)
+        if not org.billing_customer_id:
+            provider = get_billing_provider()
+            result = provider.find_customer_by_org(org.clerk_org_id)
+            if result.success:
+                Organisation.objects.filter(pk=org.pk).update(
+                    billing_customer_id=result.customer_id,
+                )
+                logger.info(
+                    'Linked Stripe customer %s for org %s',
+                    result.customer_id, org_id,
+                )
+            else:
+                # Clerk may not have created the Stripe customer yet — retry later
+                link_billing_customer.apply_async(args=[org.pk], countdown=60)
+                logger.warning(
+                    'Could not find Stripe customer for org %s, queued retry: %s',
+                    org_id, result.error,
+                )
     else:
         logger.warning('subscription.active: org %s not found', org_id)
 

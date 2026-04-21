@@ -151,9 +151,10 @@ test.describe('Schedule Page', () => {
     await page.goto('/app/schedule')
     await expect(page.getByText('Hello Frank').first()).toBeVisible({ timeout: 10000 })
     await page.getByText('Hello Frank').first().click()
-    await expect(page.locator('td[colspan]').first()).toBeVisible({ timeout: 5000 })
-    await expect(page.getByRole('button', { name: /contact support/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /retry/i })).toBeVisible()
+    const expandedRow = page.locator('td[colspan]').first()
+    await expect(expandedRow).toBeVisible({ timeout: 5000 })
+    await expect(expandedRow.getByRole('button', { name: /contact support/i })).toBeVisible()
+    await expect(expandedRow.getByRole('button', { name: /retry/i })).toBeVisible()
   })
 
   test('shows Support button in toolbar', async ({ page }) => {

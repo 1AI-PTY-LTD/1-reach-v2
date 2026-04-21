@@ -190,6 +190,45 @@ function BillingContent() {
         )}
       </div>
 
+      {/* Latest Invoice */}
+      {data.latest_invoice && (
+        <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
+          <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-3">Latest Invoice</h3>
+          <div className="flex items-center gap-4">
+            <Badge
+              color={
+                data.latest_invoice.status === 'paid'
+                  ? 'green'
+                  : data.latest_invoice.status === 'open'
+                    ? 'yellow'
+                    : data.latest_invoice.status === 'void'
+                      ? 'zinc'
+                      : 'red'
+              }
+            >
+              {data.latest_invoice.status}
+            </Badge>
+            <span className="text-sm text-zinc-700 dark:text-zinc-300 font-mono">
+              ${data.latest_invoice.amount}
+            </span>
+            <span className="text-sm text-zinc-500 dark:text-zinc-400">
+              {new Date(data.latest_invoice.period_start).toLocaleDateString()} –{' '}
+              {new Date(data.latest_invoice.period_end).toLocaleDateString()}
+            </span>
+            {data.latest_invoice.invoice_url && (
+              <a
+                href={data.latest_invoice.invoice_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto text-sm font-medium text-brand-purple hover:underline"
+              >
+                View invoice →
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Transaction history */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6 flex-1 min-h-0 flex flex-col">
         <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-4">

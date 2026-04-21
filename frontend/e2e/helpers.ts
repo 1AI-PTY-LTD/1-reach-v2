@@ -192,6 +192,44 @@ export const createConfig   = (p: Page, d: object) => apiRequest(p, 'POST', '/ap
 export const deleteConfig   = (p: Page, id: number) => apiRequest(p, 'DELETE', `/api/configs/${id}/`)
 export const setOrgBalance  = (p: Page, balance: number) =>
   apiRequest(p, 'PATCH', '/api/billing/test-set-balance/', { balance })
+export const seedUsage      = (p: Page, d: { format: string; amount: string; description?: string; backdate_days?: number }) =>
+  apiRequest(p, 'POST', '/api/billing/test-seed-usage/', d)
+export const generateInvoices = (p: Page) =>
+  apiRequest(p, 'POST', '/api/billing/test-generate-invoices/', {})
+export const getBillingSummary = (p: Page) =>
+  apiRequest(p, 'GET', '/api/billing/summary/')
+export const linkBillingCustomer = (p: Page) =>
+  apiRequest(p, 'POST', '/api/billing/test-link-billing-customer/', {})
+
+// Clerk webhook simulation (TEST mode skips Svix signature verification)
+// Used when Clerk webhooks can't reach the local Docker backend
+async function postWebhook(body: object) {
+  const url = `${API_BASE}/api/webhooks/clerk/`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Webhook POST failed (${res.status}): ${text}`)
+  }
+}
+
+export async function simulateSubscriptionActive(orgId: string) {
+  await postWebhook({
+    type: 'subscription.active',
+    data: { organization_id: orgId },
+  })
+}
+
+export async function simulateSubscriptionCanceled(orgId: string) {
+  await postWebhook({
+    type: 'subscriptionItem.canceled',
+    data: { organization_id: orgId },
+  })
+}
 
 // MMS helpers
 export async function uploadFile(page: Page, fileBuffer: Buffer, filename: string, contentType: string) {

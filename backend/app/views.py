@@ -4,7 +4,8 @@ import logging
 import re
 import zoneinfo
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 import json
 
 from clerk_backend_api import Clerk
@@ -30,8 +31,9 @@ from app.permissions import IsOrgAdmin, IsOrgMember
 from app.serializers import *
 from app.utils import clerk
 from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate
+from app.utils.metered_billing import get_billing_provider
 from app.utils.storage import get_storage_provider
-from app.celery import _estimate_parts, process_delivery_event, send_batch_message as send_batch_message_task, send_message as send_message_task
+from app.celery import _estimate_parts, generate_monthly_invoices, process_delivery_event, send_batch_message as send_batch_message_task, send_message as send_message_task
 from app.utils.sms import get_sms_provider
 
 logger = logging.getLogger(__name__)
@@ -1096,12 +1098,30 @@ class BillingViewSet(viewsets.GenericViewSet):
         page = self.paginate_queryset(self.get_queryset())
         tx_data = self.get_serializer(page, many=True).data
         response = self.get_paginated_response(tx_data)
+        
+        # Latest invoice (for subscribed orgs)
+        latest_invoice = None
+        latest = (
+            Invoice.objects.filter(organisation=org)
+            .order_by('-period_start')
+            .first()
+        )
+        if latest:
+            latest_invoice = {
+                'status': latest.status,
+                'amount': str(latest.amount),
+                'invoice_url': latest.invoice_url,
+                'period_start': latest.period_start.isoformat(),
+                'period_end': latest.period_end.isoformat(),
+            }
+
         response.data.update({
             'billing_mode': org.billing_mode,
             'balance': str(org.credit_balance),
             'monthly_limit': str(limit_info['limit']) if limit_info['limit'] is not None else None,
             'total_monthly_spend': str(limit_info['current']),
             'monthly_usage_by_format': monthly_usage_by_format,
+            'latest_invoice': latest_invoice,
         })
         return response
 
@@ -1110,7 +1130,57 @@ class BillingViewSet(viewsets.GenericViewSet):
         """PATCH /api/billing/test-set-balance/ — set org credit balance directly (TEST mode only)."""
         if not settings.TEST:
             return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
-        from decimal import Decimal
         request.org.credit_balance = Decimal(str(request.data['balance']))
         request.org.save(update_fields=['credit_balance'])
         return Response({'credit_balance': str(request.org.credit_balance)})
+
+    @action(detail=False, methods=['post'], url_path='test-seed-usage')
+    def test_seed_usage(self, request):
+        """POST /api/billing/test-seed-usage/ — create CreditTransaction usage records (TEST mode only).
+
+        Body: { "format": "sms", "amount": "2.50", "description": "Test SMS usage", "backdate_days": 35 }
+        Optional backdate_days shifts created_at into the past (for invoice generation testing).
+        """
+        if not settings.TEST:
+            return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
+        tx = CreditTransaction.objects.create(
+            organisation=request.org,
+            transaction_type=CreditTransaction.USAGE,
+            amount=Decimal(str(request.data['amount'])),
+            balance_after=request.org.credit_balance,
+            description=request.data.get('description', 'E2E test usage'),
+            format=request.data.get('format', 'sms'),
+        )
+        backdate_days = request.data.get('backdate_days')
+        if backdate_days:
+            backdated = timezone.now() - timedelta(days=int(backdate_days))
+            CreditTransaction.objects.filter(pk=tx.pk).update(created_at=backdated)
+        return Response({'status': 'ok'})
+
+    @action(detail=False, methods=['post'], url_path='test-generate-invoices')
+    def test_generate_invoices(self, request):
+        """POST /api/billing/test-generate-invoices/ — trigger invoice generation (TEST mode only)."""
+        if not settings.TEST:
+            return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
+        result = generate_monthly_invoices()
+        return Response(result)
+
+    @action(detail=False, methods=['post'], url_path='test-link-billing-customer')
+    def test_link_billing_customer(self, request):
+        """POST /api/billing/test-link-billing-customer/ — trigger Stripe customer lookup (TEST mode only).
+
+        Searches Stripe for a customer matching the org's clerk_org_id and saves
+        the billing_customer_id. Used in E2E tests where the async retry task
+        may not have run yet.
+        """
+        if not settings.TEST:
+            return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
+        org = request.org
+        if org.billing_customer_id:
+            return Response({'billing_customer_id': org.billing_customer_id, 'already_linked': True})
+        provider = get_billing_provider()
+        result = provider.find_customer_by_org(org.clerk_org_id)
+        if result.success:
+            Organisation.objects.filter(pk=org.pk).update(billing_customer_id=result.customer_id)
+            return Response({'billing_customer_id': result.customer_id, 'already_linked': False})
+        return Response({'error': result.error}, status=404)

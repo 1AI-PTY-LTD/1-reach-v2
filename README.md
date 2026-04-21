@@ -17,7 +17,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 - Scheduled sends — Celery beat dispatches due messages every 60 s
 - Org user management — invite, deactivate, grant/revoke admin
 - Usage stats dashboard
-- Billing system — trial credits on signup, subscribed mode with metered tracking, monthly spending limits, transaction history, credit refunds on failed sends, inline subscription management via Clerk PricingTable
+- Billing system — trial credits on signup, subscribed mode with metered tracking, monthly spending limits, transaction history, credit refunds on failed sends, inline subscription management via Clerk PricingTable, automated metered invoicing via Stripe
 
 ---
 
@@ -26,7 +26,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 | Layer | Technology |
 |---|---|
 | Backend | Django 6 + Django REST Framework + PostgreSQL 16 |
-| Auth | Clerk (JWT + webhooks) |
+| Auth & Billing | Clerk (JWT + webhooks + subscription billing) + Stripe (metered usage invoicing) |
 | Frontend | React 19 + Vite 7 + TanStack Router + TanStack Query |
 | Styling | Tailwind CSS 3 + HeadlessUI + Lucide icons |
 | SMS/Storage | Pluggable provider interface (Mock by default, Azure Blob for storage) |
@@ -103,6 +103,8 @@ cp frontend/.envexample frontend/.env
 | `WELCORP_PASSWORD` | If using Welcorp | Welcorp Basic auth password |
 | `WELCORP_CALLBACK_SECRET` | No | Shared secret for delivery callback URL token verification |
 | `BASE_URL` | No | Publicly accessible base URL for this application (e.g. `https://your-domain.com`) — used for provider delivery callbacks |
+| `STRIPE_SECRET_KEY` | If using Stripe | Stripe secret key (`sk_...`) — required for `StripeMeteredBillingProvider` |
+| `STRIPE_WEBHOOK_SECRET` | If using Stripe | Stripe webhook signing secret (`whsec_...`) |
 
 **`frontend/.env`** — Vite + Clerk:
 
@@ -129,7 +131,7 @@ This starts six services:
 | ReDoc | http://localhost:8000/api/redoc/ | API reference |
 | Redis | localhost:6379 | Celery broker + result backend |
 | Celery worker | — | Processes `send_message` tasks (async SMS/MMS dispatch) |
-| Celery beat | — | Runs `dispatch_due_messages` every 60 s, `reconcile_stale_sent` (polls provider for missed callbacks), `cleanup_stale_media_blobs` (daily — deletes MMS media blobs for failed schedules >7 days old) |
+| Celery beat | — | Runs `dispatch_due_messages` every 60 s, `reconcile_stale_sent` (polls provider for missed callbacks), `cleanup_stale_media_blobs` (daily — deletes MMS media blobs for failed schedules >7 days old), `generate_monthly_invoices` (1st of month — creates Stripe invoices for subscribed orgs) |
 
 ---
 
@@ -140,13 +142,13 @@ This starts six services:
 ```
 backend/
 ├── app/
-│   ├── models.py          # Contact, Group, Template, Schedule, Organisation, User, Config, CreditTransaction
+│   ├── models.py          # Contact, Group, Template, Schedule, Organisation, User, Config, CreditTransaction, Invoice
 │   ├── views.py           # ViewSets for all API endpoints + BillingViewSet
 │   ├── serializers.py     # DRF serializers + CreditTransactionSerializer
 │   ├── authentication.py  # ClerkJWTAuthentication — extracts org context from JWT
 │   ├── permissions.py     # IsOrgMember, IsOrgAdmin
 │   ├── filters.py         # django-filter (search, date, group)
-│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent + cleanup_stale_media_blobs tasks + task_failure signal handler
+│   ├── celery.py          # Celery app + send_message + dispatch_due_messages + process_delivery_event + reconcile_stale_sent + cleanup_stale_media_blobs + generate_monthly_invoices + link_billing_customer tasks + task_failure signal handler
 │   ├── worker.py          # UvicornWorker subclass with lifespan=off (Django doesn't handle ASGI lifespan events)
 │   ├── health.py          # HealthCheckView (DB + Redis connectivity) + SmokeCheckView (DB write + Redis write) + DEPLOY_SHA version tracking
 │   ├── middleware/        # RequestLoggingMiddleware, ClerkTenantMiddleware
@@ -156,9 +158,11 @@ backend/
 │   │   ├── clerk.py            # Webhook handlers (user/org/membership sync + billing subscription events)
 │   │   ├── sms.py              # Pluggable SMS provider (SMSProvider base + MockSMSProvider + DeliveryEvent)
 │   │   ├── welcorp.py          # Welcorp SMS/MMS provider (API integration + delivery callbacks + job polling)
-│   │   └── storage.py          # Pluggable storage provider (Mock + Azure Blob)
+│   │   ├── storage.py          # Pluggable storage provider (Mock + Azure Blob)
+│   │   ├── metered_billing.py  # Pluggable metered billing provider (MeteredBillingProvider base + MockMeteredBillingProvider)
+│   │   └── stripe.py           # Stripe metered billing provider (StripeMeteredBillingProvider + StripeWebhookView)
 │   └── mixins.py          # SoftDeleteMixin, TenantScopedMixin
-└── tests/                 # 670 tests
+└── tests/                 # 739 tests
 ```
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
@@ -190,9 +194,11 @@ Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults t
 
 **Failure classification:** `failure_classifier.py` maps provider errors to `FailureCategory` (permanent: `invalid_number`, `opt_out`, `blacklisted`, etc.; transient: `network_error`, `rate_limited`, `server_error`, etc.). Permanent failures skip retries and trigger `refund_usage()`. MMS media blobs are **not** deleted on failure — they are retained for 7 days to allow manual retry, then cleaned up by the `cleanup_stale_media_blobs` daily beat task.
 
-**Billing system:** `Organisation` has `credit_balance` (Decimal) and `billing_mode` (`trial` | `subscribed` | `past_due`). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. `check_can_send` blocks all sends when `billing_mode='past_due'`. Clerk Billing is live: `subscription.active` sets `billing_mode='subscribed'` and clears the Clerk `billing_suspended` metadata flag; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` sets `billing_mode='past_due'` and sets `billing_suspended=True` in Clerk org metadata. Per-SMS/MMS metered billing is tracked internally via `CreditTransaction` (for manual invoicing); native Clerk metered billing will be wired into `record_usage()` when Clerk adds support. The billing page has a "Manage Plan" button that opens a dialog with Clerk's `PricingTable` component, showing all available plans (Free, Professional) and allowing admins to subscribe, switch, or cancel inline.
+**Billing system:** `Organisation` has `credit_balance` (Decimal), `billing_mode` (`trial` | `subscribed` | `past_due`), and `billing_customer_id` (Stripe Customer ID). Every billable action (send or grant) creates a `CreditTransaction` row. `billing.py` exposes `check_can_send`, `record_usage`, and `refund_usage`. SMS costs `message_parts × SMS_RATE`; MMS costs `1 × MMS_RATE`. Trial credits are reserved at HTTP dispatch time; on terminal failure `refund_usage()` restores the balance idempotently. Subscribed orgs record usage on `SENT`. `check_can_send` blocks all sends when `billing_mode='past_due'`. Clerk Billing handles subscription lifecycle: `subscription.active` sets `billing_mode='subscribed'` and clears the Clerk `billing_suspended` metadata flag; `subscriptionItem.canceled`/`subscriptionItem.ended` reverts to `'trial'`; `subscription.past_due` sets `billing_mode='past_due'` and sets `billing_suspended=True` in Clerk org metadata. The billing page has a "Manage Plan" button that opens a dialog with Clerk's `PricingTable` component, allowing admins to subscribe, switch, or cancel inline.
 
-**SMS/Storage providers:** Both are pluggable via `settings.SMS_PROVIDER_CLASS` and `settings.STORAGE_PROVIDER_CLASS`. The mock providers are used by default (dev/testing). The `SMSProvider` base class defines `send_sms()`, `send_bulk_sms()`, `send_mms()`, and `send_bulk_mms()` public methods that handle phone validation/normalisation, then delegate to abstract `_send_sms_impl()` and `_send_mms_impl()` methods. Bulk methods (`_send_bulk_sms_impl`, `_send_bulk_mms_impl`) have default implementations that loop over the individual send method — providers with native batch support can override them.
+**Metered billing (Stripe):** Clerk does not support metered billing, so Stripe handles per-message usage invoicing. When an org subscribes through Clerk, Clerk creates a Stripe Customer in the app's Stripe account with `metadata.organization_id` set to the Clerk org ID. The `_handle_subscription_active` webhook handler searches Stripe for this customer and saves the `billing_customer_id` on the `Organisation`; if the lookup fails (timing), a `link_billing_customer` Celery task retries with exponential backoff. Monthly invoices are generated by a `generate_monthly_invoices` beat task (runs on the 1st of each month): it aggregates `CreditTransaction` records (usage minus refunds) by format, builds line items, and creates a Stripe Invoice via the `MeteredBillingProvider` interface. Stripe auto-charges the card saved during Clerk subscription signup. The `Invoice` model tracks invoice status locally; Stripe webhooks (`invoice.paid`, `invoice.payment_failed`, `invoice.overdue`, `invoice.voided`) update the status via `StripeWebhookView`. If payment fails or the invoice becomes overdue, the org is set to `past_due` (blocking all sends); when the customer pays and no other uncollectable invoices remain, the org is restored to `subscribed` (this guard prevents incorrectly restoring an org that was set to `past_due` by Clerk for subscription reasons rather than Stripe payment failure). The metered billing provider is pluggable via `settings.METERED_BILLING_PROVIDER_CLASS` (same pattern as `SMS_PROVIDER_CLASS`), with `MockMeteredBillingProvider` for dev/testing and `StripeMeteredBillingProvider` for production.
+
+**SMS/Storage/Billing providers:** All three are pluggable via `settings.SMS_PROVIDER_CLASS`, `settings.STORAGE_PROVIDER_CLASS`, and `settings.METERED_BILLING_PROVIDER_CLASS`. Mock providers are used by default (dev/testing). The `SMSProvider` base class defines `send_sms()`, `send_bulk_sms()`, `send_mms()`, and `send_bulk_mms()` public methods that handle phone validation/normalisation, then delegate to abstract `_send_sms_impl()` and `_send_mms_impl()` methods. Bulk methods (`_send_bulk_sms_impl`, `_send_bulk_mms_impl`) have default implementations that loop over the individual send method — providers with native batch support can override them.
 
 **Delivery status tracking:** The `SMSProvider` base class also defines a provider-agnostic delivery callback/polling interface. Providers can override `parse_delivery_callback()` to handle incoming webhooks, `validate_callback_request()` for authentication, `get_callback_url()` to register callbacks in send payloads, and `poll_job_status()` to fetch delivery reports on demand. All methods return `DeliveryEvent` objects consumed by the `process_delivery_event` Celery task, which updates schedule status and triggers billing refunds on carrier-reported failures. A `reconcile_stale_sent` beat task polls the provider for schedules stuck in SENT >24h as a fallback when callbacks are missed. The Welcorp provider (`welcorp.py`) implements all four methods. Welcorp's `SENT` status means "carrier accepted" (the best confirmation available — no handset delivery status exists), so it is mapped to `DELIVERED` to mark the schedule as terminal.
 
@@ -254,9 +260,9 @@ Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in 
 | Users | `GET /api/users/`, `GET /api/users/me/`, `PATCH /api/users/:id/role/`, `PATCH /api/users/:id/status/`, `POST /api/users/invite/` |
 | SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/` |
 | Stats | `GET /api/stats/monthly/` |
-| Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history (admin only) |
+| Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history, latest invoice (admin only) |
 | Configs | `GET/POST/PUT/PATCH/DELETE /api/configs/`, `GET/PUT/PATCH/DELETE /api/configs/:id/` |
-| Webhooks | `POST /api/webhooks/clerk/`, `POST /api/webhooks/sms-delivery/` |
+| Webhooks | `POST /api/webhooks/clerk/`, `POST /api/webhooks/sms-delivery/`, `POST /api/webhooks/stripe/` |
 | Health | `GET /api/health/` (DB + Redis connectivity), `GET /api/health/smoke/` (DB write + Redis write + deploy version) |
 
 All endpoints require Clerk JWT authentication except health/smoke endpoints (unauthenticated). Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
@@ -271,7 +277,7 @@ All endpoints require Clerk JWT authentication except health/smoke endpoints (un
 docker compose exec backend python -m pytest tests/ -x -q
 ```
 
-670 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+741 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose exec backend python -m pytest --create-db tests/ -q
@@ -283,7 +289,7 @@ docker compose exec backend python -m pytest --create-db tests/ -q
 docker compose exec frontend npx vitest run
 ```
 
-383 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+447 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
 
 ### Frontend (E2E)
 
@@ -291,7 +297,7 @@ docker compose exec frontend npx vitest run
 docker compose exec frontend npx playwright test
 ```
 
-77 Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
+89 Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), billing-stripe (subscribe via PricingTable with Stripe test card + invoice generation + invoice display + cancel subscription), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
 
 **Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 
@@ -300,7 +306,7 @@ docker compose exec frontend npx playwright test
 3. All chromium tests inherit the pre-authenticated state. `beforeAll` blocks that need API access (e.g., `send-pipeline.spec.ts`) use `authenticatePage()` which falls back to a full sign-in from the state file.
 4. `global-teardown.ts` deletes the Clerk user + org.
 
-**CI requirements:** Set `CLERK_SECRET_KEY` (Clerk secret key) and `E2E_CLERK_USER_ID` (a test user ID) as CI secrets. The backend must have `TEST=True` to enable test-only endpoints (`force-status`, `test-set-balance`) and skip webhook signature verification.
+**CI requirements:** Set `CLERK_SECRET_KEY` (Clerk secret key) and `E2E_CLERK_USER_ID` (a test user ID) as CI secrets. For Stripe billing E2E tests, also set `STRIPE_SECRET_KEY` (Stripe test mode key). The backend must have `TEST=True` to enable test-only endpoints (`force-status`, `test-set-balance`, `test-seed-usage`, `test-generate-invoices`, `test-link-billing-customer`) and skip webhook signature verification.
 
 **users.spec.ts** is self-contained: it creates its own Clerk admin, member, and inactive users + org in `beforeAll`, independent of the global test user. It uses `test.use({ storageState: { cookies: [], origins: [] } })` to clear the main user's session.
 
@@ -316,11 +322,16 @@ The E2E tests are **UI integration tests** — they exercise real HTTP calls aga
 | **Celery workers** | Not running — tasks enqueued to Redis but never consumed | Async dispatch, retry logic, status transitions, failure recovery |
 | **Schedule statuses** | Forced via TEST-only `PATCH /api/schedules/:id/force-status/` | Organic state machine transitions from task execution |
 | **Billing** | Real `check_can_send` DB checks; balance set via TEST-only endpoint | Credit transactions from actual task execution; refund-on-failure flow |
+| **Stripe** | Real Stripe test mode API calls (`sk_test_` key); invoices created via `StripeMeteredBillingProvider`; usage seeded via TEST-only endpoint | Automatic Stripe webhook delivery (simulated via direct POST); real payment collection |
+| **Clerk subscription** | Real Clerk PricingTable + Stripe test card checkout; webhook simulated via direct POST | Real Clerk webhook delivery (locally unreachable) |
 | **Redis** | Running but effectively unused (no worker consuming tasks) | Broker reliability, task routing |
 
 **TEST-mode-only endpoints** used by E2E tests:
 - `PATCH /api/schedules/:id/force-status/` — set schedule status directly
 - `PATCH /api/billing/test-set-balance/` — set org credit balance directly
+- `POST /api/billing/test-seed-usage/` — create CreditTransaction usage records (accepts `backdate_days` to shift `created_at` for invoice generation testing)
+- `POST /api/billing/test-generate-invoices/` — trigger `generate_monthly_invoices` task synchronously
+- `POST /api/billing/test-link-billing-customer/` — trigger Stripe customer lookup and link `billing_customer_id`
 - Webhook endpoint skips Svix signature verification
 
 ---
@@ -340,6 +351,15 @@ The E2E tests are **UI integration tests** — they exercise real HTTP calls aga
 6. Set the **Application name** in Settings → General (appears in invitation emails)
 
 For E2E tests in CI, set `CLERK_SECRET_KEY` as a secret. The test infrastructure creates and tears down its own Clerk users and orgs automatically via `global-setup.ts` / `global-teardown.ts`.
+
+## Stripe Configuration
+
+Stripe is used for metered usage invoicing (Clerk handles subscription billing).
+
+1. **Connect your Stripe account** to Clerk in the Clerk Dashboard (Billing → Settings). Clerk creates Stripe Customers in your Stripe account when orgs subscribe — this is what enables single card entry.
+2. **Configure a Stripe Webhook** endpoint in the [Stripe Dashboard](https://dashboard.stripe.com/webhooks) pointing to `https://your-domain/api/webhooks/stripe/`. Subscribe to: `invoice.paid`, `invoice.payment_failed`, `invoice.overdue`, `invoice.voided`. When creating the endpoint, select API version **`2026-03-25.dahlia`** to match the version pinned in `StripeMeteredBillingProvider.STRIPE_API_VERSION`.
+3. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in `backend/.env`. When `STRIPE_SECRET_KEY` is set, the backend auto-selects `StripeMeteredBillingProvider`; when unset, it falls back to `MockMeteredBillingProvider`.
+4. The Stripe API version is pinned in `StripeMeteredBillingProvider.STRIPE_API_VERSION` (`2026-03-25.dahlia`). Update this version deliberately when upgrading, after verifying compatibility. The webhook endpoint API version must match.
 
 ---
 
@@ -393,9 +413,9 @@ Docker is used for local development only. The production target is Azure:
 
 **Azure provisioning — see [Azure Deployment](#azure-deployment) below.**
 
-### 3. Metered Billing (Clerk not yet supported)
+### 3. ~~Metered Billing~~ ✓
 
-Per-SMS/MMS usage is tracked internally via `CreditTransaction` and visible at `GET /api/billing/summary/`. Clerk Billing does not yet support metered/usage-based billing (it is on their roadmap). When Clerk adds it, the integration point is `record_usage()` in `backend/app/utils/billing.py` — add a Clerk metered billing API call there alongside the existing internal tracking.
+Metered usage invoicing is implemented via Stripe. Clerk handles subscription billing; Stripe collects per-message usage payments. See the **Metered billing (Stripe)** section above for details. The metered billing provider is pluggable — to switch from Stripe, implement the `MeteredBillingProvider` ABC in `backend/app/utils/metered_billing.py` and update `settings.METERED_BILLING_PROVIDER_CLASS`.
 
 ### 4. Remaining Clerk Production Configuration
 
@@ -564,6 +584,15 @@ In your GitHub repo → Settings → Secrets and variables → Actions, set the 
    - Subscribe to: `user.created`, `user.updated`, `user.deleted`, `organization.created`, `organization.updated`, `organization.deleted`, `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`, `subscription.active`, `subscriptionItem.canceled`, `subscriptionItem.ended`, `subscription.past_due`
    - Copy the **Signing Secret** (`whsec_...`) → set as `CLERK_WEBHOOK_SIGNING_SECRET` on all backend App Services
 
+#### 5b. Configure Stripe Webhook for Azure
+
+1. **Stripe Dashboard → Webhooks → Add endpoint:**
+   - URL: `https://<api-app-name>.azurewebsites.net/api/webhooks/stripe/`
+   - API version: **`2026-03-25.dahlia`** (must match `StripeMeteredBillingProvider.STRIPE_API_VERSION`)
+   - Subscribe to: `invoice.paid`, `invoice.payment_failed`, `invoice.overdue`, `invoice.voided`
+   - Copy the **Signing Secret** (`whsec_...`) → set as `STRIPE_WEBHOOK_SECRET` on all backend App Services
+2. Copy the **Secret key** from Stripe Dashboard → Developers → API keys → set as `STRIPE_SECRET_KEY` on all backend App Services
+
 #### 6. Deploy
 
 Push to `main` to trigger both GitHub Actions workflows. Alternatively, manually trigger them from the Actions tab. The backend deploy workflow:
@@ -616,6 +645,8 @@ Set these on **all three** App Services (API, worker, beat) via Settings → Env
 | `SESSION_COOKIE_SECURE` | `True` |
 | `CSRF_COOKIE_SECURE` | `True` |
 | `SECURE_HSTS_SECONDS` | `31536000` |
+| `STRIPE_SECRET_KEY` | Stripe live secret key (`sk_live_...`) |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret (`whsec_...`) |
 
 ### GitHub Secrets (CD)
 

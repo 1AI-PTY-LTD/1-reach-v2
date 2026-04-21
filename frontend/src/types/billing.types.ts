@@ -18,12 +18,23 @@ export type FormatUsageSummary = {
   rate: string
 }
 
+export type InvoiceStatus = 'draft' | 'open' | 'paid' | 'void' | 'uncollectable'
+
+export type LatestInvoice = {
+  status: InvoiceStatus
+  amount: string
+  invoice_url: string | null
+  period_start: string
+  period_end: string
+}
+
 export type BillingSummaryResponse = {
   billing_mode: BillingMode
   balance: string
   monthly_limit: string | null
   total_monthly_spend: string
   monthly_usage_by_format: Record<string, FormatUsageSummary>
+  latest_invoice: LatestInvoice | null
   results: CreditTransaction[]
   pagination: {
     total: number

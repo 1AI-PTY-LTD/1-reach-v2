@@ -19,7 +19,7 @@ export default async function globalSetup(_config: FullConfig) {
 
   // 1. Create a fresh Clerk user for this CI run
   const user = await clerk.users.createUser({
-    emailAddress: [`e2e-${ts}@test.1reach.com`],
+    emailAddress: [`e2e-${ts}+clerk_test@test.1reach.com`],
     firstName: 'E2E',
     lastName: 'Test',
     skipPasswordRequirement: true,
@@ -34,7 +34,7 @@ export default async function globalSetup(_config: FullConfig) {
   })
 
   // Persist IDs for auth.setup.ts and global-teardown
-  const email = `e2e-${ts}@test.1reach.com`
+  const email = `e2e-${ts}+clerk_test@test.1reach.com`
   fs.writeFileSync('/tmp/e2e-state.json', JSON.stringify({
     clerkUserId: user.id,
     clerkOrgId: org.id,
