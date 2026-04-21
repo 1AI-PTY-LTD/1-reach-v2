@@ -85,9 +85,14 @@ test.describe('Stripe Billing Integration', () => {
     if (await testCardButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       // Dev mode shortcut: auto-fills card fields
       await testCardButton.click()
-      // Clerk auto-fills ZIP as 12345 which Stripe rejects — fix it
-      const zipInput = page.locator('input[name="postalCode"], input[autocomplete="postal-code"]').first()
+      // Clerk auto-fills ZIP as 12345 which Stripe rejects in dev mode.
+      // The ZIP input may be in the page or a Clerk shadow DOM — try multiple selectors.
+      const zipInput = page.getByRole('textbox', { name: /zip/i })
+        .or(page.locator('input[name="postalCode"]'))
+        .or(page.locator('input[autocomplete="postal-code"]'))
+        .first()
       if (await zipInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await zipInput.clear()
         await zipInput.fill('10001')
       }
       await expect(payButton).toBeEnabled({ timeout: 5000 })
