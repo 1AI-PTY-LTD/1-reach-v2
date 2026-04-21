@@ -57,6 +57,7 @@ test.describe('Stripe Billing Integration', () => {
   })
 
   test('subscribe via PricingTable with Stripe test card', async ({ page }) => {
+    test.setTimeout(90000) // Stripe checkout iframe is slow in CI
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
