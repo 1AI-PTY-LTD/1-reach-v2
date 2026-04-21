@@ -201,13 +201,22 @@ jobs:
       - name: Patch venv for Azure App Service
         working-directory: backend
         run: |
+          DEPLOY_PATH=/home/site/wwwroot
+          # Fix pyvenv.cfg home path
           sed -i "s|^home = .*|home = /usr/local/bin|" antenv/pyvenv.cfg
-          sed -i "s|^#\!/.*python.*|#!/home/site/wwwroot/antenv/bin/python|" antenv/bin/*
-          # Fix python symlinks to point to Azure's Python 3.12
-          rm antenv/bin/python3
-          ln -s /usr/local/bin/python3.12 antenv/bin/python3
-          rm -f antenv/bin/python3.12
-          ln -s /usr/local/bin/python3.12 antenv/bin/python3.12
+          # Fix python binary — replace with symlink (may be a binary copy on some platforms)
+          rm -f antenv/bin/python
+          ln -s python3 antenv/bin/python
+          # Fix python3 symlink to Azure's system Python
+          rm -f antenv/bin/python3
+          ln -s /usr/local/bin/python3 antenv/bin/python3
+          # Fix shebangs only in text files (skip binaries)
+          for f in antenv/bin/*; do
+            [ -f "$f" ] && [ ! -L "$f" ] && file "$f" | grep -q text && \
+              sed -i "1s|^#!.*python.*|#!${DEPLOY_PATH}/antenv/bin/python|" "$f"
+          done
+          # Fix activate script's hardcoded VIRTUAL_ENV path
+          sed -i "s|VIRTUAL_ENV=.*|VIRTUAL_ENV=${DEPLOY_PATH}/antenv|g" antenv/bin/activate
 
       - name: Stamp deploy version
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
