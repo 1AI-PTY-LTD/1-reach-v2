@@ -35,8 +35,8 @@ jobs:
         run: |
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --server-name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --name github-runner \
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --rule-name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
 
@@ -105,8 +105,8 @@ jobs:
           echo "Adding runner IP to replica firewall..."
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --server-name "$REPLICA_NAME" \
-            --name github-runner \
+            --name "$REPLICA_NAME" \
+            --rule-name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
           REPLICA_HOST=$(az postgres flexible-server show \
@@ -139,8 +139,8 @@ jobs:
           echo "Creating production backup: $BACKUP_NAME"
           az postgres flexible-server backup create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --server-name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --name "$BACKUP_NAME"
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --backup-name "$BACKUP_NAME"
           echo "Backup created: $BACKUP_NAME"
 
       - name: Run migration on production DB
@@ -168,8 +168,8 @@ jobs:
         run: |
           az postgres flexible-server firewall-rule delete \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --server-name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --name github-runner --yes 2>/dev/null || true
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --rule-name github-runner --yes 2>/dev/null || true
 
   build:
     needs: migrate
