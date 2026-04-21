@@ -225,6 +225,19 @@ jobs:
           name: backend
           path: backend
 
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Disable Kudu build
+        run: |
+          az webapp config appsettings set \
+            --name ${{ secrets.AZURE_BACKEND_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --output none
+
       - name: Deploy to Azure App Service — backend
         uses: azure/webapps-deploy@v3
         with:
@@ -242,17 +255,25 @@ jobs:
           name: backend
           path: backend
 
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Disable Kudu build
+        run: |
+          az webapp config appsettings set \
+            --name ${{ secrets.AZURE_WORKER_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --output none
+
       - name: Deploy to Azure App Service — celery-worker
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_WORKER_APP_NAME }}
           publish-profile: ${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}
           package: backend
-
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Restart worker
         run: |
@@ -270,17 +291,25 @@ jobs:
           name: backend
           path: backend
 
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Disable Kudu build
+        run: |
+          az webapp config appsettings set \
+            --name ${{ secrets.AZURE_BEAT_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --output none
+
       - name: Deploy to Azure App Service — celery-beat
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ secrets.AZURE_BEAT_APP_NAME }}
           publish-profile: ${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}
           package: backend
-
-      - name: Azure login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Restart beat
         run: |
