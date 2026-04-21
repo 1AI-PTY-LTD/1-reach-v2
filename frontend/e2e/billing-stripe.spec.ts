@@ -57,24 +57,24 @@ test.describe('Stripe Billing Integration', () => {
   })
 
   test('subscribe via PricingTable with Stripe test card', async ({ page }) => {
-    test.setTimeout(90000) // Stripe checkout iframe is slow in CI
+    test.setTimeout(60000) // Stripe checkout iframe is slow in CI
     await page.goto('/app/billing')
-    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 5000 })
 
     // Verify we start in trial mode
     await expect(page.getByText('Trial balance').first()).toBeVisible()
 
     // Open the Manage Plan dialog
     await page.getByRole('button', { name: /Manage Plan/i }).click()
-    await expect(page.getByText('Manage Plan').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Manage Plan').first()).toBeVisible({ timeout: 5000 })
 
     // Click Subscribe on the paid plan
     const subscribeButton = page.getByRole('button', { name: /Subscribe/i }).first()
-    await expect(subscribeButton).toBeVisible({ timeout: 15000 })
+    await expect(subscribeButton).toBeVisible({ timeout: 10000 })
     await subscribeButton.click()
 
     // Clerk opens checkout panel — wait for it to render
-    await expect(page.getByText('Checkout').first()).toBeVisible({ timeout: 15000 })
+    await expect(page.getByText('Checkout').first()).toBeVisible({ timeout: 10000 })
 
     // In development mode, Clerk shows a "Pay with test card" button that
     // auto-fills the Stripe Elements card fields with test card data.
@@ -82,11 +82,15 @@ test.describe('Stripe Billing Integration', () => {
     const testCardButton = page.getByRole('button', { name: 'Pay with test card' })
     const payButton = page.getByRole('button', { name: /Pay \$/ })
 
-    if (await testCardButton.isVisible({ timeout: 8000 }).catch(() => false)) {
+    if (await testCardButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       // Dev mode shortcut: auto-fills card fields
       await testCardButton.click()
-      // Wait for card fields to be filled, then click Pay
-      await expect(payButton).toBeEnabled({ timeout: 10000 })
+      // Clerk auto-fills ZIP as 12345 which may be rejected — fix it
+      const zipInput = page.getByLabel(/ZIP/i)
+      if (await zipInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await zipInput.fill('10001')
+      }
+      await expect(payButton).toBeEnabled({ timeout: 5000 })
       await payButton.click()
     } else {
       // Production path: manually fill card details in the Stripe Elements iframe
@@ -94,13 +98,13 @@ test.describe('Stripe Billing Integration', () => {
       await stripeFrame.getByRole('textbox', { name: 'Card number' }).fill(STRIPE_TEST_CARD)
       await stripeFrame.getByRole('textbox', { name: /Expiration/ }).fill(STRIPE_TEST_EXPIRY)
       await stripeFrame.getByRole('textbox', { name: 'Security code' }).fill(STRIPE_TEST_CVC)
-      await expect(payButton).toBeEnabled({ timeout: 10000 })
+      await expect(payButton).toBeEnabled({ timeout: 5000 })
       await payButton.click()
     }
 
     // Wait for payment success confirmation and click Continue
     const continueButton = page.getByRole('button', { name: 'Continue' })
-    await expect(continueButton).toBeVisible({ timeout: 30000 })
+    await expect(continueButton).toBeVisible({ timeout: 20000 })
     await continueButton.click()
 
     // Simulate the subscription.active webhook — Clerk webhooks can't reach
