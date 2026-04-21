@@ -27,7 +27,7 @@ timeout 30 python manage.py migrate --check 2>/dev/null || {
 }
 gunicorn app.asgi:application \
   -k app.worker.Worker \
-  --bind 0.0.0.0:8000 \
+  --bind 0.0.0.0:${PORT:-8000} \
   --workers 2 \
   --timeout 120 \
   --access-logfile -

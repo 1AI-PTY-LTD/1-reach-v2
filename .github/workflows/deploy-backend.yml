@@ -213,7 +213,7 @@ jobs:
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
 
       - name: Create deploy package
-        run: cd backend && zip -qr ../backend.zip . -x ".git/*" "__pycache__/*" "*.pyc" "tests/*"
+        run: cd backend && zip -qry ../backend.zip . -x ".git/*" "__pycache__/*" "*.pyc" "tests/*"
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
