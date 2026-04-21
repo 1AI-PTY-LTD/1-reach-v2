@@ -203,6 +203,11 @@ jobs:
         run: |
           sed -i "s|^home = .*|home = /usr/local/bin|" antenv/pyvenv.cfg
           sed -i "s|^#\!/.*python.*|#!/home/site/wwwroot/antenv/bin/python|" antenv/bin/*
+          # Fix python symlinks to point to Azure's Python 3.12
+          rm antenv/bin/python3
+          ln -s /usr/local/bin/python3.12 antenv/bin/python3
+          rm -f antenv/bin/python3.12
+          ln -s /usr/local/bin/python3.12 antenv/bin/python3.12
 
       - name: Stamp deploy version
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py

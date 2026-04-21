@@ -29,7 +29,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 django.setup()
 from django.db import connection
 connection.ensure_connection()
-" 2>/dev/null && echo "Database is ready." && break
+" 2>&1 && echo "Database is ready." && break
   echo "Database not ready (attempt $i/30), retrying in 5s..."
   sleep 5
 done
