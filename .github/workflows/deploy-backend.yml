@@ -8,9 +8,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # TODO (az CLI 2.86.0, May 2026): update deprecated postgres flexible-server args:
-  #   firewall-rule: --name (server) → --server-name, --rule-name (rule) → --name
-  #   backup create: --name (server) → --server-name, --backup-name → --name
   migrate:
     runs-on: ubuntu-latest
     steps:
@@ -38,8 +35,8 @@ jobs:
         run: |
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --rule-name github-runner \
+            --server-name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
 
@@ -108,8 +105,8 @@ jobs:
           echo "Adding runner IP to replica firewall..."
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name "$REPLICA_NAME" \
-            --rule-name github-runner \
+            --server-name "$REPLICA_NAME" \
+            --name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
           REPLICA_HOST=$(az postgres flexible-server show \
@@ -142,8 +139,8 @@ jobs:
           echo "Creating production backup: $BACKUP_NAME"
           az postgres flexible-server backup create \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --backup-name "$BACKUP_NAME"
+            --server-name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --name "$BACKUP_NAME"
           echo "Backup created: $BACKUP_NAME"
 
       - name: Run migration on production DB
@@ -171,8 +168,8 @@ jobs:
         run: |
           az postgres flexible-server firewall-rule delete \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
-            --rule-name github-runner --yes 2>/dev/null || true
+            --server-name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --name github-runner --yes 2>/dev/null || true
 
   build:
     needs: migrate
