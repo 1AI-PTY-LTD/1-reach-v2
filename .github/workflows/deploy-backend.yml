@@ -74,8 +74,24 @@ jobs:
             echo "pending=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create and promote DB replica
+      - name: Check DB tier
         if: steps.check.outputs.pending == 'true'
+        id: tier
+        run: |
+          SKU_TIER=$(az postgres flexible-server show \
+            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --query sku.tier -o tsv)
+          echo "DB tier: $SKU_TIER"
+          echo "tier=$SKU_TIER" >> "$GITHUB_OUTPUT"
+          if [ "$SKU_TIER" = "Burstable" ]; then
+            echo "supports_replica=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "supports_replica=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and promote DB replica
+        if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true'
         id: replica
         run: |
           REPLICA_NAME="${{ secrets.AZURE_POSTGRES_SERVER_NAME }}-replica"
@@ -103,7 +119,7 @@ jobs:
           echo "host=$REPLICA_HOST" >> "$GITHUB_OUTPUT"
 
       - name: Test migration on replica
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true'
         working-directory: backend
         env:
           DJANGO_SETTINGS_MODULE: app.settings
@@ -144,7 +160,7 @@ jobs:
         run: python manage.py migrate --no-input
 
       - name: Delete replica
-        if: steps.check.outputs.pending == 'true' && always()
+        if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true' && always()
         run: |
           az postgres flexible-server delete \
             --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
