@@ -198,6 +198,12 @@ jobs:
           source antenv/bin/activate
           python manage.py collectstatic --no-input
 
+      - name: Patch venv for Azure App Service
+        working-directory: backend
+        run: |
+          sed -i "s|^home = .*|home = /usr/local/bin|" antenv/pyvenv.cfg
+          sed -i "s|^#\!/.*python.*|#!/home/site/wwwroot/antenv/bin/python|" antenv/bin/*
+
       - name: Stamp deploy version
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
 

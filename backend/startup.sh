@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+export PYTHONDONTWRITEBYTECODE=1
 source /home/site/wwwroot/antenv/bin/activate
 
 # Wait for database to be reachable before running migrations
