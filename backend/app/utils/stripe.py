@@ -151,9 +151,10 @@ class StripeMeteredBillingProvider(MeteredBillingProvider):
         event = stripe.Webhook.construct_event(
             payload, signature, self._webhook_secret,
         )
+        data_obj = event.data.object
         return {
             'type': event.type,
-            'data': event.data.object,
+            'data': data_obj.to_dict() if isinstance(data_obj, stripe.StripeObject) else data_obj,
         }
 
 

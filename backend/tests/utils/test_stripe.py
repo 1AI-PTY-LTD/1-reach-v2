@@ -121,12 +121,16 @@ class TestStripeMeteredBillingProvider:
     def test_parse_webhook_success(self, mock_construct):
         mock_event = Mock()
         mock_event.type = 'invoice.paid'
-        mock_event.data.object = {'id': 'inv_123'}
+        mock_event.data.object = stripe.StripeObject.construct_from(
+            {'id': 'inv_123'}, key=None,
+        )
         mock_construct.return_value = mock_event
 
         result = self.provider.parse_webhook(b'payload', 'sig_header')
 
         assert result['type'] == 'invoice.paid'
+        assert isinstance(result['data'], dict)
+        assert result['data']['id'] == 'inv_123'
         mock_construct.assert_called_once_with(b'payload', 'sig_header', 'whsec_test_xxx')
 
     @patch('app.utils.stripe.stripe.Webhook.construct_event')

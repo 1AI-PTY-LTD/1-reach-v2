@@ -238,3 +238,25 @@ class TestStripeWebhookView:
 
         # Should still return 200 (don't retry unknown invoices)
         assert response.status_code == 200
+
+    @patch('app.utils.stripe.stripe.Webhook.construct_event')
+    def test_webhook_handles_stripe_object_data(self, mock_construct, webhook_client, org_with_invoice):
+        """Regression: parse_webhook converts StripeObject to plain dict."""
+        org, invoice = org_with_invoice
+        mock_event = Mock()
+        mock_event.type = 'invoice.paid'
+        mock_event.data.object = stripe.StripeObject.construct_from(
+            {'id': 'inv_test_123'}, key=None,
+        )
+        mock_construct.return_value = mock_event
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert response.status_code == 200
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_PAID
