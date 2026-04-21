@@ -1,9 +1,5 @@
 #!/bin/bash
 set -e
-
-export PYTHONDONTWRITEBYTECODE=1
-source /home/site/wwwroot/antenv/bin/activate
-
 export DB_POOL_MIN_SIZE=${DB_POOL_MIN_SIZE:-1}
 export DB_POOL_MAX_SIZE=${DB_POOL_MAX_SIZE:-4}
 
@@ -29,7 +25,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 django.setup()
 from django.db import connection
 connection.ensure_connection()
-" 2>&1 && echo "Database is ready." && break
+" 2>/dev/null && echo "Database is ready." && break
   echo "Database not ready (attempt $i/30), retrying in 5s..."
   sleep 5
 done
