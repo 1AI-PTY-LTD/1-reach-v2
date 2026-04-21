@@ -18,12 +18,12 @@ connection.ensure_connection()
   sleep 5
 done
 
-# Migrations are applied by the deploy workflow (replica-tested, then production).
-# This is a safety net in case the workflow was bypassed or a manual deploy was done.
-python manage.py migrate --check 2>/dev/null || {
-  echo "WARNING: Unapplied migrations detected. Running migrate..."
-  python manage.py showmigrations --plan | grep "\[ \]" || true
-  python manage.py migrate --no-input || { echo "Migration failed — aborting startup"; exit 1; }
+# Migrations are applied by the deploy workflow.
+# This is a non-blocking safety net — never delay app startup.
+timeout 30 python manage.py migrate --check 2>/dev/null || {
+  echo "WARNING: Unapplied migrations detected. Attempting migrate (30s timeout)..."
+  timeout 30 python manage.py showmigrations --plan 2>/dev/null | grep "\[ \]" || true
+  timeout 30 python manage.py migrate --no-input 2>&1 || echo "WARNING: Migration failed or timed out — continuing startup. Check CI migrate job."
 }
 gunicorn app.asgi:application \
   -k app.worker.Worker \
