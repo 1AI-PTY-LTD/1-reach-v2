@@ -185,9 +185,25 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Build virtualenv for Azure
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: |
+          python -m venv antenv
+          source antenv/bin/activate
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: Prepare venv for Azure App Service
+        working-directory: backend
+        run: |
+          # Azure App Service Python 3.12 lives at /usr/local/bin
+          sed -i "s|^home = .*|home = /usr/local/bin|" antenv/pyvenv.cfg
+          # Fix shebangs in bin scripts to use the venv python
+          sed -i "s|^#\!/.*python.*|#!/home/site/wwwroot/antenv/bin/python|" antenv/bin/*
+          # Create oryx-manifest.toml so Oryx skips the build
+          cat > oryx-manifest.toml <<'EOF'
+          PythonVersion="3.12"
+          VirtualEnvName="antenv"
+          EOF
 
       - name: Stamp deploy version
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
