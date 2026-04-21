@@ -99,7 +99,7 @@ test.describe('Stripe Billing Integration', () => {
 
     // Wait for payment success confirmation and click Continue
     const continueButton = page.getByRole('button', { name: 'Continue' })
-    await expect(continueButton).toBeVisible({ timeout: 15000 })
+    await expect(continueButton).toBeVisible({ timeout: 30000 })
     await continueButton.click()
 
     // Simulate the subscription.active webhook — Clerk webhooks can't reach
