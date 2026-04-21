@@ -135,7 +135,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Clean Docker-owned node_modules
-        run: docker run --rm -v ${{ github.workspace }}/frontend:/frontend node:20-bookworm-slim rm -rf /frontend/node_modules
+        run: |
+          docker compose stop frontend
+          docker run --rm -v ${{ github.workspace }}/frontend:/frontend node:20-bookworm-slim rm -rf /frontend/node_modules
 
       - name: Install frontend deps
         working-directory: frontend
@@ -143,7 +145,10 @@ jobs:
 
       - name: Install Playwright Chromium
         working-directory: frontend
-        run: ./node_modules/.bin/playwright install chromium --with-deps
+        run: npx playwright install chromium --with-deps
+
+      - name: Restart frontend for E2E
+        run: docker compose start frontend
 
       - name: Run E2E tests
         working-directory: frontend
@@ -151,7 +156,7 @@ jobs:
           # clerkSetup() reads CLERK_PUBLISHABLE_KEY (not VITE_CLERK_PUBLISHABLE_KEY)
           CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_VITE_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
-        run: ./node_modules/.bin/playwright test
+        run: npx playwright test
 
       - name: Dump backend logs
         if: failure()
