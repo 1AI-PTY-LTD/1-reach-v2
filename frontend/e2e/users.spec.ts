@@ -40,7 +40,7 @@ test.beforeAll(async ({ browser }) => {
 
   // Create admin user + org (Clerk auto-creates admin membership)
   const adminUser = await clerk.users.createUser({
-    emailAddress: [`admin-${ts}@test.1reach.com`],
+    emailAddress: [`admin-${ts}+clerk_test@test.1reach.com`],
     firstName: 'E2E',
     lastName: 'Admin',
     skipPasswordRequirement: true,
@@ -55,7 +55,7 @@ test.beforeAll(async ({ browser }) => {
 
   // Create member user + add to org
   const memberUser = await clerk.users.createUser({
-    emailAddress: [`member-${ts}@test.1reach.com`],
+    emailAddress: [`member-${ts}+clerk_test@test.1reach.com`],
     firstName: 'Member',
     lastName: 'User',
     skipPasswordRequirement: true,
@@ -69,7 +69,7 @@ test.beforeAll(async ({ browser }) => {
 
   // Create inactive user + add to org, then remove from org
   const inactiveUser = await clerk.users.createUser({
-    emailAddress: [`inactive-${ts}@test.1reach.com`],
+    emailAddress: [`inactive-${ts}+clerk_test@test.1reach.com`],
     firstName: 'Inactive',
     lastName: 'User',
     skipPasswordRequirement: true,
@@ -93,7 +93,7 @@ test.beforeAll(async ({ browser }) => {
       data: {
         id: adminUserId,
         primary_email_address_id: 'email_1',
-        email_addresses: [{ id: 'email_1', email_address: `admin-${ts}@test.1reach.com` }],
+        email_addresses: [{ id: 'email_1', email_address: `admin-${ts}+clerk_test@test.1reach.com` }],
         first_name: 'E2E', last_name: 'Admin',
       },
     }),
@@ -106,7 +106,7 @@ test.beforeAll(async ({ browser }) => {
       data: {
         id: memberUserId,
         primary_email_address_id: 'email_2',
-        email_addresses: [{ id: 'email_2', email_address: `member-${ts}@test.1reach.com` }],
+        email_addresses: [{ id: 'email_2', email_address: `member-${ts}+clerk_test@test.1reach.com` }],
         first_name: 'Member', last_name: 'User',
       },
     }),
@@ -115,7 +115,7 @@ test.beforeAll(async ({ browser }) => {
       data: {
         id: inactiveUserId,
         primary_email_address_id: 'email_3',
-        email_addresses: [{ id: 'email_3', email_address: `inactive-${ts}@test.1reach.com` }],
+        email_addresses: [{ id: 'email_3', email_address: `inactive-${ts}+clerk_test@test.1reach.com` }],
         first_name: 'Inactive', last_name: 'User',
       },
     }),
@@ -162,8 +162,8 @@ test.beforeAll(async ({ browser }) => {
   await expect(async () => {
     const users = await apiRequest(page, 'GET', '/api/users/?limit=50')
     const emails = (users.results ?? []).map((u: any) => u.email)
-    expect(emails).toContain(`member-${ts}@test.1reach.com`)
-    expect(emails).toContain(`inactive-${ts}@test.1reach.com`)
+    expect(emails).toContain(`member-${ts}+clerk_test@test.1reach.com`)
+    expect(emails).toContain(`inactive-${ts}+clerk_test@test.1reach.com`)
   }).toPass({ timeout: 15000, intervals: [1000] })
   await page.close()
 })
@@ -252,7 +252,7 @@ test.describe('Users Page', () => {
     await expect(page.getByText('Member User').first()).toBeVisible({ timeout: 10000 })
     await page.getByRole('button', { name: 'Invite User' }).click()
     await expect(page.getByPlaceholder('user@example.com')).toBeVisible({ timeout: 5000 })
-    await page.getByPlaceholder('user@example.com').fill(`invite-${ts}@test.1reach.com`)
+    await page.getByPlaceholder('user@example.com').fill(`invite-${ts}+clerk_test@test.1reach.com`)
     await page.getByRole('button', { name: 'Send Invite' }).click()
     // Success: dialog closes. Clerk API failure: error message appears in dialog.
     // Both outcomes are valid — Clerk may return 502 in CI environments.
