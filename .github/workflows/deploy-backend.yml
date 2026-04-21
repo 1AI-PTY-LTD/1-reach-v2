@@ -185,34 +185,33 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Build virtualenv for Azure
+      - name: Build virtualenv
         working-directory: backend
         run: |
           python -m venv antenv
           source antenv/bin/activate
           pip install --no-cache-dir -r requirements.txt
 
-      - name: Prepare venv for Azure App Service
+      - name: Collect static files
         working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: app.settings
+          DJANGO_SECRET_KEY: build-collectstatic-key
         run: |
-          # Azure App Service Python 3.12 lives at /usr/local/bin
-          sed -i "s|^home = .*|home = /usr/local/bin|" antenv/pyvenv.cfg
-          # Fix shebangs in bin scripts to use the venv python
-          sed -i "s|^#\!/.*python.*|#!/home/site/wwwroot/antenv/bin/python|" antenv/bin/*
-          # Create oryx-manifest.toml so Oryx skips the build
-          cat > oryx-manifest.toml <<'EOF'
-          PythonVersion="3.12"
-          VirtualEnvName="antenv"
-          EOF
+          source antenv/bin/activate
+          python manage.py collectstatic --no-input
 
       - name: Stamp deploy version
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
+
+      - name: Create deploy package
+        run: cd backend && zip -qr ../backend.zip . -x ".git/*" "__pycache__/*" "*.pyc" "tests/*"
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4
         with:
           name: backend
-          path: backend
+          path: backend.zip
           retention-days: 7
 
   deploy-api:
@@ -223,27 +222,28 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend
-          path: backend
 
       - name: Azure login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Disable Kudu build
+      - name: Enable Run From Package
         run: |
           az webapp config appsettings set \
             --name ${{ secrets.AZURE_BACKEND_APP_NAME }} \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --settings WEBSITE_RUN_FROM_PACKAGE=1 \
             --output none
 
-      - name: Deploy to Azure App Service — backend
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ secrets.AZURE_BACKEND_APP_NAME }}
-          publish-profile: ${{ secrets.AZURE_BACKEND_PUBLISH_PROFILE }}
-          package: backend
+      - name: Deploy zip package
+        run: |
+          az webapp deploy \
+            --name ${{ secrets.AZURE_BACKEND_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --src-path backend.zip \
+            --type zip \
+            --async true
 
   deploy-worker:
     needs: build
@@ -253,27 +253,28 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend
-          path: backend
 
       - name: Azure login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Disable Kudu build
+      - name: Enable Run From Package
         run: |
           az webapp config appsettings set \
             --name ${{ secrets.AZURE_WORKER_APP_NAME }} \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --settings WEBSITE_RUN_FROM_PACKAGE=1 \
             --output none
 
-      - name: Deploy to Azure App Service — celery-worker
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ secrets.AZURE_WORKER_APP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WORKER_PUBLISH_PROFILE }}
-          package: backend
+      - name: Deploy zip package
+        run: |
+          az webapp deploy \
+            --name ${{ secrets.AZURE_WORKER_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --src-path backend.zip \
+            --type zip \
+            --async true
 
       - name: Restart worker
         run: |
@@ -289,27 +290,28 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: backend
-          path: backend
 
       - name: Azure login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Disable Kudu build
+      - name: Enable Run From Package
         run: |
           az webapp config appsettings set \
             --name ${{ secrets.AZURE_BEAT_APP_NAME }} \
             --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
-            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            --settings WEBSITE_RUN_FROM_PACKAGE=1 \
             --output none
 
-      - name: Deploy to Azure App Service — celery-beat
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: ${{ secrets.AZURE_BEAT_APP_NAME }}
-          publish-profile: ${{ secrets.AZURE_BEAT_PUBLISH_PROFILE }}
-          package: backend
+      - name: Deploy zip package
+        run: |
+          az webapp deploy \
+            --name ${{ secrets.AZURE_BEAT_APP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
+            --src-path backend.zip \
+            --type zip \
+            --async true
 
       - name: Restart beat
         run: |
