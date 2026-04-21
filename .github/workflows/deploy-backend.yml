@@ -136,7 +136,7 @@ jobs:
           python manage.py migrate --no-input
 
       - name: Backup production DB
-        if: steps.check.outputs.pending == 'true'
+        if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true'
         run: |
           BACKUP_NAME="pre-deploy-$(date -u +%Y%m%d-%H%M%S)"
           echo "Creating production backup: $BACKUP_NAME"
