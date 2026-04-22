@@ -32,6 +32,6 @@ done
 
 trap 'echo "$(date -u +%Y-%m-%dT%H:%M:%S) worker received SIGTERM, shutting down..."' TERM
 
-celery -A app.celery worker --loglevel=info -Q default,messages --concurrency=2 &
+python -m celery -A app.celery worker --loglevel=info -Q default,messages --concurrency=2 &
 WORKER_PID=$!
 wait $WORKER_PID

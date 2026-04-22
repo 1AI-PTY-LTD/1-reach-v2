@@ -24,7 +24,7 @@ python manage.py migrate --check 2>/dev/null || {
 }
 # collectstatic runs during Oryx build; no need to repeat at startup
 # python manage.py collectstatic --no-input
-gunicorn app.asgi:application \
+python -m gunicorn app.asgi:application \
   -k app.worker.Worker \
   --bind 0.0.0.0:8000 \
   --workers 2 \
