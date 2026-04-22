@@ -516,13 +516,11 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
     serializer_class = ScheduleSerializer
     filterset_class = GroupScheduleFilter
 
+    queryset = Schedule.objects.all()
+
     def get_queryset(self):
-        # Only return parent-level group schedules for this org
-        org_id = getattr(self.request, 'org_id', None)
-        if not org_id:
-            return Schedule.objects.none()
-        return Schedule.objects.filter(
-            organisation__clerk_org_id=org_id,
+        # TenantScopedMixin handles org scoping; add group schedule filters on top
+        return super().get_queryset().filter(
             parent__isnull=True,
             group__isnull=False,
         )
@@ -1071,15 +1069,14 @@ class SMSViewSet(viewsets.ViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class BillingViewSet(viewsets.GenericViewSet):
+class BillingViewSet(TenantScopedMixin, viewsets.GenericViewSet):
     """GET /api/billing/summary/ — billing summary and transaction history (admin only)."""
     permission_classes = [IsAuthenticated, IsOrgAdmin]
     serializer_class = CreditTransactionSerializer
+    queryset = CreditTransaction.objects.all()
 
     def get_queryset(self):
-        return CreditTransaction.objects.filter(
-            organisation=self.request.org
-        ).order_by('-created_at')
+        return super().get_queryset().order_by('-created_at')
 
     @action(detail=False, methods=['get'])
     def summary(self, request):
