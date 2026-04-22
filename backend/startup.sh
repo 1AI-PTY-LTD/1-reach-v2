@@ -22,7 +22,8 @@ python manage.py migrate --check 2>/dev/null || {
   python manage.py showmigrations --plan | grep "\[ \]" || true
   python manage.py migrate --no-input || { echo "Migration failed — aborting startup"; exit 1; }
 }
-python manage.py collectstatic --no-input
+# collectstatic runs during Oryx build; no need to repeat at startup
+# python manage.py collectstatic --no-input
 gunicorn app.asgi:application \
   -k app.worker.Worker \
   --bind 0.0.0.0:8000 \

@@ -11,7 +11,7 @@ jobs:
   # TODO (az CLI 2.86.0, May 2026): update deprecated postgres flexible-server args:
   #   firewall-rule: --name (server) → --server-name, --rule-name (rule) → --name
   #   backup create: --name (server) → --server-name, --backup-name → --name
-  migrate:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +23,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install uv && uv sync
 
       - name: Azure login
         uses: azure/login@v2
@@ -56,7 +56,7 @@ jobs:
           POSTGRES_PORT: "5432"
         run: |
           # First verify we can connect to the database
-          python -c "
+          uv run python -c "
           import django, os
           os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
           django.setup()
@@ -65,12 +65,12 @@ jobs:
           print('Database connection OK')
           " || { echo "::error::Cannot connect to production database. Check AZURE_POSTGRES_HOST secret."; exit 1; }
 
-          if python manage.py migrate --check; then
+          if uv run python manage.py migrate --check; then
             echo "No pending migrations — skipping replica test."
             echo "pending=false" >> "$GITHUB_OUTPUT"
           else
             echo "Pending migrations detected:"
-            python manage.py showmigrations --plan | grep "\[ \]" || true
+            uv run python manage.py showmigrations --plan | grep "\[ \]" || true
             echo "pending=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -131,9 +131,9 @@ jobs:
           POSTGRES_PORT: "5432"
         run: |
           echo "Pending migrations:"
-          python manage.py showmigrations --plan | grep "\[ \]" || echo "  (none)"
+          uv run python manage.py showmigrations --plan | grep "\[ \]" || echo "  (none)"
           echo "Running test migration on replica..."
-          python manage.py migrate --no-input
+          uv run python manage.py migrate --no-input
 
       - name: Backup production DB
         if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true'
@@ -157,7 +157,7 @@ jobs:
           POSTGRES_USER: ${{ secrets.AZURE_POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.AZURE_POSTGRES_PASSWORD }}
           POSTGRES_PORT: "5432"
-        run: python manage.py migrate --no-input
+        run: uv run python manage.py migrate --no-input
 
       - name: Delete replica
         if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true' && always()
@@ -174,23 +174,11 @@ jobs:
             --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
             --rule-name github-runner --yes 2>/dev/null || true
 
-  build:
-    needs: migrate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        working-directory: backend
-        run: pip install -r requirements.txt
-
       - name: Stamp deploy version
         run: sed -i "s/DEPLOY_SHA = 'dev'/DEPLOY_SHA = '${{ github.sha }}'/" backend/app/health.py
+
+      - name: Remove CI venv from artifact
+        run: rm -rf backend/.venv
 
       - name: Upload backend artifact
         uses: actions/upload-artifact@v4

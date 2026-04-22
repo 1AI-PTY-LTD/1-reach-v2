@@ -1,0 +1,34 @@
+[project]
+name = "1reach"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "Django",
+    "djangorestframework",
+    "django-filter",
+    "django-cors-headers",
+    "drf-spectacular",
+    "pylint-django",
+    "python-dotenv",
+    "sentry-sdk[django,celery]",
+    "psycopg[binary]>=3.1.18",
+    "PyJWT[crypto]",
+    "svix",
+    "requests",
+    "clerk-backend-api",
+    "azure-storage-blob==12.19.0",
+    "celery[redis]>=5.3",
+    "stripe>=8.0",
+    "redis>=5.0",
+    "gunicorn",
+    "uvicorn[standard]",
+    "whitenoise[brotli]",
+    "django-celery-beat",
+    "pytest==7.4.3",
+    "pytest-django==4.7.0",
+    "pytest-cov==4.1.0",
+    "factory-boy==3.3.0",
+    "freezegun==1.5.1",
+    "responses==0.24.1",
+    "pytest-xdist==3.5.0",
+]
