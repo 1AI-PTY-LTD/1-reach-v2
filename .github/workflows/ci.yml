@@ -108,7 +108,7 @@ jobs:
         run: docker compose up -d db redis backend frontend --wait --wait-timeout 180
 
       - name: Run migrations
-        run: docker compose exec -T backend python manage.py migrate --noinput
+        run: docker compose exec -T backend uv run python manage.py migrate --noinput
 
       - name: Wait for backend health
         run: |
