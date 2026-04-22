@@ -18,7 +18,7 @@ services:
   backend:
     image: python:latest
     working_dir: /app
-    command: sh -c "pip install uv -q && uv sync && python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
+    command: sh -c "pip install uv -q && uv sync && uv run python manage.py migrate --noinput && uv run python manage.py runserver 0.0.0.0:8000"
     volumes:
       - ./backend:/app
     ports:
@@ -52,7 +52,7 @@ services:
   celery_worker:
     image: python:latest
     working_dir: /app
-    command: sh -c "pip install uv -q && uv sync && celery -A app.celery worker --loglevel=INFO --concurrency=4 -Q default,messages"
+    command: sh -c "pip install uv -q && uv sync && uv run celery -A app.celery worker --loglevel=INFO --concurrency=4 -Q default,messages"
     volumes:
       - ./backend:/app
     env_file:
@@ -69,7 +69,7 @@ services:
   celery_beat:
     image: python:latest
     working_dir: /app
-    command: sh -c "pip install uv -q && uv sync && celery -A app.celery beat --loglevel=INFO"
+    command: sh -c "pip install uv -q && uv sync && uv run celery -A app.celery beat --loglevel=INFO"
     volumes:
       - ./backend:/app
     env_file:
