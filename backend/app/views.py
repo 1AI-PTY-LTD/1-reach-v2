@@ -11,6 +11,7 @@ import json
 from clerk_backend_api import Clerk
 from django.conf import settings
 from django.db import transaction
+from django.http import HttpResponse
 from django.db.models import Count, OuterRef, Subquery, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
@@ -30,7 +31,7 @@ from app.models import *
 from app.permissions import IsOrgAdmin, IsOrgMember
 from app.serializers import *
 from app.utils import clerk
-from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate
+from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate, get_current_month_preview
 from app.utils.metered_billing import get_billing_provider
 from app.utils.storage import get_storage_provider
 from app.celery import _estimate_parts, generate_monthly_invoices, process_delivery_event, send_batch_message as send_batch_message_task, send_message as send_message_task
@@ -1127,11 +1128,19 @@ class BillingViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['patch'], url_path='test-set-balance')
     def test_set_balance(self, request):
-        """PATCH /api/billing/test-set-balance/ — set org credit balance directly (TEST mode only)."""
+        """PATCH /api/billing/test-set-balance/ — set org credit balance (and optionally
+        billing_customer_id) directly (TEST mode only)."""
         if not settings.TEST:
             return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
-        request.org.credit_balance = Decimal(str(request.data['balance']))
-        request.org.save(update_fields=['credit_balance'])
+        update_fields = []
+        if 'balance' in request.data:
+            request.org.credit_balance = Decimal(str(request.data['balance']))
+            update_fields.append('credit_balance')
+        if 'billing_customer_id' in request.data:
+            request.org.billing_customer_id = request.data['billing_customer_id']
+            update_fields.append('billing_customer_id')
+        if update_fields:
+            request.org.save(update_fields=update_fields)
         return Response({'credit_balance': str(request.org.credit_balance)})
 
     @action(detail=False, methods=['post'], url_path='test-seed-usage')
@@ -1165,6 +1174,29 @@ class BillingViewSet(viewsets.GenericViewSet):
         result = generate_monthly_invoices()
         return Response(result)
 
+    @action(detail=False, methods=['post'], url_path='test-create-invoice')
+    def test_create_invoice(self, request):
+        """POST /api/billing/test-create-invoice/ — create an Invoice record directly (TEST mode only).
+
+        Bypasses the billing provider entirely. Used in E2E tests when the real
+        Stripe provider would reject a mock customer ID.
+
+        Body: { "amount": "3.50", "period_start": "2026-03-01T00:00:00+10:30",
+                "period_end": "2026-04-01T00:00:00+10:30" }
+        """
+        if not settings.TEST:
+            return Response({'detail': 'Not available.'}, status=status.HTTP_403_FORBIDDEN)
+        inv = Invoice.objects.create(
+            organisation=request.org,
+            provider_invoice_id=f'mock_inv_{request.org.pk}_{Invoice.objects.filter(organisation=request.org).count() + 1}',
+            status=Invoice.STATUS_OPEN,
+            amount=Decimal(str(request.data.get('amount', '3.50'))),
+            invoice_url=f'https://mock-billing.example.com/invoices/mock_inv_{request.org.pk}',
+            period_start=request.data['period_start'],
+            period_end=request.data['period_end'],
+        )
+        return Response(InvoiceSerializer(inv).data, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=['post'], url_path='test-link-billing-customer')
     def test_link_billing_customer(self, request):
         """POST /api/billing/test-link-billing-customer/ — trigger Stripe customer lookup (TEST mode only).
@@ -1184,3 +1216,69 @@ class BillingViewSet(viewsets.GenericViewSet):
             Organisation.objects.filter(pk=org.pk).update(billing_customer_id=result.customer_id)
             return Response({'billing_customer_id': result.customer_id, 'already_linked': False})
         return Response({'error': result.error}, status=404)
+
+    @action(detail=False, methods=['get'])
+    def invoices(self, request):
+        """GET /api/billing/invoices/ — paginated list of all invoices for this org."""
+        qs = Invoice.objects.filter(
+            organisation=request.org,
+        ).order_by('-period_start')
+        page = self.paginate_queryset(qs)
+        data = InvoiceSerializer(page, many=True).data
+        return self.get_paginated_response(data)
+
+    @action(detail=False, methods=['get'], url_path='invoice-preview')
+    def invoice_preview(self, request):
+        """GET /api/billing/invoice-preview/ — current month usage preview."""
+        return Response(get_current_month_preview(request.org))
+
+    @action(detail=False, methods=['post'], url_path='invoice-download')
+    def invoice_download(self, request):
+        """POST /api/billing/invoice-download/ — download invoice PDFs.
+
+        Body: { "invoice_ids": [1, 2, 3] }
+        Single invoice returns application/pdf; multiple returns application/zip.
+        """
+        import zipfile
+
+        invoice_ids = request.data.get('invoice_ids', [])
+        if not invoice_ids:
+            return Response({'detail': 'invoice_ids is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoices = Invoice.objects.filter(
+            organisation=request.org,
+            pk__in=invoice_ids,
+        )
+        if not invoices.exists():
+            return Response({'detail': 'No invoices found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        provider = get_billing_provider()
+        results = []
+        for inv in invoices:
+            result = provider.get_invoice_pdf(inv.provider_invoice_id)
+            if result.success and result.content:
+                period_label = inv.period_start.strftime('%Y-%m')
+                results.append((f'invoice-{period_label}.pdf', result.content))
+
+        if not results:
+            return Response(
+                {'detail': 'Could not fetch any invoice PDFs.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if len(results) == 1:
+            filename, content = results[0]
+            response = HttpResponse(content, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            return response
+
+        # Multiple invoices — bundle into a zip
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for filename, content in results:
+                zf.writestr(filename, content)
+        buffer.seek(0)
+
+        response = HttpResponse(buffer.getvalue(), content_type='application/zip')
+        response['Content-Disposition'] = 'attachment; filename="invoices.zip"'
+        return response

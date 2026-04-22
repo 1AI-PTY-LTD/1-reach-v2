@@ -48,6 +48,15 @@ class InvoiceResult:
 
 
 @dataclass
+class PdfResult:
+    """Result of fetching an invoice PDF."""
+    success: bool
+    content: bytes | None = None
+    filename: str | None = None
+    error: str | None = None
+
+
+@dataclass
 class CustomerResult:
     """Result of a customer lookup or creation."""
     success: bool
@@ -111,6 +120,15 @@ class MeteredBillingProvider(ABC):
     def void_invoice(self, invoice_id: str) -> InvoiceResult:
         """Void/cancel an unpaid invoice."""
 
+    @abstractmethod
+    def get_invoice_pdf(self, invoice_id: str) -> PdfResult:
+        """Fetch the raw PDF bytes for an invoice.
+
+        Returns PdfResult with content (bytes) and filename on success.
+        Concrete implementations handle fetching from whatever backing store
+        the provider uses (e.g. Stripe hosted PDF, Azure blob, etc.).
+        """
+
     def parse_webhook(self, payload: bytes, signature: str) -> dict:
         """Parse and verify a webhook payload. Override per provider."""
         raise NotImplementedError
@@ -171,6 +189,21 @@ class MockMeteredBillingProvider(MeteredBillingProvider):
             success=True,
             invoice_id=invoice_id,
             status='void',
+        )
+
+    def get_invoice_pdf(self, invoice_id: str) -> PdfResult:
+        logger.info('MockMeteredBillingProvider.get_invoice_pdf(%s)', invoice_id)
+        # Minimal valid PDF for testing
+        pdf_content = (
+            b'%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n'
+            b'2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n'
+            b'3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n'
+            b'xref\n0 4\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF'
+        )
+        return PdfResult(
+            success=True,
+            content=pdf_content,
+            filename=f'invoice-{invoice_id}.pdf',
         )
 
 

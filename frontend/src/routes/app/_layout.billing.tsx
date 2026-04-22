@@ -6,6 +6,7 @@ import { dark } from '@clerk/themes'
 import { Suspense, useRef, useState } from 'react'
 import { usePrefersDark } from '../../hooks/usePrefersDark'
 import { Badge } from '../../ui/badge'
+import { Button } from '../../ui/button'
 import { Dialog, DialogTitle, DialogBody } from '../../ui/dialog'
 import {
   Table,
@@ -21,6 +22,7 @@ import { getBillingTransactionsInfiniteOptions } from '../../api/billingApi'
 import type { TransactionType } from '../../types/billing.types'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll'
+import { InvoicesModal } from '../../components/billing/InvoicesModal'
 
 export const Route = createFileRoute('/app/_layout/billing')({
   component: RouteComponent,
@@ -71,6 +73,7 @@ function BillingContent() {
         },
       }
   const [planDialogOpen, setPlanDialogOpen] = useState(false)
+  const [invoicesOpen, setInvoicesOpen] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const billingQuery = useInfiniteQuery(getBillingTransactionsInfiniteOptions(client, 50))
@@ -190,10 +193,15 @@ function BillingContent() {
         )}
       </div>
 
-      {/* Latest Invoice */}
-      {data.latest_invoice && (
-        <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
-          <h3 className="text-base font-semibold text-zinc-900 dark:text-white mb-3">Latest Invoice</h3>
+      {/* Latest Invoice + All Invoices button */}
+      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-base font-semibold text-zinc-900 dark:text-white">Invoices</h3>
+          <Button plain onClick={() => setInvoicesOpen(true)}>
+            All Invoices &rarr;
+          </Button>
+        </div>
+        {data.latest_invoice ? (
           <div className="flex items-center gap-4">
             <Badge
               color={
@@ -222,12 +230,14 @@ function BillingContent() {
                 rel="noopener noreferrer"
                 className="ml-auto text-sm font-medium text-brand-purple hover:underline"
               >
-                View invoice →
+                View invoice &rarr;
               </a>
             )}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="text-sm text-zinc-400 dark:text-zinc-500">No invoices yet.</p>
+        )}
+      </div>
 
       {/* Transaction history */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6 flex-1 min-h-0 flex flex-col">
@@ -288,6 +298,8 @@ function BillingContent() {
           </div>
         )}
       </div>
+
+      <InvoicesModal open={invoicesOpen} onClose={() => setInvoicesOpen(false)} billingMode={data.billing_mode} />
 
       <Dialog open={planDialogOpen} onClose={() => setPlanDialogOpen(false)} size="2xl">
         <DialogTitle>Manage Plan</DialogTitle>

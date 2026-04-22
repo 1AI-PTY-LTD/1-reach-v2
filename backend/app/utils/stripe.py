@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 
+import requests as http_requests
 import stripe
 from django.conf import settings
 from rest_framework.request import Request
@@ -21,6 +22,7 @@ from app.utils.metered_billing import (
     InvoiceLineItem,
     InvoiceResult,
     MeteredBillingProvider,
+    PdfResult,
     get_billing_provider,
 )
 
@@ -145,6 +147,35 @@ class StripeMeteredBillingProvider(MeteredBillingProvider):
                 invoice_id, str(e), exc_info=True,
             )
             return InvoiceResult(success=False, error=str(e))
+
+    def get_invoice_pdf(self, invoice_id: str) -> PdfResult:
+        """Fetch a fresh PDF URL from Stripe and download the PDF bytes."""
+        try:
+            invoice = stripe.Invoice.retrieve(invoice_id)
+            pdf_url = invoice.invoice_pdf
+            if not pdf_url:
+                return PdfResult(success=False, error=f'No PDF available for invoice {invoice_id}')
+
+            response = http_requests.get(pdf_url, timeout=30)
+            response.raise_for_status()
+
+            return PdfResult(
+                success=True,
+                content=response.content,
+                filename=f'invoice-{invoice_id}.pdf',
+            )
+        except stripe.StripeError as e:
+            logger.warning(
+                'Failed to retrieve Stripe invoice %s for PDF: %s',
+                invoice_id, str(e), exc_info=True,
+            )
+            return PdfResult(success=False, error=str(e))
+        except http_requests.RequestException as e:
+            logger.warning(
+                'Failed to download PDF for Stripe invoice %s: %s',
+                invoice_id, str(e), exc_info=True,
+            )
+            return PdfResult(success=False, error=str(e))
 
     def parse_webhook(self, payload: bytes, signature: str) -> dict:
         """Parse and verify a Stripe webhook payload."""

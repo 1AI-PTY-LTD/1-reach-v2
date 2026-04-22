@@ -291,3 +291,13 @@ class CreditTransactionSerializer(serializers.ModelSerializer):
             'description', 'format', 'created_by', 'created_at', 'schedule',
         ]
         read_only_fields = fields
+
+
+class InvoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Invoice
+        fields = [
+            'id', 'provider_invoice_id', 'status', 'amount',
+            'invoice_url', 'period_start', 'period_end', 'created_at',
+        ]
+        read_only_fields = fields

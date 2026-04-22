@@ -58,6 +58,7 @@ vi.mock('../../ui/dialog', () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? <div data-testid="plan-dialog">{children}</div> : null,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
   DialogBody: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogActions: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
 import { useSuspenseQuery } from '@tanstack/react-query'

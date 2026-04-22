@@ -151,8 +151,8 @@ test.describe('Stripe Billing Integration', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    // The latest invoice section should be visible
-    await expect(page.getByText('Latest Invoice').first()).toBeVisible({ timeout: 10000 })
+    // The invoices section should be visible
+    await expect(page.getByText('Invoices').first()).toBeVisible({ timeout: 10000 })
 
     // Invoice should have a status badge
     await expect(
@@ -160,7 +160,7 @@ test.describe('Stripe Billing Integration', () => {
     ).toBeVisible()
 
     // View invoice link should point to Stripe
-    const invoiceLink = page.getByRole('link', { name: /View invoice/i })
+    const invoiceLink = page.getByRole('link', { name: /View invoice|View →/i })
     await expect(invoiceLink).toBeVisible()
     const href = await invoiceLink.getAttribute('href')
     expect(href).toContain('stripe.com')
@@ -174,6 +174,69 @@ test.describe('Stripe Billing Integration', () => {
     expect(summary.latest_invoice.invoice_url).toContain('stripe.com')
     expect(summary.latest_invoice.period_start).toBeTruthy()
     expect(summary.latest_invoice.period_end).toBeTruthy()
+  })
+
+  test('invoices modal shows Stripe invoice with correct data', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+
+    // Open the invoices modal
+    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
+
+    // Invoice table should have at least one row
+    const tableRows = page.locator('table').last().locator('tbody tr')
+    await expect(tableRows.first()).toBeVisible({ timeout: 5000 })
+
+    // Row should contain a status badge (open or paid)
+    await expect(
+      tableRows.first().getByText(/open|paid/i).first()
+    ).toBeVisible()
+
+    // Row should contain a dollar amount > $0
+    const amountCell = tableRows.first().locator('td').nth(3)
+    const amountText = await amountCell.textContent()
+    const amount = parseFloat(amountText!.replace('$', ''))
+    expect(amount).toBeGreaterThan(0)
+
+    // View link should point to Stripe
+    const viewLink = tableRows.first().getByRole('link', { name: /View/i })
+    await expect(viewLink).toBeVisible()
+    const href = await viewLink.getAttribute('href')
+    expect(href).toContain('stripe.com')
+  })
+
+  test('download Stripe invoice PDF via modal', async ({ page }) => {
+    test.setTimeout(30000) // Stripe PDF fetch can be slow
+    await page.goto('/app/billing')
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+
+    // Open invoices modal
+    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
+
+    // Wait for table to load
+    const tableRows = page.locator('table').last().locator('tbody tr')
+    await expect(tableRows.first()).toBeVisible({ timeout: 5000 })
+
+    // Select the first invoice
+    const firstRowCheckbox = tableRows.first().getByRole('checkbox')
+    await firstRowCheckbox.click()
+
+    // Click download — expect a real PDF from Stripe
+    const downloadPromise = page.waitForEvent('download', { timeout: 20000 })
+    await page.getByRole('button', { name: /Download selected/i }).click()
+    const download = await downloadPromise
+
+    // Verify it's a PDF file
+    expect(download.suggestedFilename()).toMatch(/\.pdf$/)
+
+    // Read the downloaded file and verify it's a real PDF
+    const filePath = await download.path()
+    expect(filePath).toBeTruthy()
+    const buffer = fs.readFileSync(filePath!)
+    expect(buffer.length).toBeGreaterThan(100)
+    expect(buffer.subarray(0, 5).toString()).toBe('%PDF-')
   })
 
   test('cancel subscription via PricingTable', async ({ page }) => {

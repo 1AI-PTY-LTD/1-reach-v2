@@ -16,8 +16,9 @@ from unittest.mock import patch
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from app.models import Organisation, User, OrganisationMembership
+from app.models import Invoice, Organisation, User, OrganisationMembership
 from app.utils.billing import grant_credits, record_usage
+from app.utils.metered_billing import PdfResult
 from tests.factories import ConfigFactory, OrganisationFactory, UserFactory
 
 
@@ -234,3 +235,219 @@ class TestBillingSummaryMultiTenancy:
 
         assert response.data['pagination']['total'] == 1
         assert response.data['results'][0]['amount'] == '5.00'
+
+
+@pytest.mark.django_db
+class TestInvoicesList:
+    """Tests for GET /api/billing/invoices/."""
+
+    def setup_method(self):
+        self._original_dispatch = None
+
+    def teardown_method(self):
+        if self._original_dispatch:
+            from rest_framework.views import APIView
+            APIView.dispatch = self._original_dispatch
+
+    def _get_admin_response(self, user, organisation, path='/api/billing/invoices/'):
+        from rest_framework.views import APIView
+        client, original_dispatch = make_admin_client(user, organisation)
+        self._original_dispatch = original_dispatch
+        return client.get(path)
+
+    def test_empty_list(self, user, organisation, org_membership):
+        response = self._get_admin_response(user, organisation)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['results'] == []
+        assert response.data['pagination']['total'] == 0
+
+    def test_returns_invoices(self, user, organisation, org_membership):
+        Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_test1',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('5.00'),
+            invoice_url='https://example.com/inv1',
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+        Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_test2',
+            status=Invoice.STATUS_OPEN,
+            amount=Decimal('3.00'),
+            period_start='2026-04-01T00:00:00+10:30',
+            period_end='2026-05-01T00:00:00+10:30',
+        )
+
+        response = self._get_admin_response(user, organisation)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 2
+        # Ordered by -period_start, so April invoice first
+        assert response.data['results'][0]['provider_invoice_id'] == 'inv_test2'
+        assert response.data['results'][1]['provider_invoice_id'] == 'inv_test1'
+
+    def test_excludes_other_org_invoices(self, user, organisation, org_membership):
+        other_org = OrganisationFactory()
+        Invoice.objects.create(
+            organisation=other_org,
+            provider_invoice_id='inv_other',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('10.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+
+        response = self._get_admin_response(user, organisation)
+
+        assert response.data['pagination']['total'] == 0
+
+
+@pytest.mark.django_db
+class TestInvoicePreview:
+    """Tests for GET /api/billing/invoice-preview/."""
+
+    def setup_method(self):
+        self._original_dispatch = None
+
+    def teardown_method(self):
+        if self._original_dispatch:
+            from rest_framework.views import APIView
+            APIView.dispatch = self._original_dispatch
+
+    def test_empty_preview(self, user, organisation, org_membership):
+        from rest_framework.views import APIView
+        client, original_dispatch = make_admin_client(user, organisation)
+        self._original_dispatch = original_dispatch
+
+        response = client.get('/api/billing/invoice-preview/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['total'] == '0'
+        assert response.data['line_items'] == []
+
+    def test_preview_with_usage(self, user, organisation, org_membership):
+        organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
+        organisation.save()
+        record_usage(organisation, 2, 'sms', 'test SMS', user)
+
+        from rest_framework.views import APIView
+        client, original_dispatch = make_admin_client(user, organisation)
+        self._original_dispatch = original_dispatch
+
+        response = client.get('/api/billing/invoice-preview/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['total'] == '0.10'
+        assert len(response.data['line_items']) == 1
+        assert response.data['line_items'][0]['quantity'] == 2
+
+
+@pytest.mark.django_db
+class TestInvoiceDownload:
+    """Tests for POST /api/billing/invoice-download/."""
+
+    def setup_method(self):
+        self._original_dispatch = None
+
+    def teardown_method(self):
+        if self._original_dispatch:
+            from rest_framework.views import APIView
+            APIView.dispatch = self._original_dispatch
+
+    def _post_admin(self, user, organisation, data):
+        from rest_framework.views import APIView
+        client, original_dispatch = make_admin_client(user, organisation)
+        self._original_dispatch = original_dispatch
+        return client.post('/api/billing/invoice-download/', data, format='json')
+
+    def test_empty_ids_returns_400(self, user, organisation, org_membership):
+        response = self._post_admin(user, organisation, {'invoice_ids': []})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_nonexistent_ids_returns_404(self, user, organisation, org_membership):
+        response = self._post_admin(user, organisation, {'invoice_ids': [9999]})
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @patch('app.views.get_billing_provider')
+    def test_single_pdf_download(self, mock_get_provider, user, organisation, org_membership):
+        invoice = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_dl1',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('5.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+
+        mock_provider = mock_get_provider.return_value
+        mock_provider.get_invoice_pdf.return_value = PdfResult(
+            success=True,
+            content=b'%PDF-1.4 test',
+            filename='invoice-inv_dl1.pdf',
+        )
+
+        response = self._post_admin(user, organisation, {'invoice_ids': [invoice.pk]})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response['Content-Type'] == 'application/pdf'
+        assert 'attachment; filename=' in response['Content-Disposition']
+        assert response['Content-Disposition'].endswith('.pdf"')
+
+    @patch('app.views.get_billing_provider')
+    def test_multiple_pdf_download_returns_zip(self, mock_get_provider, user, organisation, org_membership):
+        inv1 = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_z1',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('5.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+        inv2 = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_z2',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('3.00'),
+            period_start='2026-04-01T00:00:00+10:30',
+            period_end='2026-05-01T00:00:00+10:30',
+        )
+
+        mock_provider = mock_get_provider.return_value
+        mock_provider.get_invoice_pdf.return_value = PdfResult(
+            success=True,
+            content=b'%PDF-1.4 test',
+            filename='invoice.pdf',
+        )
+
+        response = self._post_admin(user, organisation, {
+            'invoice_ids': [inv1.pk, inv2.pk],
+        })
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response['Content-Type'] == 'application/zip'
+        assert 'invoices.zip' in response['Content-Disposition']
+
+    @patch('app.views.get_billing_provider')
+    def test_all_pdfs_fail_returns_404(self, mock_get_provider, user, organisation, org_membership):
+        invoice = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_fail',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('5.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+
+        mock_provider = mock_get_provider.return_value
+        mock_provider.get_invoice_pdf.return_value = PdfResult(
+            success=False, error='Stripe error',
+        )
+
+        response = self._post_admin(user, organisation, {'invoice_ids': [invoice.pk]})
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
