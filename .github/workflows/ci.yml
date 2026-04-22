@@ -41,7 +41,7 @@ jobs:
       - name: Run backend tests
         run: |
           docker compose up -d redis
-          docker compose run --rm backend sh -c "pip install uv -q && uv sync -q && python -m pytest tests/ -q"
+          docker compose run --rm backend sh -c "pip install uv -q && uv sync -q && uv run python -m pytest tests/ -q"
 
   frontend:
     runs-on: ubuntu-latest
@@ -108,7 +108,7 @@ jobs:
         run: docker compose up -d db redis backend frontend --wait --wait-timeout 180
 
       - name: Run migrations
-        run: docker compose exec -T backend python manage.py migrate --noinput
+        run: docker compose exec -T backend uv run python manage.py migrate --noinput
 
       - name: Wait for backend health
         run: |

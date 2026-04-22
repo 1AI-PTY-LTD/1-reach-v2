@@ -28,6 +28,43 @@ export type LatestInvoice = {
   period_end: string
 }
 
+export type Invoice = {
+  id: number
+  provider_invoice_id: string
+  status: InvoiceStatus
+  amount: string
+  invoice_url: string | null
+  period_start: string
+  period_end: string
+  created_at: string
+}
+
+export type InvoiceListResponse = {
+  results: Invoice[]
+  pagination: {
+    total: number
+    page: number
+    limit: number
+    totalPages: number
+    hasNext: boolean
+    hasPrev: boolean
+  }
+}
+
+export type InvoicePreviewLineItem = {
+  format: string
+  quantity: number
+  rate: string
+  amount: string
+}
+
+export type InvoicePreviewResponse = {
+  total: string
+  period_start: string
+  period_end: string
+  line_items: InvoicePreviewLineItem[]
+}
+
 export type BillingSummaryResponse = {
   billing_mode: BillingMode
   balance: string

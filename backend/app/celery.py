@@ -32,7 +32,6 @@ import random
 from datetime import timedelta
 from datetime import datetime as dt
 import zoneinfo
-from decimal import Decimal
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
@@ -41,7 +40,7 @@ from celery import Celery, shared_task
 from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
 from django.db import OperationalError, transaction
-from django.db.models import Exists, OuterRef, Q, Sum
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.db import connections
@@ -51,10 +50,10 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 django.setup()
 
 from app.utils.storage import StorageProvider, get_storage_provider
-from app.models import Invoice, MessageFormat, Organisation, Schedule, ScheduleStatus, CreditTransaction
-from app.utils.billing import record_usage, refund_usage, get_rate
+from app.models import Invoice, MessageFormat, Organisation, Schedule, ScheduleStatus
+from app.utils.billing import record_usage, refund_usage, build_line_items
 from app.utils.failure_classifier import classify_failure
-from app.utils.metered_billing import get_billing_provider, InvoiceLineItem
+from app.utils.metered_billing import get_billing_provider
 from app.utils.sms import SendResult, get_sms_provider
 
 logger = logging.getLogger(__name__)
@@ -893,7 +892,7 @@ def generate_monthly_invoices() -> dict:
             skipped += 1
             continue
 
-        line_items = _build_line_items(org, period_start, period_end, CreditTransaction, get_rate)
+        line_items = build_line_items(org, period_start, period_end)
 
         if not line_items:
             skipped += 1
@@ -955,48 +954,3 @@ def _previous_month_boundaries(tz) -> tuple:
     return period_start, period_end
 
 
-def _build_line_items(org, period_start, period_end, CreditTransaction, get_rate):
-    """Aggregate CreditTransaction records into invoice line items.
-
-    Groups by format, nets usage minus refunds. Returns a list of
-    InvoiceLineItem dataclasses, or an empty list if net usage is zero.
-    """
-    # Get usage transactions for the period
-    usage_qs = CreditTransaction.objects.filter(
-        organisation=org,
-        created_at__gte=period_start,
-        created_at__lt=period_end,
-        transaction_type__in=[CreditTransaction.USAGE, CreditTransaction.REFUND],
-        format__isnull=False,
-    )
-
-    # Group by format and calculate net amounts
-    formats = usage_qs.values_list('format', flat=True).distinct()
-    line_items = []
-
-    for fmt in formats:
-        usage_total = usage_qs.filter(
-            format=fmt,
-            transaction_type=CreditTransaction.USAGE,
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
-        refund_total = usage_qs.filter(
-            format=fmt,
-            transaction_type=CreditTransaction.REFUND,
-        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-
-        net_amount = usage_total - refund_total
-        if net_amount <= 0:
-            continue
-
-        rate = get_rate(fmt)
-        quantity = int(net_amount / rate) if rate > 0 else 0
-
-        line_items.append(InvoiceLineItem(
-            description=f'{fmt.upper()} usage: {quantity} messages @ ${rate}',
-            amount=net_amount,
-            quantity=quantity,
-            unit_amount=rate,
-        ))
-
-    return line_items

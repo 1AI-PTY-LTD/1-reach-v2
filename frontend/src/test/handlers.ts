@@ -9,6 +9,8 @@ import {
   createSummaryData,
   createUser,
   createBillingSummary,
+  createInvoiceListResponse,
+  createInvoicePreview,
   paginate,
 } from './factories'
 
@@ -282,6 +284,23 @@ export const handlers = [
   // Billing
   http.get(`${BASE_URL}/api/billing/summary/`, () => {
     return HttpResponse.json(createBillingSummary())
+  }),
+
+  http.get(`${BASE_URL}/api/billing/invoices/`, () => {
+    return HttpResponse.json(createInvoiceListResponse())
+  }),
+
+  http.get(`${BASE_URL}/api/billing/invoice-preview/`, () => {
+    return HttpResponse.json(createInvoicePreview())
+  }),
+
+  http.post(`${BASE_URL}/api/billing/invoice-download/`, () => {
+    return new HttpResponse(new Blob(['%PDF-1.4 mock'], { type: 'application/pdf' }), {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="invoice-2026-03.pdf"',
+      },
+    })
   }),
 
   // Users

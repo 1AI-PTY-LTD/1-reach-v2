@@ -9,9 +9,9 @@ import pytest
 
 from app.celery import (
     generate_monthly_invoices,
-    _build_line_items,
     _previous_month_boundaries,
 )
+from app.utils.billing import build_line_items
 from app.models import CreditTransaction, Invoice, Organisation
 from app.utils.metered_billing import MockMeteredBillingProvider
 
@@ -95,8 +95,7 @@ class TestBuildLineItems:
             format='mms',
         )
 
-        from app.utils.billing import get_rate
-        items = _build_line_items(subscribed_org, period_start, period_end, CreditTransaction, get_rate)
+        items = build_line_items(subscribed_org, period_start, period_end)
 
         assert len(items) == 2
         formats = {item.description.split()[0] for item in items}
@@ -123,16 +122,14 @@ class TestBuildLineItems:
             format='sms',
         )
 
-        from app.utils.billing import get_rate
-        items = _build_line_items(subscribed_org, period_start, period_end, CreditTransaction, get_rate)
+        items = build_line_items(subscribed_org, period_start, period_end)
 
         assert len(items) == 0
 
     def test_empty_usage_returns_empty_list(self, subscribed_org):
         period_start, period_end = _wide_period()
 
-        from app.utils.billing import get_rate
-        items = _build_line_items(subscribed_org, period_start, period_end, CreditTransaction, get_rate)
+        items = build_line_items(subscribed_org, period_start, period_end)
 
         assert items == []
 

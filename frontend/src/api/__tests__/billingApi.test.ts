@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { getBillingSummaryQueryOptions, getBillingTransactionsInfiniteOptions } from '../billingApi'
+import { getBillingSummaryQueryOptions, getBillingTransactionsInfiniteOptions, getInvoicesQueryOptions, getInvoicePreviewQueryOptions } from '../billingApi'
 import { createMockApiClient } from '../../test/test-utils'
 import { server } from '../../test/handlers'
 
@@ -122,6 +122,53 @@ describe('billingApi', () => {
     })
   })
 
+  describe('getInvoicesQueryOptions', () => {
+    it('returns correct query key for default page/pageSize', () => {
+      const options = getInvoicesQueryOptions(client)
+      expect(options.queryKey).toEqual(['billing', 'invoices', 1, 10])
+    })
+
+    it('returns correct query key for custom page/pageSize', () => {
+      const options = getInvoicesQueryOptions(client, 2, 5)
+      expect(options.queryKey).toEqual(['billing', 'invoices', 2, 5])
+    })
+
+    it('fetches invoice list data', async () => {
+      const options = getInvoicesQueryOptions(client)
+      const result = await options.queryFn({} as never)
+
+      expect(result).toHaveProperty('results')
+      expect(result).toHaveProperty('pagination')
+      expect(result.results[0]).toHaveProperty('provider_invoice_id')
+      expect(result.results[0]).toHaveProperty('status')
+      expect(result.results[0]).toHaveProperty('amount')
+    })
+  })
+
+  describe('getInvoicePreviewQueryOptions', () => {
+    it('returns correct query key', () => {
+      const options = getInvoicePreviewQueryOptions(client)
+      expect(options.queryKey).toEqual(['billing', 'invoice-preview'])
+    })
+
+    it('sets staleTime to 30 seconds', () => {
+      const options = getInvoicePreviewQueryOptions(client)
+      expect(options.staleTime).toBe(30_000)
+    })
+
+    it('fetches invoice preview data', async () => {
+      const options = getInvoicePreviewQueryOptions(client)
+      const result = await options.queryFn({} as never)
+
+      expect(result).toHaveProperty('total')
+      expect(result).toHaveProperty('period_start')
+      expect(result).toHaveProperty('period_end')
+      expect(result).toHaveProperty('line_items')
+      expect(result.line_items[0]).toHaveProperty('format')
+      expect(result.line_items[0]).toHaveProperty('quantity')
+    })
+  })
+
   describe('error handling', () => {
     it('getBillingSummaryQueryOptions rejects when API returns 403', async () => {
       server.use(
@@ -130,6 +177,26 @@ describe('billingApi', () => {
         )
       )
       const options = getBillingSummaryQueryOptions(client)
+      await expect(options.queryFn({} as never)).rejects.toThrow()
+    })
+
+    it('getInvoicesQueryOptions rejects when API returns 403', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/billing/invoices/', () =>
+          HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })
+        )
+      )
+      const options = getInvoicesQueryOptions(client)
+      await expect(options.queryFn({} as never)).rejects.toThrow()
+    })
+
+    it('getInvoicePreviewQueryOptions rejects when API returns 403', async () => {
+      server.use(
+        http.get('http://localhost:8000/api/billing/invoice-preview/', () =>
+          HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })
+        )
+      )
+      const options = getInvoicePreviewQueryOptions(client)
       await expect(options.queryFn({} as never)).rejects.toThrow()
     })
   })

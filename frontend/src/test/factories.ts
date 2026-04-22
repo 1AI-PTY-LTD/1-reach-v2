@@ -5,7 +5,7 @@ import type { Schedule, ScheduleStatus } from '../types/schedule.types'
 import type { ContactGroup } from '../types/group.types'
 import type { GroupSchedule } from '../types/groupSchedule.types'
 import type { MonthlyStats, SummaryData } from '../types/stats.types'
-import type { BillingSummaryResponse, CreditTransaction } from '../types/billing.types'
+import type { BillingSummaryResponse, CreditTransaction, Invoice, InvoiceListResponse, InvoicePreviewResponse } from '../types/billing.types'
 import type { Pagination } from '../types/pagination.types'
 
 let _id = 1
@@ -173,6 +173,52 @@ export function createBillingSummary(overrides: Partial<BillingSummaryResponse> 
       hasNext: false,
       hasPrev: false,
     },
+    ...overrides,
+  }
+}
+
+export function createInvoice(overrides: Partial<Invoice> = {}): Invoice {
+  const id = overrides.id ?? nextId()
+  return {
+    id,
+    provider_invoice_id: `inv_${id}`,
+    status: 'paid',
+    amount: '5.00',
+    invoice_url: `https://invoice.stripe.com/i/inv_${id}`,
+    period_start: '2026-03-01T00:00:00+10:30',
+    period_end: '2026-04-01T00:00:00+10:30',
+    created_at: now,
+    ...overrides,
+  }
+}
+
+export function createInvoiceListResponse(
+  invoices?: Invoice[],
+  pagination?: Partial<Pagination>,
+): InvoiceListResponse {
+  const results = invoices ?? [createInvoice()]
+  return {
+    results,
+    pagination: {
+      total: results.length,
+      page: 1,
+      limit: 10,
+      totalPages: 1,
+      hasNext: false,
+      hasPrev: false,
+      ...pagination,
+    },
+  }
+}
+
+export function createInvoicePreview(overrides: Partial<InvoicePreviewResponse> = {}): InvoicePreviewResponse {
+  return {
+    total: '5.00',
+    period_start: '2026-04-01T00:00:00+10:30',
+    period_end: '2026-04-22T12:00:00+10:30',
+    line_items: [
+      { format: 'sms', quantity: 100, rate: '0.05', amount: '5.00' },
+    ],
     ...overrides,
   }
 }

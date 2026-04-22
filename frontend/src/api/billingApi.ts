@@ -1,5 +1,5 @@
 import { queryOptions, infiniteQueryOptions } from '@tanstack/react-query'
-import type { BillingSummaryResponse } from '../types/billing.types'
+import type { BillingSummaryResponse, InvoiceListResponse, InvoicePreviewResponse } from '../types/billing.types'
 import type { ApiClient } from '../lib/helper'
 
 export function getBillingSummaryQueryOptions(client: ApiClient, page = 1, pageSize = 50) {
@@ -12,6 +12,61 @@ export function getBillingSummaryQueryOptions(client: ApiClient, page = 1, pageS
     staleTime: 0,
     refetchOnMount: true,
   })
+}
+
+export function getInvoicesQueryOptions(client: ApiClient, page = 1, pageSize = 10) {
+  return queryOptions({
+    queryKey: ['billing', 'invoices', page, pageSize],
+    queryFn: (): Promise<InvoiceListResponse> =>
+      client.get<InvoiceListResponse>(
+        `/api/billing/invoices/?page=${page}&limit=${pageSize}`,
+      ),
+  })
+}
+
+export function getInvoicePreviewQueryOptions(client: ApiClient) {
+  return queryOptions({
+    queryKey: ['billing', 'invoice-preview'],
+    queryFn: (): Promise<InvoicePreviewResponse> =>
+      client.get<InvoicePreviewResponse>('/api/billing/invoice-preview/'),
+    staleTime: 30_000,
+  })
+}
+
+export async function downloadInvoices(
+  getToken: () => Promise<string | null>,
+  invoiceIds: number[],
+): Promise<void> {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL
+  const token = await getToken()
+
+  const response = await fetch(`${baseUrl}/api/billing/invoice-download/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ invoice_ids: invoiceIds }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}))
+    throw new Error(errorBody.detail || `Download failed: ${response.status}`)
+  }
+
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') || ''
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/)
+  const filename = filenameMatch?.[1] || 'invoices.zip'
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 export function getBillingTransactionsInfiniteOptions(client: ApiClient, pageSize: number = 50) {

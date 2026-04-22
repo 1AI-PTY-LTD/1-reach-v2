@@ -17,8 +17,10 @@ from django.utils import timezone
 
 from app.models import CreditTransaction, Organisation, Schedule, ScheduleStatus, MessageFormat
 from app.utils.billing import (
+    build_line_items,
     check_can_send,
     get_balance,
+    get_current_month_preview,
     get_monthly_usage,
     get_total_monthly_spend,
     grant_credits,
@@ -387,6 +389,133 @@ class TestRefundUsage:
         )
         assert refund_tx.amount == Decimal('0.05')
         assert get_balance(org) == balance_before_refund + Decimal('0.05')
+
+
+@pytest.mark.django_db
+class TestBuildLineItems:
+    """Tests for build_line_items — aggregates CreditTransaction records into invoice line items."""
+
+    def test_empty_when_no_transactions(self):
+        org = OrganisationFactory(billing_mode='subscribed')
+        start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = timezone.now()
+
+        result = build_line_items(org, start, end)
+
+        assert result == []
+
+    def test_aggregates_usage_by_format(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        # Record 3 SMS usage transactions
+        for i in range(3):
+            record_usage(org, 1, 'sms', f'SMS {i}', user)
+
+        start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = timezone.now() + timezone.timedelta(seconds=1)
+
+        result = build_line_items(org, start, end)
+
+        assert len(result) == 1
+        assert result[0].quantity == 3
+        assert result[0].amount == Decimal('0.15')  # 3 × $0.05
+
+    def test_nets_refunds_against_usage(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        schedule = Schedule.objects.create(
+            organisation=org,
+            phone='0412345678',
+            text='Test',
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.FAILED,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            failure_category='invalid_number',
+            created_by=user,
+            updated_by=user,
+        )
+        record_usage(org, 1, 'sms', 'sent', user, schedule)
+        record_usage(org, 1, 'sms', 'sent2', user)
+        refund_usage(org, schedule)
+
+        start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = timezone.now() + timezone.timedelta(seconds=1)
+
+        result = build_line_items(org, start, end)
+
+        assert len(result) == 1
+        assert result[0].quantity == 1  # 2 usage - 1 refund = 1 net
+        assert result[0].amount == Decimal('0.05')
+
+    def test_zero_net_usage_returns_empty(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        schedule = Schedule.objects.create(
+            organisation=org,
+            phone='0412345678',
+            text='Test',
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.FAILED,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            failure_category='invalid_number',
+            created_by=user,
+            updated_by=user,
+        )
+        record_usage(org, 1, 'sms', 'sent', user, schedule)
+        refund_usage(org, schedule)
+
+        start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = timezone.now() + timezone.timedelta(seconds=1)
+
+        result = build_line_items(org, start, end)
+
+        assert result == []
+
+    def test_multiple_formats(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        record_usage(org, 1, 'sms', 'SMS send', user)
+        record_usage(org, 1, 'mms', 'MMS send', user)
+
+        start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end = timezone.now() + timezone.timedelta(seconds=1)
+
+        result = build_line_items(org, start, end)
+
+        assert len(result) == 2
+        formats = {item.description.split(' ')[0] for item in result}
+        assert formats == {'SMS', 'MMS'}
+
+
+@pytest.mark.django_db
+class TestGetCurrentMonthPreview:
+    """Tests for get_current_month_preview — current month invoice estimate."""
+
+    def test_empty_preview_with_no_usage(self):
+        org = OrganisationFactory(billing_mode='subscribed')
+
+        result = get_current_month_preview(org)
+
+        assert result['total'] == '0'
+        assert result['line_items'] == []
+        assert 'period_start' in result
+        assert 'period_end' in result
+
+    def test_preview_with_usage(self):
+        org = OrganisationFactory(billing_mode='subscribed', credit_balance=Decimal('0.00'))
+        user = UserFactory()
+        record_usage(org, 2, 'sms', 'Two SMS', user)
+
+        result = get_current_month_preview(org)
+
+        assert result['total'] == '0.10'
+        assert len(result['line_items']) == 1
+        assert result['line_items'][0]['format'] == 'sms'
+        assert result['line_items'][0]['quantity'] == 2
+        assert result['line_items'][0]['rate'] == '0.05'
+        assert result['line_items'][0]['amount'] == '0.10'
 
 
 class TestGetRate:

@@ -21,6 +21,7 @@ from django.db import transaction as db_transaction
 from django.db.models import F, Sum
 
 from app.models import CreditTransaction, Config
+from app.utils.metered_billing import InvoiceLineItem
 
 logger = logging.getLogger(__name__)
 
@@ -272,3 +273,77 @@ def refund_usage(org, schedule) -> None:
         'Refunded $%s to org %s for failed schedule %d (%s)',
         amount, org.clerk_org_id, schedule.pk, failure_category,
     )
+
+
+def build_line_items(org, period_start: datetime, period_end: datetime) -> list[InvoiceLineItem]:
+    """Aggregate CreditTransaction records into invoice line items.
+
+    Groups by format, nets usage minus refunds. Returns a list of
+    InvoiceLineItem dataclasses, or an empty list if net usage is zero.
+    """
+    usage_qs = CreditTransaction.objects.filter(
+        organisation=org,
+        created_at__gte=period_start,
+        created_at__lt=period_end,
+        transaction_type__in=[CreditTransaction.USAGE, CreditTransaction.REFUND],
+        format__isnull=False,
+    )
+
+    formats = usage_qs.values_list('format', flat=True).distinct()
+    line_items = []
+
+    for fmt in formats:
+        usage_total = usage_qs.filter(
+            format=fmt,
+            transaction_type=CreditTransaction.USAGE,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        refund_total = usage_qs.filter(
+            format=fmt,
+            transaction_type=CreditTransaction.REFUND,
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        net_amount = usage_total - refund_total
+        if net_amount <= 0:
+            continue
+
+        rate = get_rate(fmt)
+        quantity = int(net_amount / rate) if rate > 0 else 0
+
+        line_items.append(InvoiceLineItem(
+            description=f'{fmt.upper()} usage: {quantity} messages @ ${rate}',
+            amount=net_amount,
+            quantity=quantity,
+            unit_amount=rate,
+        ))
+
+    return line_items
+
+
+def get_current_month_preview(org) -> dict:
+    """Build a preview of what the current month's invoice would look like.
+
+    Uses the same aggregation logic as monthly invoice generation but for the
+    current month-to-date (1st of month → now in Adelaide TZ).
+    """
+    period_start = _month_start()
+    period_end = datetime.now(ADELAIDE_TZ)
+
+    line_items = build_line_items(org, period_start, period_end)
+
+    total = sum(item.amount for item in line_items)
+
+    return {
+        'total': str(total),
+        'period_start': period_start.isoformat(),
+        'period_end': period_end.isoformat(),
+        'line_items': [
+            {
+                'format': item.description.split(' ')[0].lower(),
+                'quantity': item.quantity,
+                'rate': str(item.unit_amount),
+                'amount': str(item.amount),
+            }
+            for item in line_items
+        ],
+    }
