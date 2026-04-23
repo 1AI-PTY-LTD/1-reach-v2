@@ -64,11 +64,11 @@ test.describe('Stripe Billing Integration', () => {
     // Verify we start in trial mode
     await expect(page.getByText('Trial balance').first()).toBeVisible()
 
-    // Open the Manage Plan dialog
-    await page.getByRole('button', { name: /Manage Plan/i }).click()
+    // Open the Manage Plan dialog (button says "Subscribe" in trial mode)
+    await page.getByRole('button', { name: /Subscribe/i }).first().click()
     await expect(page.getByText('Manage Plan').first()).toBeVisible({ timeout: 5000 })
 
-    // Click Subscribe on the paid plan
+    // Click Subscribe on the paid plan (inside the dialog's PricingTable)
     const subscribeButton = page.getByRole('button', { name: /Subscribe/i }).first()
     await expect(subscribeButton).toBeVisible({ timeout: 10000 })
     await subscribeButton.click()
@@ -147,22 +147,25 @@ test.describe('Stripe Billing Integration', () => {
     expect(result.failed).toBe(0)
   })
 
-  test('invoice appears on billing page', async ({ page }) => {
+  test('invoice appears in invoices modal', async ({ page }) => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    // The invoices section should be visible
-    await expect(page.getByText('Invoices').first()).toBeVisible({ timeout: 10000 })
+    // Open the invoices modal
+    await page.getByRole('button', { name: /Invoices/i }).click()
+    await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
-    // Invoice should have a status badge
+    // Invoice table should have at least one row with a status badge
+    const tableRows = page.locator('table').last().locator('tbody tr')
+    await expect(tableRows.first()).toBeVisible({ timeout: 5000 })
     await expect(
-      page.getByText(/open|paid/i).first()
+      tableRows.first().getByText(/open|paid/i).first()
     ).toBeVisible()
 
-    // View invoice link should point to Stripe
-    const invoiceLink = page.getByRole('link', { name: /View invoice|View →/i })
-    await expect(invoiceLink).toBeVisible()
-    const href = await invoiceLink.getAttribute('href')
+    // View link should point to Stripe
+    const viewLink = tableRows.first().getByRole('link', { name: /View/i })
+    await expect(viewLink).toBeVisible()
+    const href = await viewLink.getAttribute('href')
     expect(href).toContain('stripe.com')
   })
 

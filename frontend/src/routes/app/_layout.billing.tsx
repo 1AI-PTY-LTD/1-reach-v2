@@ -119,12 +119,7 @@ function BillingContent() {
     <div className="flex flex-col gap-6 h-[calc(100svh-9.5rem)]">
       {/* Mode + Balance */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Billing</h2>
-          <Button plain onClick={() => setInvoicesOpen(true)}>
-            Invoices &rarr;
-          </Button>
-        </div>
+        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Billing</h2>
 
         {isPastDue && (
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -173,13 +168,21 @@ function BillingContent() {
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
               Subscription: <span className="font-semibold text-zinc-900 dark:text-white">{planName}</span>
             </p>
-            <div className="mt-2">
-              <button
-                onClick={() => setPlanDialogOpen(true)}
-                className="w-full px-3 py-1.5 text-sm font-medium rounded-md bg-brand-purple text-white hover:bg-brand-purple/90 transition-colors"
-              >
-                Manage Plan
-              </button>
+            <div className="mt-2 flex gap-2">
+              {isSubscribed || isPastDue ? (
+                <>
+                  <Button outline className="flex-1" onClick={() => setPlanDialogOpen(true)}>
+                    Manage Plan
+                  </Button>
+                  <Button color="purple" className="flex-1" onClick={() => setInvoicesOpen(true)}>
+                    Invoices
+                  </Button>
+                </>
+              ) : (
+                <Button color="purple" className="w-full" onClick={() => setPlanDialogOpen(true)}>
+                  Subscribe
+                </Button>
+              )}
             </div>
           </div>
         </div>

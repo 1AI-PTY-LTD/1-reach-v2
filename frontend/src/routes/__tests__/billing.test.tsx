@@ -309,7 +309,7 @@ describe('Manage Plan dialog', () => {
     mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
   })
 
-  it('shows Manage Plan button and Free label for org on free plan', async () => {
+  it('shows Subscribe button for org on free trial', async () => {
     mockUseSubscription.mockReturnValue({
       data: { status: 'active', subscriptionItems: [{ status: 'active', plan: { name: 'Free', fee: { amount: 0 } } }] },
       isLoading: false,
@@ -317,7 +317,7 @@ describe('Manage Plan dialog', () => {
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
     })
     expect(screen.getByText('Free')).toBeInTheDocument()
   })
@@ -337,15 +337,15 @@ describe('Manage Plan dialog', () => {
     })
   })
 
-  it('opens dialog with PricingTable when Manage Plan is clicked', async () => {
+  it('opens dialog with PricingTable when Subscribe is clicked', async () => {
     const user = userEvent.setup()
     const RouteComp = capturedBillingRouteOptions.component as React.ComponentType
     renderWithProviders(<RouteComp />)
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Manage Plan' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
     })
     expect(screen.queryByTestId('plan-dialog')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Manage Plan' }))
+    await user.click(screen.getByRole('button', { name: 'Subscribe' }))
     expect(screen.getByTestId('plan-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('pricing-table')).toBeInTheDocument()
     expect(screen.getByTestId('pricing-table')).toHaveAttribute('data-for', 'organization')
@@ -358,6 +358,6 @@ describe('Manage Plan dialog', () => {
     await waitFor(() => {
       expect(screen.getByText(/Access restricted/i)).toBeInTheDocument()
     })
-    expect(screen.queryByRole('button', { name: 'Manage Plan' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Subscribe' })).not.toBeInTheDocument()
   })
 })

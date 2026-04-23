@@ -57,7 +57,8 @@ test.describe('Invoices Modal', () => {
     }).toPass({ timeout: 10000, intervals: [1000] })
 
     // Create an invoice record directly (bypasses Stripe provider which would
-    // reject a mock customer ID when STRIPE_SECRET_KEY is set in Docker)
+    // reject a mock customer ID when STRIPE_SECRET_KEY is set in Docker).
+    // May fail if an invoice already exists for this period (e.g. from billing-stripe tests) — that's fine.
     const now = new Date()
     const firstOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
     const firstOfPrevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
@@ -65,7 +66,11 @@ test.describe('Invoices Modal', () => {
       amount: '3.50',
       period_start: firstOfPrevMonth.toISOString(),
       period_end: firstOfMonth.toISOString(),
-    })
+    }).catch(() => {})
+
+    // Verify at least one invoice exists (created now or by billing-stripe tests)
+    const summary = await getBillingSummary(page)
+    expect(summary.latest_invoice).not.toBeNull()
 
     // Seed current-month usage (for the preview section)
     await seedUsage(page, { format: 'sms', amount: '0.50', description: 'E2E: 10 SMS this month' })
