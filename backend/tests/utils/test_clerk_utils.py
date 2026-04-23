@@ -37,6 +37,7 @@ from app.utils.clerk import (
     _handle_subscription_active as handle_billing_subscription_created,
     _handle_subscription_canceled as handle_billing_subscription_deleted,
     _handle_subscription_past_due as handle_billing_payment_failed,
+    _handle_subscription_updated as handle_billing_subscription_updated,
 )
 from tests.factories import (
     ContactFactory,
@@ -373,33 +374,32 @@ class TestHandleSubscriptionActive:
     """Tests for subscription.active webhook handler."""
 
     def test_transitions_org_to_subscribed(self):
-        """Org billing_mode is set to 'subscribed' when subscription created."""
+        """Org billing_mode is set to 'subscribed' when subscription becomes active."""
         org = OrganisationFactory(
             clerk_org_id='org_sub_123',
             billing_mode=Organisation.BILLING_TRIAL,
         )
 
-        handle_billing_subscription_created({'organization_id': 'org_sub_123'})
+        handle_billing_subscription_created({'payer_id': 'org_sub_123'})
 
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
-    def test_handles_nested_org_id(self):
-        """Handles payload with organization.id instead of organization_id."""
+    def test_handles_payer_object_fallback(self):
+        """Handles payload with payer.id instead of payer_id."""
         org = OrganisationFactory(
             clerk_org_id='org_sub_nested',
             billing_mode=Organisation.BILLING_TRIAL,
         )
 
-        handle_billing_subscription_created({'organization': {'id': 'org_sub_nested'}})
+        handle_billing_subscription_created({'payer': {'id': 'org_sub_nested'}})
 
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
     def test_noop_when_org_not_found(self):
         """No error raised when org does not exist."""
-        # Should not raise
-        handle_billing_subscription_created({'organization_id': 'org_nonexistent'})
+        handle_billing_subscription_created({'payer_id': 'org_nonexistent'})
 
     def test_noop_when_no_org_id(self):
         """No error raised when payload has no org id."""
@@ -408,7 +408,7 @@ class TestHandleSubscriptionActive:
 
 @pytest.mark.django_db
 class TestHandleSubscriptionCanceled:
-    """Tests for subscriptionItem.canceled/ended webhook handler."""
+    """Tests for subscription canceled/ended webhook handler."""
 
     def test_reverts_org_to_trial(self):
         """Org billing_mode is reverted to 'trial' when subscription cancelled."""
@@ -417,7 +417,7 @@ class TestHandleSubscriptionCanceled:
             billing_mode=Organisation.BILLING_SUBSCRIBED,
         )
 
-        handle_billing_subscription_deleted({'organization_id': 'org_cancel_123'})
+        handle_billing_subscription_deleted({'payer_id': 'org_cancel_123'})
 
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_TRIAL
@@ -430,14 +430,14 @@ class TestHandleSubscriptionCanceled:
             credit_balance=Decimal('3.50'),
         )
 
-        handle_billing_subscription_deleted({'organization_id': 'org_cancel_balance'})
+        handle_billing_subscription_deleted({'payer_id': 'org_cancel_balance'})
 
         org.refresh_from_db()
         assert org.credit_balance == Decimal('3.50')
 
     def test_noop_when_org_not_found(self):
         """No error raised when org does not exist."""
-        handle_billing_subscription_deleted({'organization_id': 'org_nonexistent'})
+        handle_billing_subscription_deleted({'payer_id': 'org_nonexistent'})
 
     def test_noop_when_no_org_id(self):
         """No error when payload has no org identifier."""
@@ -446,13 +446,13 @@ class TestHandleSubscriptionCanceled:
 
 @pytest.mark.django_db
 class TestHandleSubscriptionPastDue:
-    """Tests for subscription.past_due webhook handler."""
+    """Tests for subscription.pastDue webhook handler."""
 
     def test_sets_billing_mode_to_past_due(self):
         """billing_mode is set to BILLING_PAST_DUE when subscription goes past due."""
         org = OrganisationFactory(clerk_org_id='org_pastdue', billing_mode=Organisation.BILLING_SUBSCRIBED)
         with patch('app.utils.clerk.Clerk'):
-            handle_billing_payment_failed({'id': 'sub_1', 'organizationId': 'org_pastdue'})
+            handle_billing_payment_failed({'id': 'sub_1', 'payer_id': 'org_pastdue'})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
 
@@ -460,7 +460,7 @@ class TestHandleSubscriptionPastDue:
         """Clerk SDK organizations.update() is called with billing_suspended=True."""
         OrganisationFactory(clerk_org_id='org_clerk_call')
         with patch('app.utils.clerk.Clerk') as MockClerk:
-            handle_billing_payment_failed({'id': 'sub_2', 'organizationId': 'org_clerk_call'})
+            handle_billing_payment_failed({'id': 'sub_2', 'payer_id': 'org_clerk_call'})
         MockClerk.return_value.organizations.update.assert_called_once_with(
             organization_id='org_clerk_call',
             private_metadata={'billing_suspended': True},
@@ -471,17 +471,9 @@ class TestHandleSubscriptionPastDue:
         org = OrganisationFactory(clerk_org_id='org_clerk_fail')
         with patch('app.utils.clerk.Clerk') as MockClerk:
             MockClerk.return_value.organizations.update.side_effect = Exception('Clerk down')
-            handle_billing_payment_failed({'id': 'sub_3', 'organizationId': 'org_clerk_fail'})
+            handle_billing_payment_failed({'id': 'sub_3', 'payer_id': 'org_clerk_fail'})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
-
-    def test_logs_warning_on_db_error(self):
-        """DB error during org lookup is logged with exc_info, not silently swallowed."""
-        with patch('app.utils.clerk.Organisation.objects') as mock_qs, \
-             patch('app.utils.clerk.logger') as mock_logger:
-            mock_qs.filter.return_value.first.side_effect = Exception('DB error')
-            handle_billing_payment_failed({'id': 'sub_4', 'organizationId': 'org_db_fail'})
-        mock_logger.warning.assert_called()
 
     def test_noop_when_no_org_id(self):
         """No error when payload has no org identifier."""
@@ -490,7 +482,41 @@ class TestHandleSubscriptionPastDue:
     def test_noop_when_org_not_found(self):
         """No error when org not found in DB."""
         with patch('app.utils.clerk.Clerk'):
-            handle_billing_payment_failed({'id': 'sub_6', 'organizationId': 'org_nonexistent'})
+            handle_billing_payment_failed({'id': 'sub_6', 'payer_id': 'org_nonexistent'})
+
+
+@pytest.mark.django_db
+class TestHandleSubscriptionUpdated:
+    """Tests for subscription.updated routing handler."""
+
+    def test_routes_active_status(self):
+        """subscription.updated with status=active calls _handle_subscription_active."""
+        org = OrganisationFactory(clerk_org_id='org_updated_active', billing_mode=Organisation.BILLING_TRIAL)
+        handle_billing_subscription_updated({'payer_id': 'org_updated_active', 'status': 'active'})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    def test_routes_past_due_status(self):
+        """subscription.updated with status=past_due calls _handle_subscription_past_due."""
+        org = OrganisationFactory(clerk_org_id='org_updated_pd', billing_mode=Organisation.BILLING_SUBSCRIBED)
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_updated({'payer_id': 'org_updated_pd', 'status': 'past_due'})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+
+    def test_routes_canceled_status(self):
+        """subscription.updated with status=canceled calls _handle_subscription_canceled."""
+        org = OrganisationFactory(clerk_org_id='org_updated_cancel', billing_mode=Organisation.BILLING_SUBSCRIBED)
+        handle_billing_subscription_updated({'payer_id': 'org_updated_cancel', 'status': 'canceled'})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
+
+    def test_noop_for_unknown_status(self):
+        """subscription.updated with unknown status is a no-op."""
+        org = OrganisationFactory(clerk_org_id='org_updated_unknown', billing_mode=Organisation.BILLING_TRIAL)
+        handle_billing_subscription_updated({'payer_id': 'org_updated_unknown', 'status': 'incomplete'})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
 
 
 @pytest.mark.django_db
@@ -504,7 +530,7 @@ class TestHandleSubscriptionActiveClears:
             billing_mode=Organisation.BILLING_PAST_DUE,
         )
         with patch('app.utils.clerk.Clerk'):
-            handle_billing_subscription_created({'organization_id': 'org_unsuspend'})
+            handle_billing_subscription_created({'payer_id': 'org_unsuspend'})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
@@ -512,7 +538,7 @@ class TestHandleSubscriptionActiveClears:
         """Clerk SDK organizations.update() is called with billing_suspended=False."""
         OrganisationFactory(clerk_org_id='org_clerk_clear', billing_mode=Organisation.BILLING_PAST_DUE)
         with patch('app.utils.clerk.Clerk') as MockClerk:
-            handle_billing_subscription_created({'organization_id': 'org_clerk_clear'})
+            handle_billing_subscription_created({'payer_id': 'org_clerk_clear'})
         MockClerk.return_value.organizations.update.assert_called_once_with(
             organization_id='org_clerk_clear',
             private_metadata={'billing_suspended': False},

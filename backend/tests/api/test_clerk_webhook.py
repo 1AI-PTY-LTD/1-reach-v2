@@ -321,7 +321,7 @@ class TestClerkWebhook:
 
         payload = {
             'type': 'subscription.active',
-            'data': {'organization_id': 'org_billing_active'},
+            'data': {'payer_id': 'org_billing_active'},
         }
 
         response = api_client.post(
@@ -335,15 +335,15 @@ class TestClerkWebhook:
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
     @patch('svix.Webhook.verify')
-    def test_subscription_item_canceled_reverts_org_to_trial(self, mock_verify, api_client):
-        """subscriptionItem.canceled webhook reverts org billing_mode to trial."""
+    def test_subscription_updated_canceled_reverts_org_to_trial(self, mock_verify, api_client):
+        """subscription.updated with status=canceled reverts org billing_mode to trial."""
         mock_verify.side_effect = mock_webhook_verify
 
         org = OrganisationFactory(clerk_org_id='org_billing_cancel', billing_mode=Organisation.BILLING_SUBSCRIBED)
 
         payload = {
-            'type': 'subscriptionItem.canceled',
-            'data': {'organization_id': 'org_billing_cancel'},
+            'type': 'subscription.updated',
+            'data': {'payer_id': 'org_billing_cancel', 'status': 'canceled'},
         }
 
         response = api_client.post(
@@ -357,15 +357,15 @@ class TestClerkWebhook:
         assert org.billing_mode == Organisation.BILLING_TRIAL
 
     @patch('svix.Webhook.verify')
-    def test_subscription_item_ended_reverts_org_to_trial(self, mock_verify, api_client):
-        """subscriptionItem.ended webhook reverts org billing_mode to trial."""
+    def test_subscription_updated_ended_reverts_org_to_trial(self, mock_verify, api_client):
+        """subscription.updated with status=ended reverts org billing_mode to trial."""
         mock_verify.side_effect = mock_webhook_verify
 
         org = OrganisationFactory(clerk_org_id='org_billing_ended', billing_mode=Organisation.BILLING_SUBSCRIBED)
 
         payload = {
-            'type': 'subscriptionItem.ended',
-            'data': {'organization_id': 'org_billing_ended'},
+            'type': 'subscription.updated',
+            'data': {'payer_id': 'org_billing_ended', 'status': 'ended'},
         }
 
         response = api_client.post(
@@ -380,14 +380,14 @@ class TestClerkWebhook:
 
     @patch('svix.Webhook.verify')
     def test_subscription_past_due_sets_past_due_billing_mode(self, mock_verify, api_client):
-        """subscription.past_due webhook sets billing_mode to past_due and blocks sends."""
+        """subscription.pastDue webhook sets billing_mode to past_due and blocks sends."""
         mock_verify.side_effect = mock_webhook_verify
 
         org = OrganisationFactory(clerk_org_id='org_billing_pastdue', billing_mode=Organisation.BILLING_SUBSCRIBED)
 
         payload = {
-            'type': 'subscription.past_due',
-            'data': {'id': 'sub_123', 'organizationId': 'org_billing_pastdue'},
+            'type': 'subscription.pastDue',
+            'data': {'id': 'sub_123', 'payer_id': 'org_billing_pastdue'},
         }
 
         with patch('app.utils.clerk.Clerk'):

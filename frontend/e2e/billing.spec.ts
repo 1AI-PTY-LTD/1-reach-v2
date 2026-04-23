@@ -51,12 +51,18 @@ test.describe('Billing Page', () => {
   test('displays billing heading and mode badge', async ({ page }) => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText('Trial').first()).toBeVisible()
+    // Mode badge is either Trial or Subscribed depending on Clerk subscription state
+    await expect(
+      page.getByText(/Trial|Subscribed/).first()
+    ).toBeVisible()
   })
 
-  test('shows trial balance', async ({ page }) => {
+  test('shows balance or plan label', async ({ page }) => {
     await page.goto('/app/billing')
-    await expect(page.getByText('Trial balance').first()).toBeVisible({ timeout: 10000 })
+    // Shows "Trial balance" for trial orgs or "Plan" for subscribed orgs
+    await expect(
+      page.getByText('Trial balance').first().or(page.getByText('Plan').first())
+    ).toBeVisible({ timeout: 10000 })
   })
 
   test('shows monthly spend section', async ({ page }) => {
@@ -71,7 +77,15 @@ test.describe('Billing Page', () => {
     await expect(page.locator('table').last().locator('tbody tr').first()).toBeVisible()
   })
 
-  test('shows exhausted balance warning when balance is zero', async ({ page }) => {
+  test('shows exhausted balance warning when balance is zero (trial only)', async ({ page }) => {
+    // This warning only shows for trial orgs — skip if Clerk has an active subscription
+    await page.goto('/app/billing')
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+    const isSubscribed = await page.getByText('Subscribed').first().isVisible().catch(() => false)
+    if (isSubscribed) {
+      // Subscribed orgs don't show balance warnings
+      return
+    }
     try {
       await setOrgBalance(page, 0)
       await page.goto('/app/billing')

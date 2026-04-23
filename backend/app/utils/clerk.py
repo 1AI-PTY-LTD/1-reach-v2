@@ -123,19 +123,36 @@ def _handle_membership_deleted(data):
 
 
 # ---------------------------------------------------------------------------
-# Clerk Billing webhook stubs
-# The exact event type strings must be confirmed from Clerk docs when the
-# corporate Clerk account with Billing enabled is set up.
+# Clerk Billing webhook handlers
+#
+# Clerk billing events: subscription.created, subscription.updated,
+# subscription.active, subscription.pastDue
+#
+# Payload is a CommerceSubscription object with fields:
+#   id, status, payer_id, instance_id, created_at, updated_at, active_at,
+#   past_due_at, subscription_items, payer, items, latest_payment_id, etc.
+#
+# The org ID is in `payer_id` (e.g. "org_xxx").
+# See: https://github.com/clerk/clerk-sdk-python/blob/main/src/clerk_backend_api/models/commercesubscription.py
 # ---------------------------------------------------------------------------
+
+def _extract_billing_org_id(data, event_label='billing'):
+    """Extract the organisation Clerk ID from a billing webhook payload."""
+    payer = data.get('payer')
+    org_id = data.get('payer_id') or (payer.get('id') if isinstance(payer, dict) else None)
+    if not org_id:
+        logger.warning(
+            '%s: no org id found. Keys: %s Values: %s',
+            event_label, list(data.keys()),
+            {k: repr(v)[:200] for k, v in data.items()},
+        )
+    return org_id
+
 
 def _handle_subscription_active(data):
     """Transition org to subscribed mode when a Clerk Billing subscription becomes active."""
-    org_id = data.get('organization_id') or data.get('organization', {}).get('id')
+    org_id = _extract_billing_org_id(data, 'subscription.active')
     if not org_id:
-        logger.warning(
-            'subscription.active: no org id found. Keys: %s Values: %s',
-            list(data.keys()), {k: repr(v)[:200] for k, v in data.items()},
-        )
         return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_SUBSCRIBED
@@ -179,15 +196,9 @@ def _handle_subscription_active(data):
 
 
 def _handle_subscription_canceled(data):
-    """Revert org to trial mode when a Clerk Billing subscription item is cancelled or ended."""
-    org_id = data.get('organization_id') or data.get('organization', {}).get('id')
+    """Revert org to trial mode when a Clerk Billing subscription is cancelled or ended."""
+    org_id = _extract_billing_org_id(data, 'subscription.canceled')
     if not org_id:
-        logger.warning(
-            'subscription canceled/ended: no org id found. Keys: %s Values: %s',
-            list(data.keys()), {k: repr(v)[:200] for k, v in data.items()},
-        )
-    if not org_id:
-        logger.warning('subscriptionItem.canceled/ended: no org id in payload %s', data)
         return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_TRIAL
@@ -195,50 +206,52 @@ def _handle_subscription_canceled(data):
     if updated:
         logger.info('Org %s reverted to trial billing mode (subscription cancelled)', org_id)
     else:
-        logger.warning('subscriptionItem.canceled/ended: org %s not found', org_id)
+        logger.warning('subscription.canceled: org %s not found', org_id)
 
 
 def _handle_subscription_past_due(data):
     """Set billing_mode=past_due and disable the org in Clerk when subscription is past due."""
-    subscription_id = data.get('id')
-    org_id = data.get('organizationId') or data.get('organization', {}).get('id')
+    org_id = _extract_billing_org_id(data, 'subscription.pastDue')
     if not org_id:
-        logger.warning(
-            'subscription.past_due: no org id found. Keys: %s Values: %s',
-            list(data.keys()), {k: repr(v)[:200] for k, v in data.items()},
+        return
+
+    org = Organisation.objects.filter(clerk_org_id=org_id).first()
+    if not org:
+        logger.warning('subscription.pastDue: org %s not found', org_id)
+        return
+
+    org.billing_mode = Organisation.BILLING_PAST_DUE
+    org.save(update_fields=['billing_mode'])
+    logger.warning('subscription.pastDue: org %s set to past_due', org_id)
+
+    try:
+        clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+        clerk_client.organizations.update(
+            organization_id=org_id,
+            private_metadata={'billing_suspended': True},
         )
-    org_info = {}
-
-    if org_id:
-        try:
-            org = Organisation.objects.filter(clerk_org_id=org_id).first()
-            if org:
-                org_info = {'org_id': org.pk, 'org_name': org.name}
-                org.billing_mode = Organisation.BILLING_PAST_DUE
-                org.save(update_fields=['billing_mode'])
-                try:
-                    clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
-                    clerk_client.organizations.update(
-                        organization_id=org_id,
-                        private_metadata={'billing_suspended': True},
-                    )
-                    logger.info('Clerk org %s marked billing_suspended=True', org_id)
-                except Exception:
-                    logger.error(
-                        'Failed to set Clerk billing_suspended for org %s', org_id, exc_info=True
-                    )
-        except Exception:
-            logger.error(
-                'Error processing subscription.past_due for org %s', org_id, exc_info=True
-            )
-
-    logger.warning(
-        'subscription.past_due: billing suspended',
-        extra={'subscription_id': subscription_id, **org_info},
-    )
+        logger.info('Clerk org %s marked billing_suspended=True', org_id)
+    except Exception:
+        logger.error(
+            'Failed to set Clerk billing_suspended for org %s', org_id, exc_info=True
+        )
 
 
-# Clerk API event type strings must use US spelling (Clerk's API convention)
+def _handle_subscription_updated(data):
+    """Route subscription.created/updated events based on the status field."""
+    status = data.get('status')
+    logger.info('subscription.updated: status=%s', status)
+
+    if status == 'active':
+        _handle_subscription_active(data)
+    elif status == 'past_due':
+        _handle_subscription_past_due(data)
+    elif status in ('canceled', 'ended'):
+        _handle_subscription_canceled(data)
+    else:
+        logger.info('subscription.updated: no action for status=%s', status)
+
+
 WEBHOOK_HANDLERS = {
     'user.created': _handle_user_created,
     'user.updated': _handle_user_updated,
@@ -250,9 +263,8 @@ WEBHOOK_HANDLERS = {
     'organizationMembership.updated': _handle_membership_updated,
     'organizationMembership.deleted': _handle_membership_deleted,
     # Clerk Billing events
+    'subscription.created': _handle_subscription_updated,
+    'subscription.updated': _handle_subscription_updated,
     'subscription.active': _handle_subscription_active,
-    'subscriptionItem.canceled': _handle_subscription_canceled,
-    'subscriptionItem.ended': _handle_subscription_canceled,
-    'subscription.past_due': _handle_subscription_past_due,
-    'subscription.pastDue': _handle_subscription_past_due,  # Clerk uses camelCase
+    'subscription.pastDue': _handle_subscription_past_due,
 }
