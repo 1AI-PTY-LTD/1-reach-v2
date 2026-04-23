@@ -132,7 +132,10 @@ def _handle_subscription_active(data):
     """Transition org to subscribed mode when a Clerk Billing subscription becomes active."""
     org_id = data.get('organization_id') or data.get('organization', {}).get('id')
     if not org_id:
-        logger.warning('subscription.active: no org id in payload %s', data)
+        logger.warning(
+            'subscription.active: no org id found. Keys: %s Values: %s',
+            list(data.keys()), {k: repr(v)[:200] for k, v in data.items()},
+        )
         return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_SUBSCRIBED
@@ -179,6 +182,11 @@ def _handle_subscription_canceled(data):
     """Revert org to trial mode when a Clerk Billing subscription item is cancelled or ended."""
     org_id = data.get('organization_id') or data.get('organization', {}).get('id')
     if not org_id:
+        logger.warning(
+            'subscription canceled/ended: no org id found. Keys: %s Values: %s',
+            list(data.keys()), {k: repr(v)[:200] for k, v in data.items()},
+        )
+    if not org_id:
         logger.warning('subscriptionItem.canceled/ended: no org id in payload %s', data)
         return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
@@ -194,6 +202,11 @@ def _handle_subscription_past_due(data):
     """Set billing_mode=past_due and disable the org in Clerk when subscription is past due."""
     subscription_id = data.get('id')
     org_id = data.get('organizationId') or data.get('organization', {}).get('id')
+    if not org_id:
+        logger.warning(
+            'subscription.past_due: no org id found. Keys: %s Values: %s',
+            list(data.keys()), {k: repr(v)[:200] for k, v in data.items()},
+        )
     org_info = {}
 
     if org_id:
@@ -241,4 +254,5 @@ WEBHOOK_HANDLERS = {
     'subscriptionItem.canceled': _handle_subscription_canceled,
     'subscriptionItem.ended': _handle_subscription_canceled,
     'subscription.past_due': _handle_subscription_past_due,
+    'subscription.pastDue': _handle_subscription_past_due,  # Clerk uses camelCase
 }

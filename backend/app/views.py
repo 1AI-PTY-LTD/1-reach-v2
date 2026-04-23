@@ -188,13 +188,14 @@ class ClerkWebhookView(APIView):
 
         event_type = payload.get('type')
         data = payload.get('data', {})
+        logger.info('Clerk webhook: type=%s data_keys=%s', event_type, list(data.keys()))
 
         handler = clerk.WEBHOOK_HANDLERS.get(event_type)
         if handler:
             handler(data)
             logger.info('Processed Clerk webhook event: %s', event_type)
         else:
-            logger.debug('Unhandled Clerk webhook event: %s', event_type)
+            logger.warning('Unhandled Clerk webhook event: %s', event_type)
 
         return Response({'status': 'ok'})
 

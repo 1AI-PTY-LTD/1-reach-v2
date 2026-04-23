@@ -109,7 +109,8 @@ function BillingContent() {
   }
 
   const isPastDue = data.billing_mode === 'past_due'
-  const isSubscribed = data.billing_mode === 'subscribed'
+  const hasClerkSubscription = activePlan != null && activePlan.plan?.fee?.amount > 0
+  const isSubscribed = data.billing_mode === 'subscribed' || hasClerkSubscription
   const balance = parseFloat(data.balance)
   const limit = data.monthly_limit ? parseFloat(data.monthly_limit) : null
 
