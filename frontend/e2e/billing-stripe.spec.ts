@@ -181,7 +181,7 @@ test.describe('Stripe Billing Integration', () => {
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
     // Open the invoices modal
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Invoice table should have at least one row
@@ -212,7 +212,7 @@ test.describe('Stripe Billing Integration', () => {
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
     // Open invoices modal
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Wait for table to load

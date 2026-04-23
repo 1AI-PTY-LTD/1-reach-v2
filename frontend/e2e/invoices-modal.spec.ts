@@ -87,12 +87,12 @@ test.describe('Invoices Modal', () => {
     await authenticatePage(page)
   })
 
-  test('All Invoices button opens modal', async ({ page }) => {
+  test('Invoices button opens modal', async ({ page }) => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    // Click the "All Invoices" button
-    const allInvoicesBtn = page.getByRole('button', { name: /All Invoices/i })
+    // Click the "Invoices" button
+    const allInvoicesBtn = page.getByRole('button', { name: /Invoices/i })
     await expect(allInvoicesBtn).toBeVisible({ timeout: 5000 })
     await allInvoicesBtn.click()
 
@@ -104,7 +104,7 @@ test.describe('Invoices Modal', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Wait for "Invoice history" heading to appear
@@ -129,7 +129,7 @@ test.describe('Invoices Modal', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Preview section should be visible (org is subscribed)
@@ -146,7 +146,7 @@ test.describe('Invoices Modal', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Wait for table to load
@@ -167,7 +167,7 @@ test.describe('Invoices Modal', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Wait for table to load
@@ -202,7 +202,7 @@ test.describe('Invoices Modal', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    await page.getByRole('button', { name: /All Invoices/i }).click()
+    await page.getByRole('button', { name: /Invoices/i }).click()
     await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
 
     // Wait for table rows

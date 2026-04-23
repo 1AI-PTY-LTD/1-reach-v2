@@ -119,7 +119,12 @@ function BillingContent() {
     <div className="flex flex-col gap-6 h-[calc(100svh-9.5rem)]">
       {/* Mode + Balance */}
       <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Billing</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Billing</h2>
+          <Button plain onClick={() => setInvoicesOpen(true)}>
+            Invoices &rarr;
+          </Button>
+        </div>
 
         {isPastDue && (
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
@@ -190,52 +195,6 @@ function BillingContent() {
               </span>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* Latest Invoice + All Invoices button */}
-      <div className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border dark:border-white/10 p-6">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-base font-semibold text-zinc-900 dark:text-white">Invoices</h3>
-          <Button plain onClick={() => setInvoicesOpen(true)}>
-            All Invoices &rarr;
-          </Button>
-        </div>
-        {data.latest_invoice ? (
-          <div className="flex items-center gap-4">
-            <Badge
-              color={
-                data.latest_invoice.status === 'paid'
-                  ? 'green'
-                  : data.latest_invoice.status === 'open'
-                    ? 'yellow'
-                    : data.latest_invoice.status === 'void'
-                      ? 'zinc'
-                      : 'red'
-              }
-            >
-              {data.latest_invoice.status}
-            </Badge>
-            <span className="text-sm text-zinc-700 dark:text-zinc-300 font-mono">
-              ${data.latest_invoice.amount}
-            </span>
-            <span className="text-sm text-zinc-500 dark:text-zinc-400">
-              {new Date(data.latest_invoice.period_start).toLocaleDateString()} –{' '}
-              {new Date(data.latest_invoice.period_end).toLocaleDateString()}
-            </span>
-            {data.latest_invoice.invoice_url && (
-              <a
-                href={data.latest_invoice.invoice_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-auto text-sm font-medium text-brand-purple hover:underline"
-              >
-                View invoice &rarr;
-              </a>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-zinc-400 dark:text-zinc-500">No invoices yet.</p>
         )}
       </div>
 
