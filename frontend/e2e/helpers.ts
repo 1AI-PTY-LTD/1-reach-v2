@@ -220,14 +220,14 @@ async function postWebhook(body: object) {
 export async function simulateSubscriptionActive(orgId: string) {
   await postWebhook({
     type: 'subscription.updated',
-    data: { payer_id: orgId, status: 'active' },
+    data: { payer: { organization_id: orgId }, status: 'active' },
   })
 }
 
 export async function simulateSubscriptionCanceled(orgId: string) {
   await postWebhook({
     type: 'subscription.updated',
-    data: { payer_id: orgId, status: 'canceled' },
+    data: { payer: { organization_id: orgId }, status: 'canceled' },
   })
 }
 

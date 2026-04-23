@@ -321,7 +321,7 @@ class TestClerkWebhook:
 
         payload = {
             'type': 'subscription.active',
-            'data': {'payer_id': 'org_billing_active'},
+            'data': {'payer': {'organization_id': 'org_billing_active'}},
         }
 
         response = api_client.post(
@@ -343,7 +343,7 @@ class TestClerkWebhook:
 
         payload = {
             'type': 'subscription.updated',
-            'data': {'payer_id': 'org_billing_cancel', 'status': 'canceled'},
+            'data': {'payer': {'organization_id': 'org_billing_cancel'}, 'status': 'canceled'},
         }
 
         response = api_client.post(
@@ -365,7 +365,7 @@ class TestClerkWebhook:
 
         payload = {
             'type': 'subscription.updated',
-            'data': {'payer_id': 'org_billing_ended', 'status': 'ended'},
+            'data': {'payer': {'organization_id': 'org_billing_ended'}, 'status': 'ended'},
         }
 
         response = api_client.post(
@@ -387,7 +387,7 @@ class TestClerkWebhook:
 
         payload = {
             'type': 'subscription.pastDue',
-            'data': {'id': 'sub_123', 'payer_id': 'org_billing_pastdue'},
+            'data': {'id': 'sub_123', 'payer': {'organization_id': 'org_billing_pastdue'}},
         }
 
         with patch('app.utils.clerk.Clerk'):

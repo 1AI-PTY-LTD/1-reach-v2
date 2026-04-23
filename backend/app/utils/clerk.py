@@ -137,14 +137,18 @@ def _handle_membership_deleted(data):
 # ---------------------------------------------------------------------------
 
 def _extract_billing_org_id(data, event_label='billing'):
-    """Extract the organisation Clerk ID from a billing webhook payload."""
+    """Extract the organisation Clerk ID from a billing webhook payload.
+
+    The org ID is in ``data.payer.organization_id`` (CommercePayerResponse).
+    ``payer_id`` is a commerce payer ID (cpayer_xxx), NOT the org ID.
+    See: https://github.com/clerk/clerk-sdk-python/blob/main/src/clerk_backend_api/models/commercepayerresponse.py
+    """
     payer = data.get('payer')
-    org_id = data.get('payer_id') or (payer.get('id') if isinstance(payer, dict) else None)
+    org_id = payer.get('organization_id') if isinstance(payer, dict) else None
     if not org_id:
         logger.warning(
-            '%s: no org id found. Keys: %s Values: %s',
-            event_label, list(data.keys()),
-            {k: repr(v)[:200] for k, v in data.items()},
+            '%s: no org id found. payer=%s data_keys=%s',
+            event_label, repr(payer)[:300], list(data.keys()),
         )
     return org_id
 
