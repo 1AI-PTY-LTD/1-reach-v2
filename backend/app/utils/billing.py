@@ -289,7 +289,11 @@ def build_line_items(org, period_start: datetime, period_end: datetime) -> list[
         format__isnull=False,
     )
 
-    formats = usage_qs.values_list('format', flat=True).distinct()
+    formats = list(usage_qs.values_list('format', flat=True).distinct())
+    logger.info(
+        'build_line_items: org=%s period=%s to %s formats=%s qs_count=%d',
+        org.clerk_org_id, period_start, period_end, formats, usage_qs.count(),
+    )
     line_items = []
 
     for fmt in formats:
