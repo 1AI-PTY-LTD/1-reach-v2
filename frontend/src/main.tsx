@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import * as Sentry from '@sentry/react'
 import './index.css'
 import { ClerkProvider } from '@clerk/clerk-react'
+import { dark } from '@clerk/themes'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { ApiClientProvider } from './lib/ApiClientProvider'
@@ -49,7 +50,15 @@ declare module '@tanstack/react-router' {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
+    <ClerkProvider
+      publishableKey={PUBLISHABLE_KEY}
+      appearance={{
+        baseTheme: window.matchMedia('(prefers-color-scheme: dark)').matches ? dark : undefined,
+        variables: {
+          colorPrimary: '#7400f6',
+        },
+      }}
+    >
       <QueryClientProvider client={queryClient}>
         <ApiClientProvider>
           <RouterProvider router={router} />

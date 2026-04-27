@@ -172,7 +172,7 @@ function BillingContent() {
             <div className="mt-2 flex gap-2">
               {isSubscribed || isPastDue ? (
                 <>
-                  <Button outline className="flex-1" onClick={() => setInvoicesOpen(true)}>
+                  <Button color="purple" className="flex-1" onClick={() => setInvoicesOpen(true)}>
                     Invoices
                   </Button>
                   <SubscriptionDetailsButton for="organization" onSubscriptionCancel={() => window.location.reload()}>
