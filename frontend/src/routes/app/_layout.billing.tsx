@@ -175,7 +175,7 @@ function BillingContent() {
                   <Button color="purple" className="flex-1" onClick={() => setInvoicesOpen(true)}>
                     Invoices
                   </Button>
-                  <SubscriptionDetailsButton for="organization" onSubscriptionCancel={() => window.location.reload()}>
+                  <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: clerkAppearance }} onSubscriptionCancel={() => window.location.reload()}>
                     <button className="flex-1 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">
                       Cancel Plan
                     </button>
