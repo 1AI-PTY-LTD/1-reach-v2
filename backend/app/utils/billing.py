@@ -308,6 +308,10 @@ def build_line_items(org, period_start: datetime, period_end: datetime) -> list[
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
 
         net_amount = usage_total - refund_total
+        logger.info(
+            'build_line_items: format=%s usage=%s refund=%s net=%s',
+            fmt, usage_total, refund_total, net_amount,
+        )
         if net_amount <= 0:
             continue
 
