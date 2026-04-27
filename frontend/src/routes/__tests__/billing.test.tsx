@@ -52,6 +52,7 @@ vi.mock('@clerk/clerk-react', () => ({
 
 vi.mock('@clerk/clerk-react/experimental', () => ({
   useSubscription: mockUseSubscription,
+  SubscriptionDetailsButton: ({ children }: { children: React.ReactNode }) => <div data-testid="subscription-details">{children}</div>,
 }))
 
 vi.mock('../../ui/dialog', () => ({

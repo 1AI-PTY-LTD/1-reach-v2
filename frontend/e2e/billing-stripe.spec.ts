@@ -242,30 +242,28 @@ test.describe('Stripe Billing Integration', () => {
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-')
   })
 
-  test('cancel subscription via PricingTable', async ({ page }) => {
+  test('cancel subscription via Cancel Plan button', async ({ page }) => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    // Open Manage Plan dialog
-    await page.getByRole('button', { name: /Manage Plan/i }).click()
-    await expect(page.getByText('Manage Plan').first()).toBeVisible({ timeout: 10000 })
+    // Click Cancel Plan — opens Clerk's SubscriptionDetailsButton drawer
+    await page.getByRole('button', { name: /Cancel Plan/i }).click()
 
-    // Click "Switch to this plan" on the Free plan to downgrade/cancel
-    const switchButton = page
-      .getByRole('button', { name: /switch to this plan|cancel|downgrade/i })
-      .first()
-    await expect(switchButton).toBeVisible({ timeout: 15000 })
-    await switchButton.click()
+    // Clerk's drawer should appear with cancel/manage options
+    // Click the cancel action inside the drawer
+    const cancelAction = page.getByRole('button', { name: /cancel|unsubscribe/i }).last()
+    await expect(cancelAction).toBeVisible({ timeout: 10000 })
+    await cancelAction.click()
 
-    // Confirm cancellation if a confirmation dialog appears
+    // Confirm cancellation if prompted
     const confirmButton = page
-      .getByRole('button', { name: /confirm|yes|cancel|switch/i })
+      .getByRole('button', { name: /confirm|yes|cancel/i })
       .last()
     if (await confirmButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await confirmButton.click()
     }
 
-    // Simulate the subscriptionItem.canceled webhook
+    // Simulate the webhook (Clerk may not deliver to local Docker)
     const orgId = getOrgId()
     await simulateSubscriptionCanceled(orgId)
 
@@ -275,11 +273,7 @@ test.describe('Stripe Billing Integration', () => {
       expect(summary.billing_mode).toBe('trial')
     }).toPass({ timeout: 10000, intervals: [1000] })
 
-    // Close dialog
-    await page.keyboard.press('Escape')
-
-    // Verify the billing page reflects the change — may show "Trial balance" or
-    // "Plan" depending on whether the Clerk useSubscription hook has propagated yet
+    // Verify the billing page reflects the change
     await page.goto('/app/billing')
     await expect(
       page.getByText('Trial balance').first().or(page.getByText('Plan').first())

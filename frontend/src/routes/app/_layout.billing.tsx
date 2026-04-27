@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useOrganization, PricingTable } from '@clerk/clerk-react'
-import { useSubscription } from '@clerk/clerk-react/experimental'
+import { useSubscription, SubscriptionDetailsButton } from '@clerk/clerk-react/experimental'
 import { dark } from '@clerk/themes'
 import { Suspense, useRef, useState } from 'react'
 import { usePrefersDark } from '../../hooks/usePrefersDark'
@@ -172,12 +172,14 @@ function BillingContent() {
             <div className="mt-2 flex gap-2">
               {isSubscribed || isPastDue ? (
                 <>
-                  <Button outline className="flex-1" onClick={() => setPlanDialogOpen(true)}>
-                    Manage Plan
-                  </Button>
-                  <Button color="purple" className="flex-1" onClick={() => setInvoicesOpen(true)}>
+                  <Button outline className="flex-1" onClick={() => setInvoicesOpen(true)}>
                     Invoices
                   </Button>
+                  <SubscriptionDetailsButton for="organization" onSubscriptionCancel={() => window.location.reload()}>
+                    <button className="flex-1 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">
+                      Cancel Plan
+                    </button>
+                  </SubscriptionDetailsButton>
                 </>
               ) : (
                 <Button color="purple" className="w-full" onClick={() => setPlanDialogOpen(true)}>

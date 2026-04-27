@@ -489,12 +489,38 @@ class TestHandleSubscriptionPastDue:
 class TestHandleSubscriptionUpdated:
     """Tests for subscription.updated routing handler."""
 
-    def test_routes_active_status(self):
-        """subscription.updated with status=active calls _handle_subscription_active."""
+    def test_routes_active_status_with_paid_plan(self):
+        """subscription.updated with status=active and a paid plan sets subscribed."""
         org = OrganisationFactory(clerk_org_id='org_updated_active', billing_mode=Organisation.BILLING_TRIAL)
-        handle_billing_subscription_updated({'payer': {'organization_id': 'org_updated_active'}, 'status': 'active'})
+        handle_billing_subscription_updated({
+            'payer': {'organization_id': 'org_updated_active'},
+            'status': 'active',
+            'items': [{'status': 'active', 'plan': {'amount': 30000, 'name': 'Professional'}}],
+        })
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    def test_active_status_with_free_plan_only_reverts_to_trial(self):
+        """subscription.updated with status=active but only free plan reverts to trial."""
+        org = OrganisationFactory(clerk_org_id='org_updated_free', billing_mode=Organisation.BILLING_SUBSCRIBED)
+        handle_billing_subscription_updated({
+            'payer': {'organization_id': 'org_updated_free'},
+            'status': 'active',
+            'items': [{'status': 'upcoming', 'plan': {'amount': 0, 'name': 'Free'}}],
+        })
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
+
+    def test_active_status_with_no_items_reverts_to_trial(self):
+        """subscription.updated with status=active but empty items reverts to trial."""
+        org = OrganisationFactory(clerk_org_id='org_updated_empty', billing_mode=Organisation.BILLING_SUBSCRIBED)
+        handle_billing_subscription_updated({
+            'payer': {'organization_id': 'org_updated_empty'},
+            'status': 'active',
+            'items': [],
+        })
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_TRIAL
 
     def test_routes_past_due_status(self):
         """subscription.updated with status=past_due calls _handle_subscription_past_due."""

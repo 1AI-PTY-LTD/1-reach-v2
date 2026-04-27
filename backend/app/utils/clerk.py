@@ -241,13 +241,37 @@ def _handle_subscription_past_due(data):
         )
 
 
-def _handle_subscription_updated(data):
-    """Route subscription.created/updated events based on the status field."""
-    status = data.get('status')
-    logger.info('subscription.updated: status=%s', status)
+def _has_active_paid_plan(data) -> bool:
+    """Check whether the subscription has an active paid plan.
 
-    if status == 'active':
+    Clerk subscriptions can be 'active' with only a free plan (e.g. after
+    downgrading). We only set billing_mode='subscribed' when there's at
+    least one item with status='active' and plan.amount > 0.
+    """
+    items = data.get('items') or []
+    return any(
+        item.get('status') == 'active'
+        and (item.get('plan', {}).get('amount') or 0) > 0
+        for item in items
+    )
+
+
+def _handle_subscription_updated(data):
+    """Route subscription.created/updated events based on the status field.
+
+    When status is 'active', we also check the items to see if there's a
+    paid plan — a subscription with only a free plan means the org should
+    be on trial, not subscribed.
+    """
+    status = data.get('status')
+    has_paid = _has_active_paid_plan(data)
+    logger.info('subscription.updated: status=%s has_paid_plan=%s', status, has_paid)
+
+    if status == 'active' and has_paid:
         _handle_subscription_active(data)
+    elif status == 'active' and not has_paid:
+        # Downgraded to free-only or no active paid items — revert to trial
+        _handle_subscription_canceled(data)
     elif status == 'past_due':
         _handle_subscription_past_due(data)
     elif status in ('canceled', 'ended'):
