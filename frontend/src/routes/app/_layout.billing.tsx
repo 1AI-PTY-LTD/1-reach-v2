@@ -60,6 +60,8 @@ function BillingContent() {
           colorBackground: '#18181b',
           colorInputBackground: '#27272a',
           colorNeutral: 'white',
+          colorText: '#fafafa',
+          colorTextSecondary: '#a1a1aa',
           colorForeground: '#fafafa',
           colorMutedForeground: '#a1a1aa',
         },
@@ -175,7 +177,7 @@ function BillingContent() {
                   <Button color="purple" className="flex-1" onClick={() => setInvoicesOpen(true)}>
                     Invoices
                   </Button>
-                  <SubscriptionDetailsButton for="organization" onSubscriptionCancel={() => { window.location.href = '/app/billing' }}>
+                  <SubscriptionDetailsButton for="organization" subscriptionDetailsProps={{ appearance: clerkAppearance }} onSubscriptionCancel={() => { window.location.href = '/app/billing' }}>
                     <Button outline className="flex-1">
                       Manage Plan
                     </Button>

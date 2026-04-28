@@ -10,22 +10,6 @@ body {
   body {
     background-color: #18181b;
   }
-
-  /* Clerk's drawer portal inherits white text from Tailwind's dark mode
-     preflight on <html>, but Clerk renders with a light background by
-     default. Override to dark theme to match the app. */
-  .cl-drawerContent {
-    background-color: #18181b;
-    color: #fafafa;
-  }
-  .cl-drawerTitle,
-  .cl-subscriptionDetailsCardTitle,
-  .cl-subscriptionDetailsDetailRowLabel {
-    color: #fafafa;
-  }
-  .cl-subscriptionDetailsDetailRowValue {
-    color: #a1a1aa;
-  }
 }
 
 .text-gradient {
