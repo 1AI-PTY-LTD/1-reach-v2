@@ -10,6 +10,16 @@ body {
   body {
     background-color: #18181b;
   }
+
+  /* Clerk's subscription drawer inherits black text from its default theme
+     even when the drawer background is dark. Fix the specific low-contrast
+     detail row elements. */
+  .cl-subscriptionDetailsDetailRowLabel {
+    color: #d4d4d8;
+  }
+  .cl-subscriptionDetailsDetailRowValue {
+    color: #a1a1aa;
+  }
 }
 
 .text-gradient {
