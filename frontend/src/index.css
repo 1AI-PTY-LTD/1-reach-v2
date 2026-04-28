@@ -2,10 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light dark;
-}
-
 body {
   background-color: #ffffff;
 }
@@ -13,6 +9,13 @@ body {
 @media (prefers-color-scheme: dark) {
   body {
     background-color: #18181b;
+  }
+
+  /* Clerk's drawer portal inherits white text from Tailwind's dark mode
+     preflight on <html>, but the drawer has a white background. Override
+     to ensure legible text in dark mode. */
+  .cl-drawerContent {
+    color: #212126;
   }
 }
 
