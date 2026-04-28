@@ -1,16 +1,14 @@
-import { StrictMode, useMemo } from 'react'
+import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import * as Sentry from '@sentry/react'
 import './index.css'
 import { ClerkProvider } from '@clerk/clerk-react'
-import { dark } from '@clerk/themes'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { ApiClientProvider } from './lib/ApiClientProvider'
 import { routeTree } from './routeTree.gen'
 import { LoadingSpinner } from './components/shared/LoadingSpinner'
 import { Toaster } from 'sonner'
-import { usePrefersDark } from './hooks/usePrefersDark'
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
@@ -49,41 +47,9 @@ declare module '@tanstack/react-router' {
   }
 }
 
-function App() {
-  const isDark = usePrefersDark()
-  const clerkAppearance = useMemo(
-    () =>
-      isDark
-        ? {
-            baseTheme: dark,
-            variables: {
-              colorPrimary: '#7400f6',
-              colorPrimaryForeground: 'white',
-              colorDanger: '#FC7091',
-              colorSuccess: '#2CDFB5',
-              colorWarning: '#FEC200',
-              colorBackground: '#18181b',
-              colorInputBackground: '#27272a',
-              colorNeutral: 'white',
-              colorText: '#fafafa',
-              colorTextSecondary: '#a1a1aa',
-              colorForeground: '#fafafa',
-              colorMutedForeground: '#a1a1aa',
-            },
-          }
-        : {
-            variables: {
-              colorPrimary: '#7400f6',
-              colorDanger: '#FC7091',
-              colorSuccess: '#2CDFB5',
-              colorWarning: '#FEC200',
-            },
-          },
-    [isDark],
-  )
-
-  return (
-    <ClerkProvider publishableKey={PUBLISHABLE_KEY} appearance={clerkAppearance}>
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <ClerkProvider publishableKey={PUBLISHABLE_KEY}>
       <QueryClientProvider client={queryClient}>
         <ApiClientProvider>
           <RouterProvider router={router} />
@@ -91,11 +57,5 @@ function App() {
         </ApiClientProvider>
       </QueryClientProvider>
     </ClerkProvider>
-  )
-}
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
   </StrictMode>,
 )
