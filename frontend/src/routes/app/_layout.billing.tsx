@@ -128,7 +128,7 @@ function BillingContent() {
           <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <p className="text-sm text-red-700 dark:text-red-400 font-medium">
               Subscription payment is past due. All message sending is currently blocked.
-              Please update your billing details in the Clerk dashboard to restore service.
+              Please click Manage Plan to update your payment details and restore service.
             </p>
           </div>
         )}

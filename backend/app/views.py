@@ -1255,8 +1255,8 @@ class BillingViewSet(TenantScopedMixin, viewsets.GenericViewSet):
         for inv in invoices:
             result = provider.get_invoice_pdf(inv.provider_invoice_id)
             if result.success and result.content:
-                period_label = inv.period_start.strftime('%Y-%m')
-                results.append((f'invoice-{period_label}.pdf', result.content))
+                month_label = inv.period_start.strftime('%B_%Y').lower()
+                results.append((f'{month_label}_invoice_1reach.pdf', result.content))
 
         if not results:
             return Response(

@@ -415,7 +415,7 @@ class TestInvoiceDownload:
         assert response.status_code == status.HTTP_200_OK
         assert response['Content-Type'] == 'application/pdf'
         assert 'attachment; filename=' in response['Content-Disposition']
-        assert response['Content-Disposition'].endswith('.pdf"')
+        assert '_invoice_1reach.pdf"' in response['Content-Disposition']
 
     @patch('app.views.get_billing_provider')
     def test_multiple_pdf_download_returns_zip(self, mock_get_provider, user, organisation, org_membership):
