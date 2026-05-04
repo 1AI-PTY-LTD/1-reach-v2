@@ -220,4 +220,31 @@ test.describe('Invoices Modal', () => {
     const href = await viewLink.getAttribute('href')
     expect(href).toBeTruthy()
   })
+
+  test('Close button closes modal', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+
+    await page.getByRole('button', { name: /Invoices/i }).click()
+    await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
+
+    // Click Close
+    await page.getByRole('button', { name: /Close/i }).click()
+
+    // Modal should disappear
+    await expect(page.getByRole('heading', { name: 'Invoices' })).not.toBeVisible({ timeout: 3000 })
+  })
+
+  test('Download selected button is disabled with no selection', async ({ page }) => {
+    await page.goto('/app/billing')
+    await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
+
+    await page.getByRole('button', { name: /Invoices/i }).click()
+    await expect(page.getByRole('heading', { name: 'Invoices' })).toBeVisible({ timeout: 5000 })
+
+    // Download button should show count 0 and be disabled
+    const downloadBtn = page.getByRole('button', { name: /Download selected \(0\)/i })
+    await expect(downloadBtn).toBeVisible()
+    await expect(downloadBtn).toBeDisabled()
+  })
 })

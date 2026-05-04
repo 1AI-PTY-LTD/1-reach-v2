@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import { getBillingSummaryQueryOptions, getBillingTransactionsInfiniteOptions, getInvoicesQueryOptions, getInvoicePreviewQueryOptions } from '../billingApi'
+import { getBillingSummaryQueryOptions, getBillingTransactionsInfiniteOptions, getInvoicesQueryOptions, getInvoicePreviewQueryOptions, downloadInvoices } from '../billingApi'
 import { createMockApiClient } from '../../test/test-utils'
 import { server } from '../../test/handlers'
 
@@ -198,6 +198,107 @@ describe('billingApi', () => {
       )
       const options = getInvoicePreviewQueryOptions(client)
       await expect(options.queryFn({} as never)).rejects.toThrow()
+    })
+  })
+
+  describe('downloadInvoices', () => {
+    const mockGetToken = vi.fn().mockResolvedValue('mock-token')
+    let clickedHref: string | undefined
+    let clickedDownload: string | undefined
+
+    beforeEach(() => {
+      clickedHref = undefined
+      clickedDownload = undefined
+      vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock-url')
+      vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    function mockDownloadResponse(options: {
+      contentType?: string
+      contentDisposition?: string
+      body?: string
+      status?: number
+    }) {
+      server.use(
+        http.post('http://localhost:8000/api/billing/invoice-download/', () => {
+          if (options.status && options.status >= 400) {
+            return HttpResponse.json({ detail: 'Not found' }, { status: options.status })
+          }
+          const headers: Record<string, string> = {}
+          if (options.contentType) headers['Content-Type'] = options.contentType
+          if (options.contentDisposition) headers['Content-Disposition'] = options.contentDisposition
+          return new HttpResponse(options.body || '%PDF-1.4 test', { headers })
+        })
+      )
+    }
+
+    it('extracts filename from Content-Disposition header', async () => {
+      mockDownloadResponse({
+        contentType: 'application/pdf',
+        contentDisposition: 'attachment; filename="invoice-2026-03.pdf"',
+      })
+
+      // Spy on createElement to capture the download filename
+      const origCreateElement = document.createElement.bind(document)
+      vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        const el = origCreateElement(tag)
+        if (tag === 'a') {
+          Object.defineProperty(el, 'click', { value: () => {
+            clickedHref = el.getAttribute('href') || undefined
+            clickedDownload = el.getAttribute('download') || undefined
+          }})
+        }
+        return el
+      })
+
+      await downloadInvoices(mockGetToken, [1])
+      expect(clickedDownload).toBe('invoice-2026-03.pdf')
+    })
+
+    it('falls back to pdf filename for pdf content type', async () => {
+      mockDownloadResponse({ contentType: 'application/pdf' })
+
+      const origCreateElement = document.createElement.bind(document)
+      vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        const el = origCreateElement(tag)
+        if (tag === 'a') {
+          Object.defineProperty(el, 'click', { value: () => {
+            clickedDownload = el.getAttribute('download') || undefined
+          }})
+        }
+        return el
+      })
+
+      await downloadInvoices(mockGetToken, [1])
+      expect(clickedDownload).toBe('invoice.pdf')
+    })
+
+    it('falls back to zip filename for zip content type', async () => {
+      mockDownloadResponse({ contentType: 'application/zip' })
+
+      const origCreateElement = document.createElement.bind(document)
+      vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        const el = origCreateElement(tag)
+        if (tag === 'a') {
+          Object.defineProperty(el, 'click', { value: () => {
+            clickedDownload = el.getAttribute('download') || undefined
+          }})
+        }
+        return el
+      })
+
+      await downloadInvoices(mockGetToken, [1, 2])
+      expect(clickedDownload).toBe('invoices.zip')
+    })
+
+    it('throws on error response', async () => {
+      mockDownloadResponse({ status: 404 })
+
+      await expect(downloadInvoices(mockGetToken, [9999])).rejects.toThrow('Not found')
     })
   })
 })

@@ -344,6 +344,25 @@ class TestInvoicePreview:
         assert len(response.data['line_items']) == 1
         assert response.data['line_items'][0]['quantity'] == 2
 
+    def test_preview_with_multiple_formats(self, user, organisation, org_membership):
+        """Preview shows both SMS and MMS usage."""
+        organisation.billing_mode = Organisation.BILLING_SUBSCRIBED
+        organisation.save()
+        record_usage(organisation, 2, 'sms', 'SMS test', user)
+        record_usage(organisation, 1, 'mms', 'MMS test', user)
+
+        from rest_framework.views import APIView
+        client, original_dispatch = make_admin_client(user, organisation)
+        self._original_dispatch = original_dispatch
+
+        response = client.get('/api/billing/invoice-preview/')
+
+        assert response.status_code == status.HTTP_200_OK
+        formats = {item['format'] for item in response.data['line_items']}
+        assert 'sms' in formats
+        assert 'mms' in formats
+        assert len(response.data['line_items']) == 2
+
 
 @pytest.mark.django_db
 class TestInvoiceDownload:
@@ -451,3 +470,70 @@ class TestInvoiceDownload:
         response = self._post_admin(user, organisation, {'invoice_ids': [invoice.pk]})
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_member_denied(self, authenticated_client, organisation, org_membership):
+        """Non-admin members receive 403."""
+        invoice = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_member',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('5.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+        response = authenticated_client.post(
+            '/api/billing/invoice-download/',
+            {'invoice_ids': [invoice.pk]},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_cross_org_invoice_excluded(self, user, organisation, org_membership):
+        """Cannot download invoices belonging to another org."""
+        other_org = OrganisationFactory()
+        other_invoice = Invoice.objects.create(
+            organisation=other_org,
+            provider_invoice_id='inv_other_org',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('10.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+
+        response = self._post_admin(user, organisation, {'invoice_ids': [other_invoice.pk]})
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @patch('app.views.get_billing_provider')
+    def test_partial_pdf_failure_returns_successful_ones(self, mock_get_provider, user, organisation, org_membership):
+        """If one PDF fails but another succeeds, zip contains only the successful one."""
+        inv_ok = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_ok',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('5.00'),
+            period_start='2026-03-01T00:00:00+10:30',
+            period_end='2026-04-01T00:00:00+10:30',
+        )
+        inv_fail = Invoice.objects.create(
+            organisation=organisation,
+            provider_invoice_id='inv_bad',
+            status=Invoice.STATUS_PAID,
+            amount=Decimal('3.00'),
+            period_start='2026-04-01T00:00:00+10:30',
+            period_end='2026-05-01T00:00:00+10:30',
+        )
+
+        mock_provider = mock_get_provider.return_value
+        mock_provider.get_invoice_pdf.side_effect = [
+            PdfResult(success=True, content=b'%PDF-1.4 ok', filename='ok.pdf'),
+            PdfResult(success=False, error='Stripe error'),
+        ]
+
+        response = self._post_admin(user, organisation, {
+            'invoice_ids': [inv_ok.pk, inv_fail.pk],
+        })
+
+        # Only one succeeded, so returns a single PDF (not zip)
+        assert response.status_code == status.HTTP_200_OK
+        assert response['Content-Type'] == 'application/pdf'
