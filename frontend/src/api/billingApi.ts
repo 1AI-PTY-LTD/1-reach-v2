@@ -57,7 +57,9 @@ export async function downloadInvoices(
   const blob = await response.blob()
   const disposition = response.headers.get('Content-Disposition') || ''
   const filenameMatch = disposition.match(/filename="?([^"]+)"?/)
-  const filename = filenameMatch?.[1] || 'invoices.zip'
+  const contentType = response.headers.get('Content-Type') || ''
+  const fallbackFilename = contentType.includes('pdf') ? 'invoice.pdf' : 'invoices.zip'
+  const filename = filenameMatch?.[1] || fallbackFilename
 
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

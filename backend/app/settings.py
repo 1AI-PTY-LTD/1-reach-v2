@@ -203,6 +203,7 @@ SPECTACULAR_SETTINGS = {
 
 # CORS
 CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:5173').split(',')
+CORS_EXPOSE_HEADERS = ['Content-Disposition']
 
 
 # Clerk
