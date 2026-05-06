@@ -88,7 +88,8 @@ test.describe('Billing Page', () => {
     }
     try {
       await setOrgBalance(page, 0)
-      await page.goto('/app/billing')
+      // Full page reload to clear TanStack Query cache and fetch the updated balance
+      await page.reload({ waitUntil: 'networkidle' })
       await expect(page.getByText(/Balance exhausted/).first()).toBeVisible({ timeout: 10000 })
     } finally {
       await setOrgBalance(page, 100).catch(() => {})
