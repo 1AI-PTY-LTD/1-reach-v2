@@ -247,8 +247,8 @@ test.describe('Stripe Billing Integration', () => {
     await page.goto('/app/billing')
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 10000 })
 
-    // Click Cancel Plan — opens Clerk's SubscriptionDetailsButton drawer
-    await page.getByRole('button', { name: /Cancel Plan/i }).click()
+    // Click Manage Plan — opens Clerk's SubscriptionDetailsButton drawer
+    await page.getByRole('button', { name: /Manage Plan/i }).click()
 
     // Clerk's drawer should appear with cancel/manage options
     // Click the cancel action inside the drawer
