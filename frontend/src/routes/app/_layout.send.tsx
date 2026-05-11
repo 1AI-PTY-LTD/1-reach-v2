@@ -13,7 +13,7 @@ import { Button } from '../../ui/button'
 import { Dialog, DialogActions, DialogBody, DialogTitle } from '../../ui/dialog'
 import { getAllTemplatesQueryOptions } from '../../api/templatesApi'
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
-import { sendSms, sendMms, uploadImageFile } from '../../api/smsApi'
+import { sendSms, sendMms, uploadImageFile, alphanumericSendersQueryOptions } from '../../api/smsApi'
 import { useCreateScheduleMutation } from '../../api/schedulesApi'
 import { ScheduleDateTimePicker, isTimeInPast } from '../../components/ScheduleDateTimePicker'
 import { useForm } from '@tanstack/react-form'
@@ -43,6 +43,9 @@ export const Route = createFileRoute('/app/_layout/send')({
 function SendContent() {
   const client = useApiClient()
   const { data: templates } = useSuspenseQuery(getAllTemplatesQueryOptions(client))
+  const { data: sendersData } = useQuery(alphanumericSendersQueryOptions(client))
+  const alphanumericSenders = sendersData?.alphanumeric_senders ?? []
+  const [selectedSender, setSelectedSender] = useState('')
   const [query, setQuery] = useState('')
   const [groupQuery, setGroupQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -216,6 +219,7 @@ function SendContent() {
     setErrorMessage('')
     setInputValue('')
     setSelectedRecipients([])
+    setSelectedSender('')
     form.reset()
     setUploadedFileUrl(null)
     setSelectedFile(null)
@@ -248,6 +252,7 @@ function SendContent() {
             template_id: formValues.templateId ? parseInt(formValues.templateId) : undefined,
             format: uploadedFileUrl ? 'mms' : 'sms',
             media_url: uploadedFileUrl ?? undefined,
+            ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
           successCount += 1
         } catch (e) {
@@ -305,12 +310,14 @@ function SendContent() {
             message: messageText,
             recipients: mappedRecipients,
             media_url: uploadedFileUrl,
+            ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
         } else {
           // SMS: single batch API call for all recipients
           await sendSms(client, {
             message: messageText,
             recipients: mappedRecipients,
+            ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
         }
         resetForm()
@@ -485,6 +492,26 @@ function SendContent() {
                 )}
               />
             }
+
+            {alphanumericSenders.length > 0 && (
+              <Field>
+                <Label className="block mb-2">Sender ID (Optional)</Label>
+                <Select
+                  value={selectedSender}
+                  onChange={(e) => setSelectedSender(e.target.value)}
+                >
+                  <option value="">Default (phone number)</option>
+                  {alphanumericSenders.map((sender) => (
+                    <option key={sender} value={sender}>{sender}</option>
+                  ))}
+                </Select>
+                {selectedSender && (
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Recipients cannot reply to messages sent with an alphanumeric sender ID
+                  </p>
+                )}
+              </Field>
+            )}
 
             <form.Field
               name="templateId"

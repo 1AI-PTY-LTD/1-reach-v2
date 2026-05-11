@@ -13,6 +13,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 - Group messaging with scheduling
 - Template library
 - SMS/MMS sending — single or batch (multi-recipient), async dispatch via Celery with automatic retry and credit refund on failure
+- Alphanumeric sender ID — org admins configure allowed sender IDs, users select one at send time (displayed instead of phone number on recipient handsets; one-way only)
 - Manual retry — failed messages can be retried from the schedule page UI (billing re-checked, credits re-charged for trial orgs)
 - Scheduled sends — Celery beat dispatches due messages every 60 s
 - Org user management — invite, deactivate, grant/revoke admin
@@ -207,6 +208,12 @@ Retry backoff: `min(base × 2^n, max_delay) × (1 ± 25% jitter)` — defaults t
 
 Set via the Configs API (`POST /api/configs/` with `{ "name": "sms_rate", "value": "0.03" }`) or Django admin. The override only applies to the org that owns the Config row — other orgs continue using the global default. Removing the Config row reverts the org to the global rate. When a rate changes, only future sends are affected; past `CreditTransaction` records retain the `unit_rate` they were recorded at, so invoices always reflect the rate that was in effect at time of send.
 
+**Alphanumeric sender ID:** Org admins can configure a whitelist of alphanumeric sender IDs (e.g. "MYCOMPANY", "ALERTS") that replace the default phone number on the recipient's handset. Create a `Config` row with `name='allowed_alphanumeric_senders'` and `value` set to a JSON array of strings. Users can then select a sender ID from a dropdown on the send form. The selected ID is stored on the `Schedule.alphanumeric_sender` field and passed to the Welcorp API as `manual_sender_id` in the job payload. Sender IDs must be 3–11 characters, alphanumeric with optional interior spaces. Messages sent with an alphanumeric sender ID are one-way only — recipients cannot reply. The `GET /api/sms/alphanumeric-senders/` endpoint returns the list of allowed senders for the current org; the send form conditionally shows the dropdown only when this list is non-empty.
+
+| Config `name` | Effect | Example `value` |
+|---|---|---|
+| `allowed_alphanumeric_senders` | Whitelist of sender IDs users can select at send time | `["MYCOMPANY","ALERTS"]` |
+
 **SMS/Storage/Billing providers:** All three are pluggable via `settings.SMS_PROVIDER_CLASS`, `settings.STORAGE_PROVIDER_CLASS`, and `settings.METERED_BILLING_PROVIDER_CLASS`. Mock providers are used by default (dev/testing). The `SMSProvider` base class defines `send_sms()`, `send_bulk_sms()`, `send_mms()`, and `send_bulk_mms()` public methods that handle phone validation/normalisation, then delegate to abstract `_send_sms_impl()` and `_send_mms_impl()` methods. Bulk methods (`_send_bulk_sms_impl`, `_send_bulk_mms_impl`) have default implementations that loop over the individual send method — providers with native batch support can override them.
 
 **Delivery status tracking:** The `SMSProvider` base class also defines a provider-agnostic delivery callback/polling interface. Providers can override `parse_delivery_callback()` to handle incoming webhooks, `validate_callback_request()` for authentication, `get_callback_url()` to register callbacks in send payloads, and `poll_job_status()` to fetch delivery reports on demand. All methods return `DeliveryEvent` objects consumed by the `process_delivery_event` Celery task, which updates schedule status and triggers billing refunds on carrier-reported failures. A `reconcile_stale_sent` beat task polls the provider for schedules stuck in SENT >24h as a fallback when callbacks are missed. The Welcorp provider (`welcorp.py`) implements all four methods. Welcorp's `SENT` status means "carrier accepted" (the best confirmation available — no handset delivery status exists), so it is mapped to `DELIVERED` to mark the schedule as terminal.
@@ -267,10 +274,10 @@ Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in 
 | Schedules | `GET/POST /api/schedules/`, `GET/PUT/PATCH /api/schedules/:id/`, `GET /api/schedules/:id/recipients/`, `POST /api/schedules/:id/retry/` → re-queue failed schedule |
 | Group Schedules | `GET/POST /api/group-schedules/`, `GET/PUT/DELETE /api/group-schedules/:id/` |
 | Users | `GET /api/users/`, `GET /api/users/me/`, `PATCH /api/users/:id/role/`, `PATCH /api/users/:id/status/`, `POST /api/users/invite/` |
-| SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/` |
+| SMS/MMS | `POST /api/sms/send/` → 202, `POST /api/sms/send-to-group/` → 202, `POST /api/sms/send-mms/` → 202, `POST /api/sms/upload-file/`, `GET /api/sms/alphanumeric-senders/` |
 | Stats | `GET /api/stats/monthly/` |
 | Billing | `GET /api/billing/summary/` — balance, monthly usage by format, transaction history, latest invoice (admin only) |
-| Configs | `GET/POST/PUT/PATCH/DELETE /api/configs/`, `GET/PUT/PATCH/DELETE /api/configs/:id/` — per-org key-value settings (e.g. `monthly_limit`, `sms_rate`, `mms_rate`) |
+| Configs | `GET/POST/PUT/PATCH/DELETE /api/configs/`, `GET/PUT/PATCH/DELETE /api/configs/:id/` — per-org key-value settings (e.g. `monthly_limit`, `sms_rate`, `mms_rate`, `allowed_alphanumeric_senders`) |
 | Webhooks | `POST /api/webhooks/clerk/`, `POST /api/webhooks/sms-delivery/`, `POST /api/webhooks/stripe/` |
 | Health | `GET /api/health/` (DB + Redis connectivity), `GET /api/health/smoke/` (DB write + Redis write + deploy version) |
 

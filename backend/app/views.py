@@ -40,6 +40,14 @@ from app.utils.sms import get_sms_provider
 logger = logging.getLogger(__name__)
 
 
+def _validate_alphanumeric_sender(org, alphanumeric_sender):
+    """Validate that the alphanumeric sender is in the org's allowed list."""
+    config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
+    allowed = json.loads(config.value) if config else []
+    if alphanumeric_sender not in allowed:
+        raise ValidationError('Alphanumeric sender not permitted for this organisation.')
+
+
 class UserViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsOrgMember]
@@ -588,6 +596,10 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
         if not can_send:
             return Response({'detail': error}, status=status.HTTP_402_PAYMENT_REQUIRED)
 
+        alphanumeric_sender = data.get('alphanumeric_sender') or None
+        if alphanumeric_sender:
+            _validate_alphanumeric_sender(org, alphanumeric_sender)
+
         # Create parent + one child per member atomically
         with transaction.atomic():
             parent = Schedule.objects.create(
@@ -599,6 +611,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 scheduled_time=data['scheduled_time'],
                 format=MessageFormat.SMS,
                 message_parts=message_parts,
+                alphanumeric_sender=alphanumeric_sender,
                 created_by=request.user,
                 updated_by=request.user,
             )
@@ -614,6 +627,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                     scheduled_time=data['scheduled_time'],
                     format=MessageFormat.SMS,
                     message_parts=message_parts,
+                    alphanumeric_sender=alphanumeric_sender,
                     max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
                     created_by=request.user,
                     updated_by=request.user,
@@ -850,7 +864,8 @@ class SMSViewSet(viewsets.ViewSet):
         return contact
 
     def _dispatch_single(self, org, recipient, message, request, *,
-                         format_type, message_parts, media_url=None, subject=None):
+                         format_type, message_parts, media_url=None, subject=None,
+                         alphanumeric_sender=None):
         """Create one Schedule, record trial billing, dispatch task, return 202."""
         contact = self._resolve_contact(recipient.get('contact_id'), org)
         max_retries = getattr(settings, 'MESSAGE_MAX_RETRIES', 3)
@@ -862,6 +877,7 @@ class SMSViewSet(viewsets.ViewSet):
                 status=ScheduleStatus.QUEUED, message_parts=message_parts,
                 max_retries=max_retries, format=format_type,
                 media_url=media_url, subject=subject,
+                alphanumeric_sender=alphanumeric_sender,
                 created_by=request.user, updated_by=request.user,
             )
             if org.billing_mode == org.BILLING_TRIAL:
@@ -879,7 +895,7 @@ class SMSViewSet(viewsets.ViewSet):
 
     def _dispatch_batch(self, org, members, message, request, *,
                         format_type, message_parts, media_url=None, subject=None,
-                        group=None, description_prefix=None):
+                        group=None, description_prefix=None, alphanumeric_sender=None):
         """Create parent + children, record trial billing, dispatch batch task.
 
         members: list of {'phone': str, 'contact': Contact | None}
@@ -895,6 +911,7 @@ class SMSViewSet(viewsets.ViewSet):
                 scheduled_time=timezone.now(), status=ScheduleStatus.QUEUED,
                 max_retries=max_retries, format=format_type,
                 media_url=media_url, subject=subject,
+                alphanumeric_sender=alphanumeric_sender,
                 created_by=request.user, updated_by=request.user,
             )
 
@@ -905,6 +922,7 @@ class SMSViewSet(viewsets.ViewSet):
                     scheduled_time=timezone.now(), status=ScheduleStatus.QUEUED,
                     message_parts=message_parts, max_retries=max_retries,
                     format=format_type, media_url=media_url, subject=subject,
+                    alphanumeric_sender=alphanumeric_sender,
                     created_by=request.user, updated_by=request.user,
                 )
                 if org.billing_mode == org.BILLING_TRIAL:
@@ -926,6 +944,10 @@ class SMSViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         recipients = data['recipients']
+        alphanumeric_sender = data.get('alphanumeric_sender') or None
+
+        if alphanumeric_sender:
+            _validate_alphanumeric_sender(org, alphanumeric_sender)
 
         can_send, error = check_can_send(org, units=len(recipients), format='sms')
         if not can_send:
@@ -937,6 +959,7 @@ class SMSViewSet(viewsets.ViewSet):
             return self._dispatch_single(
                 org, recipients[0], data['message'], request,
                 format_type=MessageFormat.SMS, message_parts=message_parts,
+                alphanumeric_sender=alphanumeric_sender,
             )
 
         members = [
@@ -946,6 +969,7 @@ class SMSViewSet(viewsets.ViewSet):
         parent = self._dispatch_batch(
             org, members, data['message'], request,
             format_type=MessageFormat.SMS, message_parts=message_parts,
+            alphanumeric_sender=alphanumeric_sender,
         )
         return Response({
             'success': True,
@@ -962,6 +986,10 @@ class SMSViewSet(viewsets.ViewSet):
         serializer = SendGroupSMSSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        alphanumeric_sender = data.get('alphanumeric_sender') or None
+
+        if alphanumeric_sender:
+            _validate_alphanumeric_sender(org, alphanumeric_sender)
 
         group = ContactGroup.objects.filter(id=data['group_id'], organisation=org).first()
         if not group:
@@ -984,6 +1012,7 @@ class SMSViewSet(viewsets.ViewSet):
             org, members, data['message'], request,
             format_type=MessageFormat.SMS, message_parts=message_parts,
             group=group, description_prefix=f"SMS to group '{group.name}'",
+            alphanumeric_sender=alphanumeric_sender,
         )
 
         logger.info('Queued batch SMS for %d group members (group %s)', member_count, group.name)
@@ -1009,6 +1038,10 @@ class SMSViewSet(viewsets.ViewSet):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         recipients = data['recipients']
+        alphanumeric_sender = data.get('alphanumeric_sender') or None
+
+        if alphanumeric_sender:
+            _validate_alphanumeric_sender(org, alphanumeric_sender)
 
         can_send, error = check_can_send(org, units=len(recipients), format='mms')
         if not can_send:
@@ -1022,6 +1055,7 @@ class SMSViewSet(viewsets.ViewSet):
                 org, recipients[0], data['message'], request,
                 format_type=MessageFormat.MMS, message_parts=1,
                 media_url=media_url, subject=subject,
+                alphanumeric_sender=alphanumeric_sender,
             )
 
         members = [
@@ -1032,6 +1066,7 @@ class SMSViewSet(viewsets.ViewSet):
             org, members, data['message'], request,
             format_type=MessageFormat.MMS, message_parts=1,
             media_url=media_url, subject=subject,
+            alphanumeric_sender=alphanumeric_sender,
         )
         return Response({
             'success': True,
@@ -1068,6 +1103,14 @@ class SMSViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': result['error']
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'], url_path='alphanumeric-senders')
+    def alphanumeric_senders(self, request):
+        """GET /api/sms/alphanumeric-senders/ — list allowed alphanumeric senders for the org."""
+        org = self._get_org(request)
+        config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
+        senders = json.loads(config.value) if config else []
+        return Response({'alphanumeric_senders': senders})
 
 
 class BillingViewSet(TenantScopedMixin, viewsets.GenericViewSet):

@@ -393,7 +393,7 @@ def mock_sms_provider():
             success=True, message_id='mock-mms-123', message_parts=1,
         )
 
-        def mock_bulk_send(recipients):
+        def mock_bulk_send(recipients, **kwargs):
             return {
                 'success': True,
                 'results': [
@@ -404,7 +404,7 @@ def mock_sms_provider():
             }
         provider.send_bulk_sms.side_effect = mock_bulk_send
 
-        def mock_bulk_mms_send(recipients):
+        def mock_bulk_mms_send(recipients, **kwargs):
             return {
                 'success': True,
                 'results': [

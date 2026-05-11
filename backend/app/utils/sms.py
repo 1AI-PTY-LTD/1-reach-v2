@@ -95,7 +95,7 @@ class SMSProvider(ABC):
             return 1
         return math.ceil(length / 153)
 
-    def send_sms(self, to: str, message: str) -> SendResult:
+    def send_sms(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
         """Send a single SMS message.
 
         Validates and normalises the phone number, then calls _send_sms_impl().
@@ -108,11 +108,11 @@ class SMSProvider(ABC):
             )
 
         normalised = self._normalise_phone(to)
-        result = self._send_sms_impl(normalised, message)
+        result = self._send_sms_impl(normalised, message, alphanumeric_sender=alphanumeric_sender)
         result.message_parts = self._calculate_sms_parts(message)
         return result
 
-    def send_bulk_sms(self, recipients: list[dict]) -> dict:
+    def send_bulk_sms(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
         """Send SMS to multiple recipients.
 
         Validates and normalises all phone numbers, then calls _send_bulk_sms_impl().
@@ -130,9 +130,10 @@ class SMSProvider(ABC):
                 'message_parts': self._calculate_sms_parts(recipient['message']),
             })
 
-        return self._send_bulk_sms_impl(normalised_recipients)
+        return self._send_bulk_sms_impl(normalised_recipients, alphanumeric_sender=alphanumeric_sender)
 
-    def send_mms(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
+    def send_mms(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
+                 alphanumeric_sender: str | None = None) -> SendResult:
         """Send an MMS message with media.
 
         Validates and normalises the phone number, then calls _send_mms_impl().
@@ -145,11 +146,12 @@ class SMSProvider(ABC):
             )
 
         normalised = self._normalise_phone(to)
-        result = self._send_mms_impl(normalised, message, media_url, subject)
+        result = self._send_mms_impl(normalised, message, media_url, subject,
+                                     alphanumeric_sender=alphanumeric_sender)
         result.message_parts = 1  # MMS is always 1 part
         return result
 
-    def send_bulk_mms(self, recipients: list[dict]) -> dict:
+    def send_bulk_mms(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
         """Send MMS to multiple recipients.
 
         Validates and normalises all phone numbers, then calls _send_bulk_mms_impl().
@@ -170,17 +172,17 @@ class SMSProvider(ABC):
                 'message_parts': 1,  # MMS is always 1 part
             })
 
-        return self._send_bulk_mms_impl(normalised_recipients)
+        return self._send_bulk_mms_impl(normalised_recipients, alphanumeric_sender=alphanumeric_sender)
 
     @abstractmethod
-    def _send_sms_impl(self, to: str, message: str) -> SendResult:
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
         """Implementation method for sending SMS.
 
         Phone number is already validated and normalised to 04XXXXXXXX format.
         """
         pass
 
-    def _send_bulk_sms_impl(self, recipients: list[dict]) -> dict:
+    def _send_bulk_sms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
         """Implementation method for sending bulk SMS.
 
         Default: loops over _send_sms_impl() individually.
@@ -189,7 +191,7 @@ class SMSProvider(ABC):
         results = []
         first_failure: SendResult | None = None
         for r in recipients:
-            result = self._send_sms_impl(r['to'], r['message'])
+            result = self._send_sms_impl(r['to'], r['message'], alphanumeric_sender=alphanumeric_sender)
             results.append({
                 'to': r['to'],
                 'message_parts': r.get('message_parts', self._calculate_sms_parts(r['message'])),
@@ -212,14 +214,15 @@ class SMSProvider(ABC):
         return result_dict
 
     @abstractmethod
-    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
+    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
+                        alphanumeric_sender: str | None = None) -> SendResult:
         """Implementation method for sending MMS.
 
         Phone number is already validated and normalised to 04XXXXXXXX format.
         """
         pass
 
-    def _send_bulk_mms_impl(self, recipients: list[dict]) -> dict:
+    def _send_bulk_mms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
         """Implementation method for sending bulk MMS.
 
         Default: loops over _send_mms_impl() individually.
@@ -228,7 +231,8 @@ class SMSProvider(ABC):
         results = []
         first_failure: SendResult | None = None
         for r in recipients:
-            result = self._send_mms_impl(r['to'], r['message'], r['media_url'], r.get('subject'))
+            result = self._send_mms_impl(r['to'], r['message'], r['media_url'], r.get('subject'),
+                                         alphanumeric_sender=alphanumeric_sender)
             results.append({
                 'to': r['to'],
                 'message_parts': 1,
@@ -296,7 +300,7 @@ class MockSMSProvider(SMSProvider):
     Always returns success with generated message IDs.
     """
 
-    def _send_sms_impl(self, to: str, message: str) -> SendResult:
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
         message_id = f'mock-sms-{uuid.uuid4().hex[:12]}'
 
         logger.info(
@@ -305,12 +309,14 @@ class MockSMSProvider(SMSProvider):
                 'to': to,
                 'message_length': len(message),
                 'message_id': message_id,
+                'alphanumeric_sender': alphanumeric_sender,
             },
         )
 
         return SendResult(success=True, message_id=message_id)
 
-    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
+    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
+                        alphanumeric_sender: str | None = None) -> SendResult:
         message_id = f'mock-mms-{uuid.uuid4().hex[:12]}'
 
         logger.info(

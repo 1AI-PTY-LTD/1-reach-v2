@@ -10,10 +10,10 @@ Implemented:
 - Carrier failure detection via callbacks (FAIL, INVN, BARR, OPTO, etc. → FAILED + refund)
 - Job status polling (GET /jobs/{job_id}) as reconciliation fallback
 - Welcorp SENT = carrier accepted (best available confirmation) → mapped to DELIVERED
+- Custom sender ID (manual_sender_id)
 
 Future features to implement:
 - Merge fields for personalised message content per recipient
-- Custom sender ID (manual_sender_id)
 - 2-way SMS (replies via callback)
 """
 
@@ -131,15 +131,17 @@ class WelcorpSMSProvider(SMSProvider):
             failure_category=fc.value,
         )
 
-    def _send_sms_impl(self, to: str, message: str) -> SendResult:
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
         payload = {
             'job_type': 'sms',
             'message': message,
             'recipients': [{'destination': self._to_international(to)}],
         }
+        if alphanumeric_sender:
+            payload['manual_sender_id'] = alphanumeric_sender
         return self._post_job(payload)
 
-    def _send_bulk_sms_impl(self, recipients: list[dict]) -> dict:
+    def _send_bulk_sms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
         welcorp_recipients = [
             {
                 'destination': self._to_international(r['to']),
@@ -158,6 +160,8 @@ class WelcorpSMSProvider(SMSProvider):
             'message': message,
             'recipients': welcorp_recipients,
         }
+        if alphanumeric_sender:
+            payload['manual_sender_id'] = alphanumeric_sender
 
         result = self._post_job(payload)
 
@@ -346,7 +350,8 @@ class WelcorpSMSProvider(SMSProvider):
         ext = PurePosixPath(path).suffix.lower()
         return f'media{ext}' if ext else None
 
-    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None) -> SendResult:
+    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
+                        alphanumeric_sender: str | None = None) -> SendResult:
         filename = self._media_filename(media_url)
         if not filename:
             return SendResult(
@@ -363,10 +368,12 @@ class WelcorpSMSProvider(SMSProvider):
         }
         if subject:
             payload['subject'] = subject
+        if alphanumeric_sender:
+            payload['manual_sender_id'] = alphanumeric_sender
 
         return self._post_job(payload)
 
-    def _send_bulk_mms_impl(self, recipients: list[dict]) -> dict:
+    def _send_bulk_mms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
         welcorp_recipients = [
             {
                 'destination': self._to_international(r['to']),
@@ -401,6 +408,8 @@ class WelcorpSMSProvider(SMSProvider):
         }
         if subject:
             payload['subject'] = subject
+        if alphanumeric_sender:
+            payload['manual_sender_id'] = alphanumeric_sender
 
         result = self._post_job(payload)
 

@@ -1,3 +1,4 @@
+import { queryOptions } from '@tanstack/react-query'
 import type { ApiClient } from '../lib/helper'
 import type {
   SendSmsRequest,
@@ -8,6 +9,17 @@ import type {
   FileUploadResponse,
 } from '../types/sms.types'
 import Logger from '../utils/logger'
+
+export type AlphanumericSendersResponse = {
+  alphanumeric_senders: string[]
+}
+
+export function alphanumericSendersQueryOptions(client: ApiClient) {
+  return queryOptions({
+    queryKey: ['alphanumeric-senders'],
+    queryFn: () => client.get<AlphanumericSendersResponse>('/api/sms/alphanumeric-senders/'),
+  })
+}
 
 export async function sendSms(client: ApiClient, props: SendSmsRequest): Promise<SendSmsResponse> {
   Logger.debug('Sending SMS', {
@@ -21,6 +33,7 @@ export async function sendSms(client: ApiClient, props: SendSmsRequest): Promise
   const data = await client.post<SendSmsResponse>('/api/sms/send/', {
     message: props.message,
     recipients: props.recipients,
+    ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
   })
 
   Logger.info('SMS sent successfully', {
@@ -40,6 +53,7 @@ export async function sendSmsToGroup(client: ApiClient, props: SendGroupSmsReque
   const data = await client.post<SendGroupSmsResponse>('/api/sms/send-to-group/', {
     message: props.message,
     group_id: props.group_id,
+    ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
   })
 
   Logger.info('SMS sent to group successfully', {
@@ -72,6 +86,7 @@ export async function sendMms(client: ApiClient, props: SendMmsRequest): Promise
     recipients: props.recipients,
     media_url: props.media_url,
     ...(props.subject && { subject: props.subject }),
+    ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
   })
 
   Logger.info('MMS sent successfully', {

@@ -19,6 +19,22 @@ def validate_phone_number(value):
     return cleaned
 
 
+ALPHANUMERIC_SENDER_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 ]{1,9}[A-Za-z0-9]$')
+
+
+def validate_alphanumeric_sender(value):
+    """Validate alphanumeric sender ID: 3-11 chars, alphanumeric + interior spaces."""
+    if not value:
+        return value
+    value = value.strip()
+    if not ALPHANUMERIC_SENDER_RE.match(value):
+        raise serializers.ValidationError(
+            'Alphanumeric sender must be 3-11 characters, alphanumeric and spaces only, '
+            'cannot start or end with a space.'
+        )
+    return value
+
+
 def validate_sms_message(value, allow_empty=False):
     """Validate and clean SMS/MMS message text."""
     cleaned = value.strip()
@@ -169,7 +185,7 @@ class ScheduleSerializer(serializers.ModelSerializer):
             'group', 'parent', 'recipient_count',
             'scheduled_time', 'sent_time',
             'status', 'error',
-            'format', 'media_url', 'subject',
+            'format', 'media_url', 'subject', 'alphanumeric_sender',
             'provider_message_id', 'retry_count', 'max_retries',
             'next_retry_at', 'failure_category', 'delivered_time',
             'created_at', 'updated_at',
@@ -188,6 +204,9 @@ class ScheduleSerializer(serializers.ModelSerializer):
             return v
         return value
 
+    def validate_alphanumeric_sender(self, value):
+        return validate_alphanumeric_sender(value) if value else value
+
     def validate_scheduled_time(self, value):
         if value <= timezone.now():
             raise serializers.ValidationError('Scheduled time must be in the future.')
@@ -205,11 +224,15 @@ class GroupScheduleCreateSerializer(serializers.Serializer):
     text = serializers.CharField(max_length=306, required=False, allow_null=True, allow_blank=True)
     group_id = serializers.IntegerField(min_value=1)
     scheduled_time = serializers.DateTimeField()
+    alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
 
     def validate_scheduled_time(self, value):
         if value <= timezone.now():
             raise serializers.ValidationError('Scheduled time must be in the future.')
         return value
+
+    def validate_alphanumeric_sender(self, value):
+        return validate_alphanumeric_sender(value) if value else value
 
     def validate(self, attrs):
         has_template = attrs.get('template_id')
@@ -253,17 +276,25 @@ class SendSMSSerializer(serializers.Serializer):
     recipients = serializers.ListField(
         child=RecipientSerializer(), min_length=1, max_length=500,
     )
+    alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
 
     def validate_message(self, value):
         return validate_sms_message(value)
+
+    def validate_alphanumeric_sender(self, value):
+        return validate_alphanumeric_sender(value) if value else value
 
 
 class SendGroupSMSSerializer(serializers.Serializer):
     message = serializers.CharField(min_length=1, max_length=306)
     group_id = serializers.IntegerField(min_value=1)
+    alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
 
     def validate_message(self, value):
         return validate_sms_message(value)
+
+    def validate_alphanumeric_sender(self, value):
+        return validate_alphanumeric_sender(value) if value else value
 
 
 class SendMMSSerializer(serializers.Serializer):
@@ -273,6 +304,7 @@ class SendMMSSerializer(serializers.Serializer):
         child=RecipientSerializer(), min_length=1, max_length=500,
     )
     subject = serializers.CharField(max_length=64, required=False, allow_blank=True, allow_null=True)
+    alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
 
     def validate_message(self, value):
         return validate_sms_message(value, allow_empty=True)
@@ -281,6 +313,9 @@ class SendMMSSerializer(serializers.Serializer):
         if value:
             return value.strip()
         return value
+
+    def validate_alphanumeric_sender(self, value):
+        return validate_alphanumeric_sender(value) if value else value
 
 
 class CreditTransactionSerializer(serializers.ModelSerializer):

@@ -151,9 +151,11 @@ def _dispatch_to_provider(provider, schedule: Schedule) -> SendResult:
             message=schedule.text or '',
             media_url=schedule.media_url or '',
             subject=schedule.subject,
+            alphanumeric_sender=schedule.alphanumeric_sender,
         )
     # SMS (and any future formats that share the (to, message) signature)
-    return provider.send_sms(to=schedule.phone, message=schedule.text or '')
+    return provider.send_sms(to=schedule.phone, message=schedule.text or '',
+                             alphanumeric_sender=schedule.alphanumeric_sender)
 
 
 def _handle_success(schedule: Schedule, result: SendResult) -> None:
@@ -399,9 +401,9 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
             recipients[i]['media_url'] = child.media_url or ''
             recipients[i]['subject'] = child.subject
             recipients[i]['message_parts'] = 1
-        result = provider.send_bulk_mms(recipients)
+        result = provider.send_bulk_mms(recipients, alphanumeric_sender=parent.alphanumeric_sender)
     else:
-        result = provider.send_bulk_sms(recipients)
+        result = provider.send_bulk_sms(recipients, alphanumeric_sender=parent.alphanumeric_sender)
 
     if result['success']:
         _handle_batch_success(parent, children, result)

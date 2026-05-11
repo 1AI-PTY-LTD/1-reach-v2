@@ -6,11 +6,13 @@ export type SendSmsRecipient = {
 export type SendSmsRequest = {
   message: string
   recipients: SendSmsRecipient[]
+  alphanumeric_sender?: string
 }
 
 export type SendGroupSmsRequest = {
   message: string
   group_id: number
+  alphanumeric_sender?: string
 }
 
 export type SendMmsRequest = {
@@ -18,6 +20,7 @@ export type SendMmsRequest = {
   media_url: string
   recipients: SendSmsRecipient[]
   subject?: string
+  alphanumeric_sender?: string
 }
 
 export type SendSmsResponse = {

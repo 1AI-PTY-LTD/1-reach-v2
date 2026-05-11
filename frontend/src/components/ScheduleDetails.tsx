@@ -171,6 +171,14 @@ export function ScheduleDetails({ message }: { message: Schedule | undefined }) 
 
 	return (
 		<div className="">
+			{message.alphanumeric_sender && (
+				<div className="px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400">
+					<span className="font-medium">Sender ID:</span>{' '}
+					<span className="inline-flex items-center rounded-md bg-purple-50 dark:bg-purple-900/30 px-2 py-0.5 text-xs font-medium text-purple-700 dark:text-purple-300 ring-1 ring-inset ring-purple-700/10 dark:ring-purple-300/20">
+						{message.alphanumeric_sender}
+					</span>
+				</div>
+			)}
 			<Table>
 				<TableHead>
 					<TableRow>

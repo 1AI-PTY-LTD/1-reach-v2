@@ -190,6 +190,7 @@ class Schedule(TenantModel, AuditMixin):
     format = models.CharField(max_length=10, choices=MessageFormat.choices, blank=True, null=True)
     media_url = models.URLField(blank=True, null=True)
     subject = models.CharField(max_length=64, blank=True, null=True)
+    alphanumeric_sender = models.CharField(max_length=11, blank=True, null=True)
     # Retry / delivery tracking fields
     provider_message_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     retry_count = models.PositiveSmallIntegerField(default=0)
