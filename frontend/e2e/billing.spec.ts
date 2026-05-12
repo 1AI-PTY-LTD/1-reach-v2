@@ -88,9 +88,13 @@ test.describe('Billing Page', () => {
     }
     try {
       await setOrgBalance(page, 0)
-      // Full page reload to clear TanStack Query cache and fetch the updated balance
+      // Set up response listener before reload so we don't miss the API response
+      const billingResponse = page.waitForResponse(
+        resp => resp.url().includes('/api/billing/summary') && resp.status() === 200
+      )
       await page.reload({ waitUntil: 'networkidle' })
-      await expect(page.getByText(/Balance exhausted/).first()).toBeVisible({ timeout: 10000 })
+      await billingResponse
+      await expect(page.getByText(/Balance exhausted/).first()).toBeVisible({ timeout: 15000 })
     } finally {
       await setOrgBalance(page, 100).catch(() => {})
     }
