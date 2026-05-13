@@ -215,7 +215,7 @@ test.describe('MMS — file upload and send', () => {
   })
 
   test('file upload rejects oversized file', async ({ page }) => {
-    const largeBuffer = Buffer.alloc(500 * 1024, 0) // 500KB
+    const largeBuffer = Buffer.alloc(2.5 * 1024 * 1024, 0) // 2.5MB (exceeds 2MB limit)
     try {
       await uploadFile(page, largeBuffer, 'large.png', 'image/png')
       throw new Error('Expected upload to fail')
