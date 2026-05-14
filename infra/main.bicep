@@ -69,6 +69,8 @@ param SENTRY_ENVIRONMENT string
 param FREE_CREDIT_AMOUNT string
 param SMS_RATE string
 param MMS_RATE string
+param DEBUG string
+param TEST string
 
 // ============================================================================
 // Modules
@@ -177,7 +179,8 @@ var sharedEnv = [
   { name: 'MMS_RATE', value: MMS_RATE }
 
   // Django settings
-  { name: 'DEBUG', value: '0' }
+  { name: 'DEBUG', value: DEBUG }
+  { name: 'TEST', value: TEST }
   { name: 'DB_POOL', value: 'true' }
   { name: 'LOG_FORMAT', value: 'json' }
   { name: 'LOG_LEVEL', value: 'INFO' }

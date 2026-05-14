@@ -17,4 +17,8 @@ param WORKER_MEMORY = '1Gi'
 param BEAT_CPU = '0.25'
 param BEAT_MEMORY = '0.5Gi'
 
-// All app config (secrets + non-secrets) comes from infra/.env.prod via deploy.sh
+// Django
+param DEBUG = '0'
+param TEST = 'False'
+
+// All other app config comes from infra/.env.prod via deploy.sh
