@@ -93,21 +93,11 @@ module acr 'modules/acr.bicep' = {
   }
 }
 
-module logAnalytics 'modules/log-analytics.bicep' = {
-  name: 'log-analytics'
-  params: {
-    location: location
-    ENVIRONMENT_NAME: ENVIRONMENT_NAME
-  }
-}
-
 module acaEnv 'modules/aca-environment.bicep' = {
   name: 'aca-environment'
   params: {
     location: location
     ENVIRONMENT_NAME: ENVIRONMENT_NAME
-    logAnalyticsCustomerId: logAnalytics.outputs.customerId
-    logAnalyticsSharedKey: logAnalytics.outputs.sharedKey
   }
 }
 
