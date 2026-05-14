@@ -28,7 +28,8 @@ param WORKER_MEMORY string
 param BEAT_CPU string
 param BEAT_MEMORY string
 
-// --- Secrets (values come from infra/.env.dev or .env.prod via deploy.sh) ---
+// --- App config (all values come from infra/.env.<env> via deploy.sh) ---
+
 @secure()
 param DJANGO_SECRET_KEY string
 @secure()
@@ -44,18 +45,29 @@ param STRIPE_WEBHOOK_SECRET string
 @secure()
 param CELERY_BROKER_URL string
 @secure()
-param STORAGE_ACCOUNT_KEY string
-
-// --- Non-secret config ---
+param AZURE_STORAGE_ACCOUNT_KEY string
+@secure()
+param WELCORP_PASSWORD string
+@secure()
+param WELCORP_CALLBACK_SECRET string
 param POSTGRES_HOST string
 param POSTGRES_DB string
 param POSTGRES_USER string
-param ALLOWED_HOSTS string
-param CORS_ALLOWED_ORIGINS string
 param CLERK_FRONTEND_API string
 param CLERK_AUTHORIZED_PARTIES string
-param STORAGE_ACCOUNT_NAME string
-param STORAGE_CONTAINER string
+param ALLOWED_HOSTS string
+param CORS_ALLOWED_ORIGINS string
+param AZURE_STORAGE_ACCOUNT_NAME string
+param AZURE_CONTAINER string
+param SMS_PROVIDER_CLASS string
+param WELCORP_BASE_URL string
+param WELCORP_USERNAME string
+param BASE_URL string
+param SENTRY_DSN string
+param SENTRY_ENVIRONMENT string
+param FREE_CREDIT_AMOUNT string
+param SMS_RATE string
+param MMS_RATE string
 
 // ============================================================================
 // Modules
@@ -109,7 +121,9 @@ var secrets = [
   { name: 'stripe-secret-key', value: STRIPE_SECRET_KEY }
   { name: 'stripe-webhook-secret', value: STRIPE_WEBHOOK_SECRET }
   { name: 'celery-broker-url', value: CELERY_BROKER_URL }
-  { name: 'storage-account-key', value: STORAGE_ACCOUNT_KEY }
+  { name: 'azure-storage-account-key', value: AZURE_STORAGE_ACCOUNT_KEY }
+  { name: 'welcorp-password', value: WELCORP_PASSWORD }
+  { name: 'welcorp-callback-secret', value: WELCORP_CALLBACK_SECRET }
 ]
 
 // Environment variables shared by API, worker, and beat
@@ -123,7 +137,9 @@ var sharedEnv = [
   { name: 'CLERK_WEBHOOK_SIGNING_SECRET', secretRef: 'clerk-webhook-signing-secret' }
   { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-secret-key' }
   { name: 'STRIPE_WEBHOOK_SECRET', secretRef: 'stripe-webhook-secret' }
-  { name: 'AZURE_STORAGE_ACCOUNT_KEY', secretRef: 'storage-account-key' }
+  { name: 'AZURE_STORAGE_ACCOUNT_KEY', secretRef: 'azure-storage-account-key' }
+  { name: 'WELCORP_PASSWORD', secretRef: 'welcorp-password' }
+  { name: 'WELCORP_CALLBACK_SECRET', secretRef: 'welcorp-callback-secret' }
 
   // Database
   { name: 'POSTGRES_HOST', value: POSTGRES_HOST }
@@ -141,8 +157,23 @@ var sharedEnv = [
 
   // Storage
   { name: 'STORAGE_PROVIDER_CLASS', value: 'app.utils.storage.AzureBlobStorageProvider' }
-  { name: 'AZURE_STORAGE_ACCOUNT_NAME', value: STORAGE_ACCOUNT_NAME }
-  { name: 'AZURE_CONTAINER', value: STORAGE_CONTAINER }
+  { name: 'AZURE_STORAGE_ACCOUNT_NAME', value: AZURE_STORAGE_ACCOUNT_NAME }
+  { name: 'AZURE_CONTAINER', value: AZURE_CONTAINER }
+
+  // SMS provider
+  { name: 'SMS_PROVIDER_CLASS', value: SMS_PROVIDER_CLASS }
+  { name: 'WELCORP_BASE_URL', value: WELCORP_BASE_URL }
+  { name: 'WELCORP_USERNAME', value: WELCORP_USERNAME }
+  { name: 'BASE_URL', value: BASE_URL }
+
+  // Monitoring
+  { name: 'SENTRY_DSN', value: SENTRY_DSN }
+  { name: 'SENTRY_ENVIRONMENT', value: SENTRY_ENVIRONMENT }
+
+  // Billing
+  { name: 'FREE_CREDIT_AMOUNT', value: FREE_CREDIT_AMOUNT }
+  { name: 'SMS_RATE', value: SMS_RATE }
+  { name: 'MMS_RATE', value: MMS_RATE }
 
   // Django settings
   { name: 'DEBUG', value: '0' }
