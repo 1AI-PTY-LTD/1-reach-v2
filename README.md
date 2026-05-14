@@ -482,15 +482,27 @@ infra/
 **Provisioning:**
 
 ```bash
-# Preview changes (dry run)
+# Preview what Bicep will create/change (dry run — no changes applied)
 ./infra/deploy.sh preview dev
 
-# Provision or update infrastructure
+# Provision infrastructure or update config (creates/updates ACR, ACA environment, container apps, secrets, env vars)
+# Use when: first-time setup, adding new env vars, changing CPU/memory/scaling, updating secrets
 ./infra/deploy.sh deploy dev
-./infra/deploy.sh deploy prod
+
+# Stop all containers (scales to zero replicas — no cost while stopped)
+# Use when: done working for the day, environment not needed temporarily
+./infra/deploy.sh stop dev
+
+# Start all containers (restores scaling from .env file)
+# Use when: resuming work, need the environment running again
+./infra/deploy.sh start dev
 ```
 
-Secrets are loaded from `infra/.env.dev` or `infra/.env.prod` (gitignored). Same `UPPER_SNAKE_CASE` names as GitHub secrets — one list, zero conversion. Copy `infra/.env.example` to get started.
+All config lives in one file per environment: `infra/.env.dev` or `infra/.env.prod` (gitignored). Same `UPPER_SNAKE_CASE` names as GitHub secrets — one list, zero conversion. Copy `infra/.env.example` to get started.
+
+Note: `deploy` and `stop`/`start` serve different purposes. `deploy` runs the full Bicep template (provisions resources, updates config). `stop`/`start` only changes replica counts — use them to save cost when the environment isn't needed, without re-running the full deployment.
+
+`deploy` is safe to run repeatedly on a running environment. ACA performs a rolling revision update — it creates a new revision with the updated config, routes traffic to it once healthy, and deactivates the old revision. No downtime. If nothing changed in the `.env` file, Bicep detects no diff and does nothing.
 
 ### Environment Variables
 
