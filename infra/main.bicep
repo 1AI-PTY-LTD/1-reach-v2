@@ -59,6 +59,7 @@ param ALLOWED_HOSTS string
 param CORS_ALLOWED_ORIGINS string
 param AZURE_STORAGE_ACCOUNT_NAME string
 param AZURE_CONTAINER string
+param STORAGE_PROVIDER_CLASS string
 param SMS_PROVIDER_CLASS string
 param WELCORP_BASE_URL string
 param WELCORP_USERNAME string
@@ -156,7 +157,7 @@ var sharedEnv = [
   { name: 'CORS_ALLOWED_ORIGINS', value: CORS_ALLOWED_ORIGINS }
 
   // Storage
-  { name: 'STORAGE_PROVIDER_CLASS', value: 'app.utils.storage.AzureBlobStorageProvider' }
+  { name: 'STORAGE_PROVIDER_CLASS', value: STORAGE_PROVIDER_CLASS }
   { name: 'AZURE_STORAGE_ACCOUNT_NAME', value: AZURE_STORAGE_ACCOUNT_NAME }
   { name: 'AZURE_CONTAINER', value: AZURE_CONTAINER }
 
