@@ -2,7 +2,7 @@ param location string
 param ENVIRONMENT_NAME string
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2025-02-01' = {
-  name: '1reach-logs-${ENVIRONMENT_NAME}'
+  name: 'onereach-logs-${ENVIRONMENT_NAME}'
   location: location
   properties: {
     sku: { name: 'PerGB2018' }
@@ -11,7 +11,7 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2025-02-01' = {
 }
 
 resource env 'Microsoft.App/managedEnvironments@2025-01-01' = {
-  name: '1reach-${ENVIRONMENT_NAME}'
+  name: 'onereach-${ENVIRONMENT_NAME}'
   location: location
   properties: {
     appLogsConfiguration: {

@@ -189,7 +189,7 @@ var containerImage = !empty(IMAGE_NAME) ? IMAGE_NAME : 'mcr.microsoft.com/k8se/q
 module api 'modules/container-app.bicep' = {
   name: 'api'
   params: {
-    appName: '1reach-api-${ENVIRONMENT_NAME}'
+    appName: 'onereach-api-${ENVIRONMENT_NAME}'
     location: location
     environmentId: acaEnv.outputs.environmentId
     identityId: identity.outputs.identityId
@@ -215,7 +215,7 @@ module api 'modules/container-app.bicep' = {
 module worker 'modules/container-app.bicep' = {
   name: 'worker'
   params: {
-    appName: '1reach-worker-${ENVIRONMENT_NAME}'
+    appName: 'onereach-worker-${ENVIRONMENT_NAME}'
     location: location
     environmentId: acaEnv.outputs.environmentId
     identityId: identity.outputs.identityId
@@ -238,7 +238,7 @@ module worker 'modules/container-app.bicep' = {
 module beat 'modules/container-app.bicep' = {
   name: 'beat'
   params: {
-    appName: '1reach-beat-${ENVIRONMENT_NAME}'
+    appName: 'onereach-beat-${ENVIRONMENT_NAME}'
     location: location
     environmentId: acaEnv.outputs.environmentId
     identityId: identity.outputs.identityId

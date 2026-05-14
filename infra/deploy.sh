@@ -49,9 +49,9 @@ done < "$ENV_FILE"
 [ -n "$RESOURCE_GROUP" ] || { echo "Error: RESOURCE_GROUP not set in $ENV_FILE"; exit 1; }
 [ -n "$ENVIRONMENT_NAME" ] || { echo "Error: ENVIRONMENT_NAME not set in $ENV_FILE"; exit 1; }
 
-API_APP="1reach-api-${ENVIRONMENT_NAME}"
-WORKER_APP="1reach-worker-${ENVIRONMENT_NAME}"
-BEAT_APP="1reach-beat-${ENVIRONMENT_NAME}"
+API_APP="onereach-api-${ENVIRONMENT_NAME}"
+WORKER_APP="onereach-worker-${ENVIRONMENT_NAME}"
+BEAT_APP="onereach-beat-${ENVIRONMENT_NAME}"
 
 echo "Environment: $ENV"
 echo "Resource group: $RESOURCE_GROUP"
