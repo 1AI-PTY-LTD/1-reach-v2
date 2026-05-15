@@ -466,16 +466,13 @@ All Azure resources are defined in `infra/`:
 
 ```
 infra/
-├── main.bicep                  # Orchestrator
-├── main.dev.bicepparam         # Dev parameter values
-├── main.prod.bicepparam        # Prod parameter values
-├── deploy.sh                   # Helper script (reads secrets from .env file)
-├── .env.example                # Template for secret values
+├── main.bicep                  # Orchestrator — all params, modules, env vars
+├── deploy.sh                   # CLI tool (deploy, push, stop, start, preview)
+├── .env.example                # Template — copy to .env.dev / .env.prod
 └── modules/
     ├── identity.bicep          # User-assigned managed identity
     ├── acr.bicep               # Container Registry + AcrPull role
-    ├── log-analytics.bicep     # Log Analytics Workspace
-    ├── aca-environment.bicep   # ACA Environment
+    ├── aca-environment.bicep   # ACA Environment + Log Analytics
     └── container-app.bicep     # Reusable container app module
 ```
 
@@ -489,6 +486,10 @@ infra/
 # Use when: first-time setup, adding new env vars, changing CPU/memory/scaling, updating secrets
 ./infra/deploy.sh deploy dev
 
+# Build, push, and deploy new code to all containers
+# Use when: you've made code changes and want to deploy them
+./infra/deploy.sh push dev
+
 # Stop all containers (scales to zero replicas — no cost while stopped)
 # Use when: done working for the day, environment not needed temporarily
 ./infra/deploy.sh stop dev
@@ -498,11 +499,11 @@ infra/
 ./infra/deploy.sh start dev
 ```
 
-All config lives in one file per environment: `infra/.env.dev` or `infra/.env.prod` (gitignored). Same `UPPER_SNAKE_CASE` names as GitHub secrets — one list, zero conversion. Copy `infra/.env.example` to get started.
+All config lives in one file per environment: `infra/.env.dev` or `infra/.env.prod` (gitignored). Copy `infra/.env.example` to get started.
 
-Note: `deploy` and `stop`/`start` serve different purposes. `deploy` runs the full Bicep template (provisions resources, updates config). `stop`/`start` only changes replica counts — use them to save cost when the environment isn't needed, without re-running the full deployment.
+**`deploy` vs `push`:** `deploy` runs the full Bicep template (provisions resources, updates config/secrets/env vars). `push` builds a Docker image, pushes it to ACR, and updates all 3 containers with the new image. Use `deploy` for config changes, `push` for code changes.
 
-`deploy` is safe to run repeatedly on a running environment. ACA performs a rolling revision update — it creates a new revision with the updated config, routes traffic to it once healthy, and deactivates the old revision. No downtime. If nothing changed in the `.env` file, Bicep detects no diff and does nothing.
+`deploy` is safe to run repeatedly on a running environment. ACA performs a rolling revision update — it creates a new revision with the updated config, routes traffic to it once healthy, and deactivates the old revision (`activeRevisionsMode: 'Single'`). No downtime. If nothing changed in the `.env` file, Bicep detects no diff and does nothing.
 
 ### Environment Variables
 
@@ -515,12 +516,29 @@ Env vars are **not baked into the Docker image**. The image is generic — the s
 | **Build-time only** | Docker `ARG` | `DEPLOY_SHA` (the only build-time value) |
 | **Frontend** | Baked into JS bundle by Vite | `VITE_API_BASE_URL`, `VITE_CLERK_PUBLISHABLE_KEY` |
 
-### GitHub Secrets
+### GitHub Actions Configuration
+
+**Secrets** (sensitive values):
 
 | Secret | Purpose |
 |--------|---------|
 | `AZURE_CREDENTIALS` | Service principal JSON for `azure/login` |
 | `AZURE_RESOURCE_GROUP` | Resource group name |
+| `AZURE_POSTGRES_*` | Host, server name, resource group, DB, user, password (for migration safety) |
+| `AZURE_SWA_TOKEN_DEV` | Dev Static Web App deploy token |
+| `AZURE_SWA_TOKEN_PROD` | Prod Static Web App deploy token |
+| `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
+| `E2E_CLERK_*` | Clerk test credentials for E2E |
+| `STRIPE_SECRET_KEY` | Stripe test key (for E2E) |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook secret (for E2E) |
+| `VITE_SENTRY_DSN` | Frontend Sentry DSN |
+| `SENTRY_AUTH_TOKEN` | Sentry release tracking (optional) |
+| `SENTRY_ORG` / `SENTRY_PROJECT_*` | Sentry org and project slugs |
+
+**Variables** (non-sensitive values, set in Settings → Variables):
+
+| Variable | Purpose |
+|----------|---------|
 | `ACR_LOGIN_SERVER` | e.g., `1reachcr.azurecr.io` |
 | `ACA_API_APP_NAME` | Prod API container app name |
 | `ACA_WORKER_APP_NAME` | Prod worker container app name |
@@ -528,16 +546,8 @@ Env vars are **not baked into the Docker image**. The image is generic — the s
 | `ACA_DEV_API_APP_NAME` | Dev API container app name |
 | `ACA_DEV_WORKER_APP_NAME` | Dev worker container app name |
 | `ACA_DEV_BEAT_APP_NAME` | Dev beat container app name |
-| `AZURE_POSTGRES_*` | Host, server name, resource group, DB, user, password (for migration safety) |
 | `VITE_API_BASE_URL_DEV` | Dev API URL |
 | `VITE_API_BASE_URL_PROD` | Prod API URL |
-| `AZURE_SWA_TOKEN_DEV` | Dev Static Web App deploy token |
-| `AZURE_SWA_TOKEN_PROD` | Prod Static Web App deploy token |
-| `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
-| `E2E_CLERK_*` | Clerk test credentials for E2E |
-| `VITE_SENTRY_DSN` | Frontend Sentry DSN |
-| `SENTRY_AUTH_TOKEN` | Sentry release tracking (optional) |
-| `SENTRY_ORG` / `SENTRY_PROJECT_*` | Sentry org and project slugs |
 
 #### Creating AZURE_CREDENTIALS
 
@@ -575,35 +585,15 @@ Edit `infra/.env.dev` with all values — infrastructure params (scaling, CPU/me
 ./infra/deploy.sh deploy dev
 ```
 
-#### 3. Build and push the backend Docker image
-
-The image must be built for `linux/amd64` (ACA runs x86, not ARM):
+#### 3. Build, push, and deploy the backend
 
 ```bash
-az acr login --name <acr-name>
-
-docker build --platform linux/amd64 \
-  --build-arg DEPLOY_SHA=manual-test \
-  -t <acr-name>.azurecr.io/1reach-backend:dev-test \
-  ./backend
-
-docker push <acr-name>.azurecr.io/1reach-backend:dev-test
+./infra/deploy.sh push dev
 ```
 
-#### 4. Deploy the real image to container apps
+This builds the Docker image for `linux/amd64`, tags it with the git SHA, pushes to ACR, and updates all 3 containers. The old revision is automatically deactivated (`activeRevisionsMode: 'Single'`).
 
-```bash
-IMAGE="<acr-name>.azurecr.io/1reach-backend:dev-test"
-RG="<resource-group>"
-
-az containerapp update --name onereach-api-dev --resource-group $RG --image $IMAGE
-az containerapp update --name onereach-worker-dev --resource-group $RG --image $IMAGE
-az containerapp update --name onereach-beat-dev --resource-group $RG --image $IMAGE
-```
-
-This is safe because `activeRevisionsMode: 'Single'` (set by Bicep) ensures the old revision is automatically deactivated when the new one is healthy. The image update creates a new revision that inherits all existing config (ports, probes, env vars, scaling) from the current revision.
-
-#### 5. Verify
+#### 4. Verify
 
 ```bash
 # Check the API container logs
@@ -618,12 +608,12 @@ curl https://<api-fqdn>/api/health/smoke/
 
 The API FQDN is shown in the `deploy` output, or find it in the Azure Portal under the container app's Overview page.
 
-#### 6. Configure Clerk and Stripe webhooks
+#### 5. Configure Clerk and Stripe webhooks
 
 - **Clerk Dashboard → Webhooks → Add Endpoint:** URL: `https://<api-fqdn>/api/webhooks/clerk/`. Subscribe to all events listed in [Clerk Configuration](#clerk-configuration).
 - **Stripe Dashboard → Webhooks → Add endpoint:** URL: `https://<api-fqdn>/api/webhooks/stripe/`. API version `2026-03-25.dahlia`. Subscribe to events listed in [Stripe Configuration](#stripe-configuration).
 
-#### 7. Grant AcrPush to GitHub Actions service principal
+#### 6. Grant AcrPush to GitHub Actions service principal
 
 Required for the CD workflows to push images:
 
@@ -631,17 +621,17 @@ Required for the CD workflows to push images:
 az role assignment create --assignee <SP_APP_ID> --role AcrPush --scope <ACR_RESOURCE_ID>
 ```
 
-#### 8. Set GitHub secrets
+#### 7. Set GitHub secrets and variables
 
-Set all secrets listed in the [GitHub Secrets](#github-secrets) table above.
+Set all secrets and variables listed in the [GitHub Actions Configuration](#github-actions-configuration) section above.
 
-#### 9. Test the full flow
+#### 8. Test the full flow
 
 - Sign in via Clerk on the dev frontend
 - Send a test message — verify schedule transitions
 - Check billing, webhook delivery, worker/beat logs
 
-#### 10. Set up production
+#### 9. Set up production
 
 Repeat steps 1-9 using `infra/.env.prod` with production values (`DEBUG=0`, `TEST=False`, higher scaling/CPU, production Clerk/Stripe keys, etc.).
 
@@ -749,6 +739,7 @@ Each ACA environment has a linked Log Analytics workspace (provisioned by Bicep)
 - **Clerk webhook signing secret** — must exactly match the signing secret in the Clerk Dashboard. A mismatch causes Svix verification to fail → 400 → webhooks silently not processed.
 
 #### Azure Cache for Redis
+- **ACA outbound IPs and Redis firewall** — ACA on the Consumption plan uses shared outbound IPs that aren't predictable. If your Redis firewall blocks all connections, enable "Allow public network access from Azure services and resources" in Azure Cache for Redis → Networking. This is what allows ACA (and App Services) to connect without explicit IP rules. Without it, the health endpoint hangs on the Redis ping and startup probes fail.
 - **Access key authentication disabled by default** — new Azure Redis instances have access key auth disabled. Celery connections fail with "invalid username-password pair". Fix: Azure Cache for Redis → Authentication → untick "Disable Access Keys Authentication".
 - **Use `rediss://` (TLS) on port `6380`** — Azure Redis requires TLS. Connection URL format: `rediss://:<access-key>@<redis-name>.redis.cache.windows.net:6380/0`.
 - **Do not URL-encode the access key** — Azure Redis access keys may end in `=`. Do **not** URL-encode `=` to `%3D` — `redis-py` handles `=` correctly. URL-encoding causes auth failures.
