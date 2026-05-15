@@ -46,12 +46,12 @@ jobs:
           fi
 
       - name: Log in to ACR
-        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+        run: az acr login --name ${{ vars.ACR_LOGIN_SERVER }}
 
       - name: Build and push Docker image
         working-directory: backend
         run: |
-          IMAGE="${{ secrets.ACR_LOGIN_SERVER }}/1reach-backend:dev-${{ github.sha }}"
+          IMAGE="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:dev-${{ github.sha }}"
           docker build \
             --build-arg DEPLOY_SHA=${{ github.sha }} \
             -t "$IMAGE" \
@@ -69,14 +69,14 @@ jobs:
 
       - name: Update container apps
         env:
-          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/1reach-backend:dev-${{ github.sha }}
+          IMAGE: ${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:dev-${{ github.sha }}
           RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
-          az containerapp update --name ${{ secrets.ACA_DEV_API_APP_NAME }} \
+          az containerapp update --name ${{ vars.ACA_DEV_API_APP_NAME }} \
             --resource-group "$RG" --image "$IMAGE"
-          az containerapp update --name ${{ secrets.ACA_DEV_WORKER_APP_NAME }} \
+          az containerapp update --name ${{ vars.ACA_DEV_WORKER_APP_NAME }} \
             --resource-group "$RG" --image "$IMAGE"
-          az containerapp update --name ${{ secrets.ACA_DEV_BEAT_APP_NAME }} \
+          az containerapp update --name ${{ vars.ACA_DEV_BEAT_APP_NAME }} \
             --resource-group "$RG" --image "$IMAGE"
 
   verify-health:
@@ -85,7 +85,7 @@ jobs:
     steps:
       - name: Wait for new instance (smoke test + version check)
         run: |
-          URL="${{ secrets.VITE_API_BASE_URL_DEV }}/api/health/smoke/"
+          URL="${{ vars.VITE_API_BASE_URL_DEV }}/api/health/smoke/"
           EXPECTED_SHA="${{ github.sha }}"
           echo "Polling $URL until version=$EXPECTED_SHA..."
           for i in $(seq 1 30); do
@@ -127,7 +127,7 @@ jobs:
         env:
           CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_VITE_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL_DEV }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL_DEV }}
         run: npx playwright test
 
       - name: Upload Playwright report on failure

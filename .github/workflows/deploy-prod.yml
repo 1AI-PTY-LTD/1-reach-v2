@@ -171,13 +171,13 @@ jobs:
             --rule-name github-runner --yes 2>/dev/null || true
 
       - name: Log in to ACR
-        run: az acr login --name ${{ secrets.ACR_LOGIN_SERVER }}
+        run: az acr login --name ${{ vars.ACR_LOGIN_SERVER }}
 
       - name: Build and push Docker image
         working-directory: backend
         run: |
-          IMAGE="${{ secrets.ACR_LOGIN_SERVER }}/1reach-backend:${{ github.sha }}"
-          IMAGE_LATEST="${{ secrets.ACR_LOGIN_SERVER }}/1reach-backend:latest"
+          IMAGE="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:${{ github.sha }}"
+          IMAGE_LATEST="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:latest"
           docker build \
             --build-arg DEPLOY_SHA=${{ github.sha }} \
             -t "$IMAGE" \
@@ -197,14 +197,14 @@ jobs:
 
       - name: Update container apps
         env:
-          IMAGE: ${{ secrets.ACR_LOGIN_SERVER }}/1reach-backend:${{ github.sha }}
+          IMAGE: ${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:${{ github.sha }}
           RG: ${{ secrets.AZURE_RESOURCE_GROUP }}
         run: |
-          az containerapp update --name ${{ secrets.ACA_API_APP_NAME }} \
+          az containerapp update --name ${{ vars.ACA_API_APP_NAME }} \
             --resource-group "$RG" --image "$IMAGE"
-          az containerapp update --name ${{ secrets.ACA_WORKER_APP_NAME }} \
+          az containerapp update --name ${{ vars.ACA_WORKER_APP_NAME }} \
             --resource-group "$RG" --image "$IMAGE"
-          az containerapp update --name ${{ secrets.ACA_BEAT_APP_NAME }} \
+          az containerapp update --name ${{ vars.ACA_BEAT_APP_NAME }} \
             --resource-group "$RG" --image "$IMAGE"
 
   verify-health:
@@ -213,7 +213,7 @@ jobs:
     steps:
       - name: Wait for new instance (smoke test + version check)
         run: |
-          URL="${{ secrets.VITE_API_BASE_URL_PROD }}/api/health/smoke/"
+          URL="${{ vars.VITE_API_BASE_URL_PROD }}/api/health/smoke/"
           EXPECTED_SHA="${{ github.sha }}"
           echo "Polling $URL until version=$EXPECTED_SHA..."
           for i in $(seq 1 30); do

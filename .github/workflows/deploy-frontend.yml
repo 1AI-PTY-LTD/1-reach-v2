@@ -18,12 +18,12 @@ jobs:
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
             echo "token=${{ secrets.AZURE_SWA_TOKEN_PROD }}" >> "$GITHUB_OUTPUT"
-            echo "api_url=${{ secrets.VITE_API_BASE_URL_PROD }}" >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ vars.VITE_API_BASE_URL_PROD }}" >> "$GITHUB_OUTPUT"
             echo "sentry_env=production" >> "$GITHUB_OUTPUT"
             echo "env_name=production" >> "$GITHUB_OUTPUT"
           else
             echo "token=${{ secrets.AZURE_SWA_TOKEN_DEV }}" >> "$GITHUB_OUTPUT"
-            echo "api_url=${{ secrets.VITE_API_BASE_URL_DEV }}" >> "$GITHUB_OUTPUT"
+            echo "api_url=${{ vars.VITE_API_BASE_URL_DEV }}" >> "$GITHUB_OUTPUT"
             echo "sentry_env=development" >> "$GITHUB_OUTPUT"
             echo "env_name=dev" >> "$GITHUB_OUTPUT"
           fi
