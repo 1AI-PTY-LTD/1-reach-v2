@@ -99,10 +99,33 @@ case "$ACTION" in
     echo "Pushing $IMAGE..."
     docker push "$IMAGE"
 
-    echo "Updating containers..."
-    az containerapp update --name "$API_APP" --resource-group "$RESOURCE_GROUP" --image "$IMAGE"
-    az containerapp update --name "$WORKER_APP" --resource-group "$RESOURCE_GROUP" --image "$IMAGE"
-    az containerapp update --name "$BEAT_APP" --resource-group "$RESOURCE_GROUP" --image "$IMAGE"
+    # Update each container app, then clean up old revisions after all updates complete
+    OLD_REVS=""
+    for APP in "$API_APP" "$WORKER_APP" "$BEAT_APP"; do
+      echo "Updating $APP..."
+      OLD_REV=$(az containerapp revision list --name "$APP" --resource-group "$RESOURCE_GROUP" \
+        --query "[?properties.trafficWeight==\`100\`].name" -o tsv 2>/dev/null || echo "")
+      if [ -n "$OLD_REV" ]; then
+        OLD_REVS="$OLD_REVS $APP=$OLD_REV"
+      fi
+      az containerapp update --name "$APP" --resource-group "$RESOURCE_GROUP" --image "$IMAGE"
+    done
+
+    # Wait for new revisions to be running before deactivating old ones
+    echo "Waiting for new revisions to activate..."
+    sleep 30
+
+    for ENTRY in $OLD_REVS; do
+      APP="${ENTRY%%=*}"
+      OLD_REV="${ENTRY#*=}"
+      NEW_REV=$(az containerapp revision list --name "$APP" --resource-group "$RESOURCE_GROUP" \
+        --query "[?properties.trafficWeight==\`100\`].name" -o tsv 2>/dev/null || echo "")
+      if [ -n "$NEW_REV" ] && [ "$OLD_REV" != "$NEW_REV" ]; then
+        echo "Deactivating old revision $OLD_REV on $APP..."
+        az containerapp revision deactivate --name "$APP" --resource-group "$RESOURCE_GROUP" \
+          --revision "$OLD_REV" 2>/dev/null || true
+      fi
+    done
     echo "All containers updated to $IMAGE"
     ;;
   stop)
