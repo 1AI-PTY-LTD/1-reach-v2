@@ -69,6 +69,15 @@ case "$ACTION" in
       --what-if
     ;;
   deploy)
+    # Preserve the current running image so Bicep doesn't reset to placeholder.
+    # If the container app already exists, read its image and pass it to Bicep.
+    CURRENT_IMAGE=$(az containerapp show --name "$API_APP" --resource-group "$RESOURCE_GROUP" \
+      --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "")
+    if [ -n "$CURRENT_IMAGE" ] && [ "$CURRENT_IMAGE" != "mcr.microsoft.com/k8se/quickstart:latest" ]; then
+      echo "Preserving current image: $CURRENT_IMAGE"
+      PARAMS="$PARAMS IMAGE_NAME=$CURRENT_IMAGE"
+    fi
+
     az deployment group create \
       --resource-group "$RESOURCE_GROUP" \
       --template-file "$TEMPLATE_FILE" \
