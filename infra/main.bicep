@@ -204,6 +204,8 @@ var sharedEnv = [
 
 // Use placeholder image on first deploy (ACR is empty until CI pushes a real image)
 var containerImage = !empty(IMAGE_NAME) ? IMAGE_NAME : 'mcr.microsoft.com/k8se/quickstart:latest'
+// Skip health probes when using placeholder image (it listens on port 80, not 8000)
+var apiHealthProbe = !empty(IMAGE_NAME) ? '/api/health/' : ''
 
 // ============================================================================
 // Container Apps
@@ -231,7 +233,7 @@ module api 'modules/container-app.bicep' = {
       { name: 'DB_POOL_MIN_SIZE', value: '2' }
       { name: 'DB_POOL_MAX_SIZE', value: '8' }
     ])
-    healthProbePath: '/api/health/'
+    healthProbePath: apiHealthProbe
   }
 }
 
