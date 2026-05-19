@@ -12,7 +12,16 @@ targetScope = 'resourceGroup'
 param ENVIRONMENT_NAME string // 'dev' or 'prod'
 param location string = resourceGroup().location
 param ACR_NAME string
+param CREATE_ACR string // 'true' to create ACR, 'false' to reuse existing
+param ACR_LOGIN_SERVER string // Used when CREATE_ACR=false (e.g. '1reachcr.azurecr.io')
 param IMAGE_NAME string = '' // Empty on first deploy → uses placeholder image
+
+// --- VNet (prod only) ---
+param USE_VNET string // 'true' for prod (VNet + private endpoints), 'false' for dev
+param VNET_NAME string
+param VNET_CIDR string
+param ACA_SUBNET_CIDR string
+param PE_SUBNET_CIDR string
 
 // --- Scaling ---
 param API_MIN_REPLICAS int
@@ -84,7 +93,7 @@ module identity 'modules/identity.bicep' = {
   }
 }
 
-module acr 'modules/acr.bicep' = {
+module acr 'modules/acr.bicep' = if (CREATE_ACR == 'true') {
   name: 'acr'
   params: {
     ACR_NAME: ACR_NAME
@@ -93,11 +102,25 @@ module acr 'modules/acr.bicep' = {
   }
 }
 
+var acrServer = CREATE_ACR == 'true' ? acr.outputs.loginServer : ACR_LOGIN_SERVER
+
+module vnet 'modules/vnet.bicep' = if (USE_VNET == 'true') {
+  name: 'vnet'
+  params: {
+    location: location
+    VNET_NAME: VNET_NAME
+    VNET_CIDR: VNET_CIDR
+    ACA_SUBNET_CIDR: ACA_SUBNET_CIDR
+    PE_SUBNET_CIDR: PE_SUBNET_CIDR
+  }
+}
+
 module acaEnv 'modules/aca-environment.bicep' = {
   name: 'aca-environment'
   params: {
     location: location
     ENVIRONMENT_NAME: ENVIRONMENT_NAME
+    infrastructureSubnetId: USE_VNET == 'true' ? vnet.outputs.acaSubnetId : ''
   }
 }
 
@@ -181,6 +204,8 @@ var sharedEnv = [
 
 // Use placeholder image on first deploy (ACR is empty until CI pushes a real image)
 var containerImage = !empty(IMAGE_NAME) ? IMAGE_NAME : 'mcr.microsoft.com/k8se/quickstart:latest'
+// Skip health probes when using placeholder image (it listens on port 80, not 8000)
+var apiHealthProbe = !empty(IMAGE_NAME) ? '/api/health/' : ''
 
 // ============================================================================
 // Container Apps
@@ -193,7 +218,7 @@ module api 'modules/container-app.bicep' = {
     location: location
     environmentId: acaEnv.outputs.environmentId
     identityId: identity.outputs.identityId
-    acrLoginServer: acr.outputs.loginServer
+    acrLoginServer: acrServer
     image: containerImage
     cpu: API_CPU
     memory: API_MEMORY
@@ -208,7 +233,7 @@ module api 'modules/container-app.bicep' = {
       { name: 'DB_POOL_MIN_SIZE', value: '2' }
       { name: 'DB_POOL_MAX_SIZE', value: '8' }
     ])
-    healthProbePath: '/api/health/'
+    healthProbePath: apiHealthProbe
   }
 }
 
@@ -219,7 +244,7 @@ module worker 'modules/container-app.bicep' = {
     location: location
     environmentId: acaEnv.outputs.environmentId
     identityId: identity.outputs.identityId
-    acrLoginServer: acr.outputs.loginServer
+    acrLoginServer: acrServer
     image: containerImage
     cpu: WORKER_CPU
     memory: WORKER_MEMORY
@@ -242,7 +267,7 @@ module beat 'modules/container-app.bicep' = {
     location: location
     environmentId: acaEnv.outputs.environmentId
     identityId: identity.outputs.identityId
-    acrLoginServer: acr.outputs.loginServer
+    acrLoginServer: acrServer
     image: containerImage
     cpu: BEAT_CPU
     memory: BEAT_MEMORY
@@ -263,4 +288,4 @@ module beat 'modules/container-app.bicep' = {
 // ============================================================================
 
 output apiUrl string = api.outputs.fqdn
-output acrLoginServer string = acr.outputs.loginServer
+output acrLoginServer string = acrServer

@@ -471,7 +471,7 @@ infra/
 ├── .env.example                # Template — copy to .env.dev / .env.prod
 └── modules/
     ├── identity.bicep          # User-assigned managed identity
-    ├── acr.bicep               # Container Registry + AcrPull role
+    ├── acr.bicep               # Container Registry + AcrPull role (conditional — shared across environments)
     ├── aca-environment.bicep   # ACA Environment + Log Analytics
     └── container-app.bicep     # Reusable container app module
 ```
@@ -633,7 +633,51 @@ Set all secrets and variables listed in the [GitHub Actions Configuration](#gith
 
 #### 9. Set up production
 
-Repeat steps 1-9 using `infra/.env.prod` with production values (`DEBUG=0`, `TEST=False`, higher scaling/CPU, production Clerk/Stripe keys, etc.).
+Production uses its own resource group, ACA environment, Redis, and PostgreSQL database — but **shares the ACR** with dev. The same Docker image is deployed to both environments, so E2E tests on dev validate the exact image that runs in prod.
+
+1. **Azure prerequisites:**
+   - Create resource group (e.g., `v2-1reach-prod`)
+   - Create a separate Redis instance (enable access key auth + "Allow Azure services")
+   - Create a database on the production PostgreSQL server
+   - Check `max_connections` on the prod PostgreSQL — increase if low
+   - Create a production Static Web App (free tier)
+
+2. **Create `infra/.env.prod`:**
+   ```bash
+   cp infra/.env.dev infra/.env.prod
+   ```
+   Key differences from dev:
+   - `RESOURCE_GROUP` → prod resource group
+   - `ENVIRONMENT_NAME=prod`
+   - `CREATE_ACR=false` (reuse dev's ACR)
+   - `ACR_LOGIN_SERVER=1reachcr.azurecr.io`
+   - `DEBUG=0`, `TEST=False`
+   - Higher scaling: `API_MAX_REPLICAS=3`, `WORKER_MAX_REPLICAS=3`
+   - More resources: `API_CPU=0.5`, `API_MEMORY=1Gi`, `WORKER_CPU=0.5`, `WORKER_MEMORY=1Gi`
+   - Production DB, Redis, Clerk, Stripe, and Sentry values
+   - `SENTRY_ENVIRONMENT=production`
+   - New strong `DJANGO_SECRET_KEY`
+
+3. **Provision, push, verify:**
+   ```bash
+   ./infra/deploy.sh preview prod
+   ./infra/deploy.sh deploy prod
+   ./infra/deploy.sh push prod
+   curl https://<prod-api-fqdn>/api/health/
+   ```
+
+4. **Grant prod identity access to shared ACR:**
+   ```bash
+   ACR_ID=$(az acr show --name 1reachcr --resource-group v2-1reach-dev --query "id" -o tsv)
+   PROD_PRINCIPAL=$(az identity show --name onereach-identity-prod --resource-group v2-1reach-prod --query "principalId" -o tsv)
+   az role assignment create --assignee $PROD_PRINCIPAL --role AcrPull --scope $ACR_ID
+   ```
+
+5. **Configure Clerk + Stripe webhooks** with the prod API FQDN
+
+6. **Set GitHub variables** (`ACA_API_APP_NAME`, `ACA_WORKER_APP_NAME`, `ACA_BEAT_APP_NAME`, `VITE_API_BASE_URL_PROD`) and secret (`AZURE_SWA_TOKEN_PROD`)
+
+7. **Update `ALLOWED_HOSTS` and `BASE_URL`** in `.env.prod` with the actual prod API FQDN, then re-run `./infra/deploy.sh deploy prod`
 
 ### Migration Safety (production only)
 
