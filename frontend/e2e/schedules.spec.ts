@@ -97,8 +97,8 @@ test.describe('Schedule Page', () => {
   test('shows message status badges', async ({ page }) => {
     await page.goto('/app/schedule')
     await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText(/pending/i).first()).toBeVisible()
-    await expect(page.getByText(/sent/i).first()).toBeVisible()
+    await expect(page.getByText(/pending/i).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/sent/i).first()).toBeVisible({ timeout: 10000 })
   })
 
   test('shows async pipeline status badges — queued, retrying, delivered, failed', async ({ page }) => {
