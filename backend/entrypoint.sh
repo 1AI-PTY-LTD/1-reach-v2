@@ -19,7 +19,7 @@ done
 # CONTAINER_ROLE is set as an env var on each ACA container app (via Bicep).
 # Can also be passed as the first argument (e.g. CMD ["worker"] in docker-compose).
 # If the first argument is not a known role, treat it as an arbitrary command (e.g. pytest).
-ROLE="${1:-${CONTAINER_ROLE:-api}}"
+ROLE="${CONTAINER_ROLE:-${1:-api}}"
 
 case "$ROLE" in
   api)
