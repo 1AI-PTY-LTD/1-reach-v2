@@ -14,27 +14,27 @@ jobs:
       - name: Create .env files
         run: |
           cat > backend/.env <<EOF
-          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_SECRET_KEY=ci-test-secret-key
           DEBUG=1
           TEST=1
-          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=app
+          POSTGRES_USER=app
+          POSTGRES_PASSWORD=app
           POSTGRES_HOST=db
           POSTGRES_PORT=5432
           ALLOWED_HOSTS=localhost,127.0.0.1
           CORS_ALLOWED_ORIGINS=http://localhost:5173
-          CLERK_FRONTEND_API=${{ secrets.E2E_CLERK_FRONTEND_API }}
+          CLERK_FRONTEND_API=https://example.clerk.accounts.dev
           CLERK_SECRET_KEY=${{ secrets.E2E_CLERK_SECRET_KEY }}
-          CLERK_WEBHOOK_SIGNING_SECRET=${{ secrets.E2E_CLERK_WEBHOOK_SIGNING_SECRET }}
+          CLERK_WEBHOOK_SIGNING_SECRET=whsec_test
           CLERK_AUTHORIZED_PARTIES=http://localhost:5173
           CELERY_BROKER_URL=redis://redis:6379/0
           CELERY_RESULT_BACKEND=redis://redis:6379/0
           FREE_CREDIT_AMOUNT=10.00
           SMS_RATE=0.05
           MMS_RATE=0.20
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_SECRET_KEY=sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET=whsec_test
           EOF
           touch frontend/.env
 
@@ -74,17 +74,17 @@ jobs:
       - name: Create backend/.env
         run: |
           cat > backend/.env <<'EOF'
-          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+          DJANGO_SECRET_KEY=ci-test-secret-key
           DEBUG=1
           TEST=True
-          POSTGRES_DB=${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER=${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB=app
+          POSTGRES_USER=app
+          POSTGRES_PASSWORD=app
           POSTGRES_HOST=db
           POSTGRES_PORT=5432
           ALLOWED_HOSTS=localhost,127.0.0.1,backend
           CORS_ALLOWED_ORIGINS=http://localhost:5173
-          CLERK_FRONTEND_API=${{ secrets.E2E_CLERK_FRONTEND_API }}
+          CLERK_FRONTEND_API=https://example.clerk.accounts.dev
           CLERK_SECRET_KEY=${{ secrets.E2E_CLERK_SECRET_KEY }}
           CLERK_AUTHORIZED_PARTIES=http://localhost:5173
           CELERY_BROKER_URL=redis://redis:6379/0
@@ -92,8 +92,8 @@ jobs:
           FREE_CREDIT_AMOUNT=10.00
           SMS_RATE=0.05
           MMS_RATE=0.20
-          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_SECRET_KEY=sk_test_placeholder
+          STRIPE_WEBHOOK_SECRET=whsec_test
           DB_CONN_MAX_AGE=0
           EOF
 
