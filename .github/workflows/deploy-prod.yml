@@ -41,8 +41,8 @@ jobs:
       - name: Add runner IP to PostgreSQL firewall
         run: |
           az postgres flexible-server firewall-rule create \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --rule-name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
@@ -82,8 +82,8 @@ jobs:
         id: tier
         run: |
           SKU_TIER=$(az postgres flexible-server show \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --query sku.tier -o tsv)
           echo "DB tier: $SKU_TIER"
           echo "tier=$SKU_TIER" >> "$GITHUB_OUTPUT"
@@ -97,26 +97,26 @@ jobs:
         if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true'
         id: replica
         run: |
-          REPLICA_NAME="${{ secrets.AZURE_POSTGRES_SERVER_NAME }}-replica"
+          REPLICA_NAME="${{ vars.AZURE_POSTGRES_SERVER_NAME }}-replica"
           echo "name=$REPLICA_NAME" >> "$GITHUB_OUTPUT"
           echo "Creating replica: $REPLICA_NAME"
           az postgres flexible-server replica create \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --source-server ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --source-server ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --name "$REPLICA_NAME"
           echo "Promoting replica to read-write..."
           az postgres flexible-server replica promote \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "$REPLICA_NAME" --yes
           echo "Adding runner IP to replica firewall..."
           az postgres flexible-server firewall-rule create \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "$REPLICA_NAME" \
             --rule-name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
           REPLICA_HOST=$(az postgres flexible-server show \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "$REPLICA_NAME" \
             --query fullyQualifiedDomainName -o tsv)
           echo "host=$REPLICA_HOST" >> "$GITHUB_OUTPUT"
@@ -142,8 +142,8 @@ jobs:
           BACKUP_NAME="pre-deploy-$(date -u +%Y%m%d-%H%M%S)"
           echo "Creating production backup: $BACKUP_NAME"
           az postgres flexible-server backup create \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --backup-name "$BACKUP_NAME"
 
       - name: Run migration on production DB
@@ -163,15 +163,15 @@ jobs:
         if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true' && always()
         run: |
           az postgres flexible-server delete \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name "${{ steps.replica.outputs.name }}" --yes 2>/dev/null || true
 
       - name: Remove runner IP from firewall
         if: always()
         run: |
           az postgres flexible-server firewall-rule delete \
-            --resource-group ${{ secrets.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ secrets.AZURE_POSTGRES_SERVER_NAME }} \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --rule-name github-runner --yes 2>/dev/null || true
 
       - name: Log in to ACR
