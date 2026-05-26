@@ -196,6 +196,12 @@ export const seedUsage      = (p: Page, d: { format: string; amount: string; des
   apiRequest(p, 'POST', '/api/billing/test-seed-usage/', d)
 export const generateInvoices = (p: Page) =>
   apiRequest(p, 'POST', '/api/billing/test-generate-invoices/', {})
+
+/** Days to backdate so the resulting date lands on ~the 15th of the previous month. */
+export function daysIntoPreviousMonth(): number {
+  const now = new Date()
+  return now.getDate() + 15
+}
 export const getBillingSummary = (p: Page) =>
   apiRequest(p, 'GET', '/api/billing/summary/')
 export const linkBillingCustomer = (p: Page) =>

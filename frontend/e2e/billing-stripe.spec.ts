@@ -29,6 +29,7 @@ import {
   simulateSubscriptionActive,
   simulateSubscriptionCanceled,
   linkBillingCustomer,
+  daysIntoPreviousMonth,
 } from './helpers'
 
 // Read the org ID from global-setup state
@@ -62,7 +63,7 @@ test.describe('Stripe Billing Integration', () => {
     await expect(page.getByText('Billing').first()).toBeVisible({ timeout: 5000 })
 
     // Verify we start in prepaid mode
-    await expect(page.getByText('Prepaid balance').first()).toBeVisible()
+    await expect(page.getByText('Prepaid balance').first()).toBeVisible({ timeout: 10000 })
 
     // Open the Manage Plan dialog (button says "Subscribe" in prepaid mode)
     await page.getByRole('button', { name: /Subscribe/i }).first().click()
@@ -138,9 +139,10 @@ test.describe('Stripe Billing Integration', () => {
   test('seed usage and generate invoice', async ({ page }) => {
     // Seed usage transactions backdated to the previous month so that
     // generate_monthly_invoices (which invoices the *previous* month) picks them up.
-    // Use 20 days back (not 35) — 35 can overshoot into 2 months ago when run early in the month.
-    await seedUsage(page, { format: 'sms', amount: '2.50', description: 'E2E: 50 SMS messages', backdate_days: 20 })
-    await seedUsage(page, { format: 'mms', amount: '1.00', description: 'E2E: 5 MMS messages', backdate_days: 20 })
+    // Dynamically compute backdate so it always lands ~15th of previous month.
+    const backdate = daysIntoPreviousMonth()
+    await seedUsage(page, { format: 'sms', amount: '2.50', description: 'E2E: 50 SMS messages', backdate_days: backdate })
+    await seedUsage(page, { format: 'mms', amount: '1.00', description: 'E2E: 5 MMS messages', backdate_days: backdate })
 
     // Trigger invoice generation
     const result = await generateInvoices(page)

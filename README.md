@@ -358,6 +358,8 @@ The E2E tests are **UI integration tests** — they exercise real HTTP calls aga
 
 ## Clerk Configuration
 
+### Development instance
+
 1. Create an application in the [Clerk Dashboard](https://dashboard.clerk.com)
 2. Enable **Organizations** in the Clerk Dashboard
 3. Enable **Organization Invitations** (Organizations → Settings)
@@ -371,6 +373,22 @@ The E2E tests are **UI integration tests** — they exercise real HTTP calls aga
 6. Set the **Application name** in Settings → General (appears in invitation emails)
 
 For E2E tests in CI, set `CLERK_SECRET_KEY` as a secret. The test infrastructure creates and tears down its own Clerk users and orgs automatically via `global-setup.ts` / `global-teardown.ts`.
+
+### Production instance
+
+The production Clerk instance is created from the development instance using Clerk's **clone** feature, which copies auth methods, password policies, organization settings, session config, and billing plans automatically.
+
+**What must be configured manually in the production instance:**
+
+1. **Domain** — add your custom domain in Clerk Dashboard → Domains. Clerk provides DNS records (CNAME for the Clerk FAPI subdomain + TXT for verification). After DNS propagation and verification, Clerk provisions SSL automatically. The resulting FAPI URL (e.g., `https://clerk.yourdomain.com`) becomes the `CLERK_FRONTEND_API` backend env var — it must exactly match the JWT `iss` claim or all authentication fails.
+2. **OAuth providers** — dev uses Clerk's shared OAuth credentials; production requires your own. Register production OAuth apps (Google, GitHub, etc.) and enter the credentials in Clerk Dashboard → Social connections. Clerk provides the redirect URI to add to each provider.
+3. **Webhook endpoint** — create in Clerk Dashboard → Webhooks with the production backend URL. Subscribe to all events listed above. Record the new `whsec_...` signing secret.
+4. **Bot protection** — enable CAPTCHA (Cloudflare Turnstile) in Clerk Dashboard → Attack protection. Only available in production instances.
+5. **Stripe connection** — connect your production Stripe account in Clerk Billing settings. Verify the cloned subscription plan is correct.
+
+**Production API keys** use `pk_live_`/`sk_live_` prefixes (vs. `pk_test_`/`sk_test_` in dev). Update all environment variables accordingly — see [Environment Variables](#environment-variables).
+
+**E2E tests must NOT run against the production instance** — `global-setup.ts` uses `skipPasswordRequirement` (not supported in production) and posts unsigned webhooks (rejected when `TEST=False`).
 
 ## Stripe Configuration
 
@@ -400,9 +418,7 @@ Note: Welcorp does not provide true handset delivery confirmation — their `SEN
 
 ### 2. Remaining Clerk Production Configuration
 
-- Set `CLERK_AUTHORIZED_PARTIES`, `CORS_ALLOWED_ORIGINS`, and `ALLOWED_HOSTS` to include the production frontend URL (all three are env-var driven; current values are `localhost` / `localhost:5173`)
 - Confirm Clerk email templates (invitation, sign-up, magic link) are correctly branded
-- Configure Clerk to require verified email addresses (Clerk Dashboard → User & Authentication)
 
 ---
 
@@ -456,8 +472,8 @@ main branch
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
 | `ci.yml` | PRs to `development` | Runs pytest, vitest, typecheck, E2E in GitHub docker runners |
-| `deploy-dev.yml` | Push to `development` | Builds image → pushes to ACR → updates dev ACA → runs E2E against dev |
-| `deploy-prod.yml` | Push to `main` | Replica-tests migrations → builds image → updates prod ACA → smoke test |
+| `deploy-dev.yml` | Push to `development` | Builds image → pushes to ACR → deploys to dev ACA → runs E2E against dev |
+| `deploy-prod.yml` | Push to `main` | Replica-tests migrations → builds image → deploys to prod ACA → smoke test |
 | `deploy-frontend.yml` | Push to `development` or `main` (frontend changes) | Builds Vite → deploys to dev or prod Static Web App |
 
 ### Infrastructure as Code (Bicep)
@@ -479,16 +495,15 @@ infra/
 **Provisioning:**
 
 ```bash
-# Preview what Bicep will create/change (dry run — no changes applied)
-./infra/deploy.sh preview dev
+# First-time setup — creates ACA environment, VNet, identity, container apps with placeholder image
+./infra/deploy.sh init dev
 
-# Provision infrastructure or update config (creates/updates ACR, ACA environment, container apps, secrets, env vars)
-# Use when: first-time setup, adding new env vars, changing CPU/memory/scaling, updating secrets
+# Build image + deploy everything atomically (code + config + secrets in one revision)
+# Use when: deploying code changes, updating env vars/secrets, or any config change
 ./infra/deploy.sh deploy dev
 
-# Build, push, and deploy new code to all containers
-# Use when: you've made code changes and want to deploy them
-./infra/deploy.sh push dev
+# Preview what Bicep will create/change (dry run — no changes applied)
+./infra/deploy.sh preview dev
 
 # Stop all containers (scales to zero replicas — no cost while stopped)
 # Use when: done working for the day, environment not needed temporarily
@@ -501,9 +516,7 @@ infra/
 
 All config lives in one file per environment: `infra/.env.dev` or `infra/.env.prod` (gitignored). Copy `infra/.env.example` to get started.
 
-**`deploy` vs `push`:** `deploy` runs the full Bicep template (provisions resources, updates config/secrets/env vars). `push` builds a Docker image, pushes it to ACR, and updates all 3 containers with the new image. Use `deploy` for config changes, `push` for code changes.
-
-`deploy` is safe to run repeatedly on a running environment. ACA performs a rolling revision update — it creates a new revision with the updated config, routes traffic to it once healthy, and deactivates the old revision (`activeRevisionsMode: 'Single'`). No downtime. If nothing changed in the `.env` file, Bicep detects no diff and does nothing.
+`deploy` builds a Docker image, pushes it to ACR, and runs the full Bicep template — code, config, secrets, and env vars are all applied in one atomic revision. This avoids config/image mismatch. Safe to run repeatedly on a running environment. ACA performs a rolling revision update — it creates a new revision, routes traffic to it once healthy, and deactivates the old revision (`activeRevisionsMode: 'Single'`). No downtime. If nothing changed, Bicep detects no diff and does nothing.
 
 ### Environment Variables
 
@@ -527,7 +540,8 @@ Env vars are **not baked into the Docker image**. The image is generic — the s
 | `AZURE_POSTGRES_*` | Host, server name, resource group, DB, user, password (for migration safety) |
 | `AZURE_SWA_TOKEN_DEV` | Dev Static Web App deploy token |
 | `AZURE_SWA_TOKEN_PROD` | Prod Static Web App deploy token |
-| `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
+| `VITE_CLERK_PUBLISHABLE_KEY_DEV` | Clerk dev publishable key (`pk_test_...`) |
+| `VITE_CLERK_PUBLISHABLE_KEY_PROD` | Clerk prod publishable key (`pk_live_...`) |
 | `E2E_CLERK_*` | Clerk test credentials for E2E |
 | `STRIPE_SECRET_KEY` | Stripe test key (for E2E) |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook secret (for E2E) |
@@ -575,23 +589,23 @@ cp infra/.env.example infra/.env.dev
 
 Edit `infra/.env.dev` with all values — infrastructure params (scaling, CPU/memory), secrets (DB password, API keys), and app config (Clerk URLs, Sentry DSN, etc.). See `.env.example` for the full list.
 
-#### 2. Preview and provision
+#### 2. Initialise infrastructure
 
 ```bash
 # Dry run — see what will be created
 ./infra/deploy.sh preview dev
 
-# Provision infrastructure (creates ACR, ACA environment, container apps with placeholder images)
+# First-time setup (creates ACR, ACA environment, VNet, identity, container apps with placeholder images)
+./infra/deploy.sh init dev
+```
+
+#### 3. Build and deploy the backend
+
+```bash
 ./infra/deploy.sh deploy dev
 ```
 
-#### 3. Build, push, and deploy the backend
-
-```bash
-./infra/deploy.sh push dev
-```
-
-This builds the Docker image for `linux/amd64`, tags it with the git SHA, pushes to ACR, and updates all 3 containers. The old revision is automatically deactivated (`activeRevisionsMode: 'Single'`).
+This builds the Docker image for `linux/amd64`, tags it with the git SHA, pushes to ACR, and deploys all 3 containers with the new image + config atomically. The old revision is automatically deactivated (`activeRevisionsMode: 'Single'`).
 
 #### 4. Verify
 
@@ -658,11 +672,11 @@ Production uses its own resource group, ACA environment, Redis, and PostgreSQL d
    - `SENTRY_ENVIRONMENT=production`
    - New strong `DJANGO_SECRET_KEY`
 
-3. **Provision, push, verify:**
+3. **Provision and deploy:**
    ```bash
    ./infra/deploy.sh preview prod
+   ./infra/deploy.sh init prod
    ./infra/deploy.sh deploy prod
-   ./infra/deploy.sh push prod
    curl https://<prod-api-fqdn>/api/health/
    ```
 
@@ -673,11 +687,11 @@ Production uses its own resource group, ACA environment, Redis, and PostgreSQL d
    az role assignment create --assignee $PROD_PRINCIPAL --role AcrPull --scope $ACR_ID
    ```
 
-5. **Configure Clerk + Stripe webhooks** with the prod API FQDN
+5. **Configure Clerk + Stripe webhooks** with the prod API FQDN — see [Clerk Production instance](#production-instance) and [Stripe Configuration](#stripe-configuration)
 
 6. **Set GitHub variables** (`ACA_API_APP_NAME`, `ACA_WORKER_APP_NAME`, `ACA_BEAT_APP_NAME`, `VITE_API_BASE_URL_PROD`) and secret (`AZURE_SWA_TOKEN_PROD`)
 
-7. **Update `ALLOWED_HOSTS` and `BASE_URL`** in `.env.prod` with the actual prod API FQDN, then re-run `./infra/deploy.sh deploy prod`
+7. **Update prod env vars** in `.env.prod`: `ALLOWED_HOSTS` and `BASE_URL` with the prod API FQDN, `CLERK_AUTHORIZED_PARTIES` and `CORS_ALLOWED_ORIGINS` with the custom frontend domain, production Clerk keys (`sk_live_`, `CLERK_FRONTEND_API`, `CLERK_WEBHOOK_SIGNING_SECRET`), and production Stripe keys. Then re-run `./infra/deploy.sh deploy prod`
 
 ### Migration Safety (production only)
 
@@ -778,7 +792,7 @@ Each ACA environment has a linked Log Analytics workspace (provisioned by Bicep)
 
 #### CORS / Auth
 - **`CORS_ALLOWED_ORIGINS` — no trailing slash** — Django-cors-headers silently rejects origins with a trailing slash. Use `https://<host>.azurestaticapps.net`, not `https://<host>.azurestaticapps.net/`.
-- **`CLERK_AUTHORIZED_PARTIES`** — the backend validates the `azp` claim in Clerk JWTs against this comma-separated list. If the ACA frontend URL is missing, all authenticated API calls return 403.
+- **`CLERK_AUTHORIZED_PARTIES`** — the backend validates the `azp` claim in Clerk JWTs against this comma-separated list. If the frontend origin (custom domain or Azure SWA URL) is missing, all authenticated API calls return 403. In production, this must match the custom domain exactly (e.g., `https://yourdomain.com`).
 - **Clerk webhook URL** — `POST /api/webhooks/clerk/` (trailing slash required — Django's `APPEND_SLASH` doesn't work for POST requests).
 - **Clerk webhook signing secret** — must exactly match the signing secret in the Clerk Dashboard. A mismatch causes Svix verification to fail → 400 → webhooks silently not processed.
 
