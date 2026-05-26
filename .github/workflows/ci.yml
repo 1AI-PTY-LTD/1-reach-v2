@@ -8,13 +8,14 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - uses: actions/checkout@v4
 
       - name: Create .env files
         run: |
           cat > backend/.env <<EOF
-          DJANGO_SECRET_KEY=ci-test-secret-key
+          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
           DEBUG=1
           TEST=1
           POSTGRES_DB=app
@@ -24,17 +25,17 @@ jobs:
           POSTGRES_PORT=5432
           ALLOWED_HOSTS=localhost,127.0.0.1
           CORS_ALLOWED_ORIGINS=http://localhost:5173
-          CLERK_FRONTEND_API=https://example.clerk.accounts.dev
-          CLERK_SECRET_KEY=${{ secrets.E2E_CLERK_SECRET_KEY }}
-          CLERK_WEBHOOK_SIGNING_SECRET=whsec_test
+          CLERK_FRONTEND_API=${{ vars.CLERK_FRONTEND_API }}
+          CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
+          CLERK_WEBHOOK_SIGNING_SECRET=${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           CLERK_AUTHORIZED_PARTIES=http://localhost:5173
           CELERY_BROKER_URL=redis://redis:6379/0
           CELERY_RESULT_BACKEND=redis://redis:6379/0
           FREE_CREDIT_AMOUNT=10.00
           SMS_RATE=0.05
           MMS_RATE=0.20
-          STRIPE_SECRET_KEY=sk_test_placeholder
-          STRIPE_WEBHOOK_SECRET=whsec_test
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           EOF
           touch frontend/.env
 
@@ -68,13 +69,14 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - uses: actions/checkout@v4
 
       - name: Create backend/.env
         run: |
-          cat > backend/.env <<'EOF'
-          DJANGO_SECRET_KEY=ci-test-secret-key
+          cat > backend/.env <<EOF
+          DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
           DEBUG=1
           TEST=True
           POSTGRES_DB=app
@@ -84,22 +86,22 @@ jobs:
           POSTGRES_PORT=5432
           ALLOWED_HOSTS=localhost,127.0.0.1,backend
           CORS_ALLOWED_ORIGINS=http://localhost:5173
-          CLERK_FRONTEND_API=https://example.clerk.accounts.dev
-          CLERK_SECRET_KEY=${{ secrets.E2E_CLERK_SECRET_KEY }}
+          CLERK_FRONTEND_API=${{ vars.CLERK_FRONTEND_API }}
+          CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
           CLERK_AUTHORIZED_PARTIES=http://localhost:5173
           CELERY_BROKER_URL=redis://redis:6379/0
           CELERY_RESULT_BACKEND=redis://redis:6379/0
           FREE_CREDIT_AMOUNT=10.00
           SMS_RATE=0.05
           MMS_RATE=0.20
-          STRIPE_SECRET_KEY=sk_test_placeholder
-          STRIPE_WEBHOOK_SECRET=whsec_test
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           DB_CONN_MAX_AGE=0
           EOF
 
       - name: Create frontend/.env
         run: |
-          cat > frontend/.env <<'EOF'
+          cat > frontend/.env <<EOF
           VITE_CLERK_PUBLISHABLE_KEY=${{ secrets.E2E_VITE_CLERK_PUBLISHABLE_KEY }}
           VITE_API_BASE_URL=http://localhost:8000
           EOF
