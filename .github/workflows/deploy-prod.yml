@@ -248,6 +248,7 @@ jobs:
               ALLOWED_HOSTS="${{ vars.ALLOWED_HOSTS }}" \
               CORS_ALLOWED_ORIGINS="${{ vars.CORS_ALLOWED_ORIGINS }}" \
               BASE_URL="${{ vars.BASE_URL }}" \
+              FRONTEND_URL="${{ vars.FRONTEND_URL }}" \
               STORAGE_PROVIDER_CLASS="${{ vars.STORAGE_PROVIDER_CLASS }}" \
               AZURE_STORAGE_ACCOUNT_NAME="${{ vars.AZURE_STORAGE_ACCOUNT_NAME }}" \
               AZURE_CONTAINER="${{ vars.AZURE_CONTAINER }}" \

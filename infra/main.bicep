@@ -73,6 +73,7 @@ param SMS_PROVIDER_CLASS string
 param WELCORP_BASE_URL string
 param WELCORP_USERNAME string
 param BASE_URL string
+param FRONTEND_URL string
 param SENTRY_DSN string
 param SENTRY_ENVIRONMENT string
 param FREE_CREDIT_AMOUNT string
@@ -182,6 +183,7 @@ var sharedEnv = [
   { name: 'WELCORP_BASE_URL', value: WELCORP_BASE_URL }
   { name: 'WELCORP_USERNAME', value: WELCORP_USERNAME }
   { name: 'BASE_URL', value: BASE_URL }
+  { name: 'FRONTEND_URL', value: FRONTEND_URL }
 
   // Monitoring
   { name: 'SENTRY_DSN', value: SENTRY_DSN }
