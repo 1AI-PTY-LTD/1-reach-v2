@@ -1183,7 +1183,7 @@ class BillingViewSet(TenantScopedMixin, viewsets.GenericViewSet):
         amount = Decimal(serializer.validated_data['amount'])
 
         provider = get_billing_provider()
-        base_url = request.build_absolute_uri('/app/billing')
+        base_url = f'{settings.FRONTEND_URL}/app/billing'
         result = provider.create_checkout_session(
             customer_id=org.billing_customer_id,
             amount=amount,

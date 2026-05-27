@@ -39,6 +39,7 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(','
 
 # Publicly accessible base URL for this application (used for provider callbacks, etc.)
 BASE_URL = os.environ.get('BASE_URL', '')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173')
 
 # Application definition
 INSTALLED_APPS = [

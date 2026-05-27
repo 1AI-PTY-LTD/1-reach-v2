@@ -25,6 +25,7 @@ jobs:
           POSTGRES_PORT=5432
           ALLOWED_HOSTS=localhost,127.0.0.1
           CORS_ALLOWED_ORIGINS=http://localhost:5173
+          FRONTEND_URL=http://localhost:5173
           CLERK_FRONTEND_API=${{ vars.CLERK_FRONTEND_API }}
           CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
           CLERK_WEBHOOK_SIGNING_SECRET=${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
@@ -86,6 +87,7 @@ jobs:
           POSTGRES_PORT=5432
           ALLOWED_HOSTS=localhost,127.0.0.1,backend
           CORS_ALLOWED_ORIGINS=http://localhost:5173
+          FRONTEND_URL=http://localhost:5173
           CLERK_FRONTEND_API=${{ vars.CLERK_FRONTEND_API }}
           CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}
           CLERK_AUTHORIZED_PARTIES=http://localhost:5173
