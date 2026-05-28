@@ -82,6 +82,8 @@ param MMS_RATE string
 param DEBUG string
 param TEST string
 param SKIP_AUTO_MIGRATE string = 'false'
+param API_CUSTOM_DOMAIN string = '' // e.g. 'api.1reach.net'
+param API_CUSTOM_DOMAIN_CERT string = '' // Managed certificate resource ID
 
 // ============================================================================
 // Modules
@@ -238,6 +240,13 @@ module api 'modules/container-app.bicep' = {
       { name: 'DB_POOL_MAX_SIZE', value: '8' }
     ])
     healthProbePath: apiHealthProbe
+    customDomains: !empty(API_CUSTOM_DOMAIN) ? [
+      {
+        name: API_CUSTOM_DOMAIN
+        certificateId: API_CUSTOM_DOMAIN_CERT
+        bindingType: 'SniEnabled'
+      }
+    ] : []
   }
 }
 

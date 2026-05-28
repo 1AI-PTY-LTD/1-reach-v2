@@ -584,6 +584,8 @@ The deploy workflows use **GitHub Environments** (`dev` and `prod`) so that the 
 | `FREE_CREDIT_AMOUNT` / `SMS_RATE` / `MMS_RATE` | Billing | `5.00` / `0.10` / `0.50` | `5.00` / `0.10` / `0.50` |
 | `DEBUG` / `TEST` | Django flags | `1` / `True` | `0` / `False` |
 | `SKIP_AUTO_MIGRATE` | Entrypoint migration guard | `false` | `true` |
+| `API_CUSTOM_DOMAIN` | Custom domain for the API container app (e.g. `api.1reach.net`). Empty = no custom domain. | *(empty)* | `api.1reach.net` |
+| `API_CUSTOM_DOMAIN_CERT` | Managed certificate resource ID for the custom domain. Required when `API_CUSTOM_DOMAIN` is set. Get from `az containerapp env certificate list`. | *(empty)* | `/subscriptions/.../managedCertificates/...` |
 
 **Repo-level secrets** (shared across environments):
 
@@ -856,6 +858,9 @@ Each ACA environment has a linked Log Analytics workspace (provisioned by Bicep)
 - **Use `rediss://` (TLS) on port `6380`** — Azure Redis requires TLS. Connection URL format: `rediss://:<access-key>@<redis-name>.redis.cache.windows.net:6380/0`.
 - **Do not URL-encode the access key** — Azure Redis access keys may end in `=`. Do **not** URL-encode `=` to `%3D` — `redis-py` handles `=` correctly. URL-encoding causes auth failures.
 - **`redis.from_url()` and TLS** — the `_ensure_redis_ssl()` helper in `settings.py` handles `ssl_cert_reqs=CERT_NONE` for Celery, but direct `redis.from_url()` calls (e.g., health endpoint) need explicit `ssl_cert_reqs=ssl.CERT_NONE` as a keyword argument. See `health.py` for the pattern.
+
+#### Custom Domains
+- **Custom domains must be in the Bicep template** — Bicep is declarative; any custom domain added manually via the Azure Portal or CLI will be stripped on the next Bicep deployment. Set `API_CUSTOM_DOMAIN` and `API_CUSTOM_DOMAIN_CERT` in the prod GitHub Environment variables. The managed certificate must already exist on the ACA environment (provision it once via the portal or `az containerapp hostname bind --validation-method CNAME`).
 
 #### Bicep Deploy Time
 - **Bicep deployments add ~1-3 minutes** to each deploy compared to `az containerapp update` (~30s). This is the cost of atomic config + code deploys. If nothing changed, the ARM deployment completes quickly as a no-op.
