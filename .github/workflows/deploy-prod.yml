@@ -262,7 +262,9 @@ jobs:
               MMS_RATE="${{ vars.MMS_RATE }}" \
               DEBUG="${{ vars.DEBUG }}" \
               TEST="${{ vars.TEST }}" \
-              SKIP_AUTO_MIGRATE="${{ vars.SKIP_AUTO_MIGRATE }}"
+              SKIP_AUTO_MIGRATE="${{ vars.SKIP_AUTO_MIGRATE }}" \
+              API_CUSTOM_DOMAIN="${{ vars.API_CUSTOM_DOMAIN }}" \
+              API_CUSTOM_DOMAIN_CERT="${{ vars.API_CUSTOM_DOMAIN_CERT }}"
 
   verify-health:
     needs: deploy-bicep

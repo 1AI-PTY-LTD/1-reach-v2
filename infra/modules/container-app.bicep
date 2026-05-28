@@ -17,6 +17,7 @@ param targetPort int = 8000
 param secrets array = []
 param env array = []
 param healthProbePath string = ''
+param customDomains array = []
 
 resource app 'Microsoft.App/containerApps@2025-01-01' = {
   name: appName
@@ -42,6 +43,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
         external: ingressExternal
         targetPort: targetPort
         transport: 'auto'
+        customDomains: !empty(customDomains) ? customDomains : null
       } : null
     }
     template: {
