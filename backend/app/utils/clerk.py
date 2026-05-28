@@ -2,6 +2,8 @@ import logging
 
 from django.conf import settings
 from clerk_backend_api import Clerk
+from clerk_backend_api.models.clerkbaseerror import ClerkBaseError
+from rest_framework.exceptions import APIException
 
 from app.utils.billing import grant_credits
 from app.utils.metered_billing import get_billing_provider
@@ -9,6 +11,15 @@ from app.celery import link_billing_customer
 from ..models import *
 
 logger = logging.getLogger(__name__)
+
+
+class WebhookProcessingError(APIException):
+    """Raised when a webhook handler cannot process the event due to missing dependencies.
+
+    Returns 422 so Svix retries the delivery later.
+    """
+    status_code = 422
+    default_detail = 'Webhook processing deferred'
 
 
 # Webhooks
@@ -86,18 +97,37 @@ def _handle_organisation_deleted(data):
 
 
 def _handle_membership_created(data):
-    user = User.objects.filter(clerk_id=data.get('public_user_data', {}).get('user_id')).first()
-    org = Organisation.objects.filter(clerk_org_id=data.get('organization', {}).get('id')).first()
+    user_id = data.get('public_user_data', {}).get('user_id')
+    if not user_id:
+        raise WebhookProcessingError('membership payload missing user_id')
 
-    if user and org:
-        OrganisationMembership.objects.update_or_create(
-            user=user,
-            organisation=org,
-            defaults={'role': data.get('role', 'member'), 'is_active': True},
-        )
-        # Ensure the user account is active (handles reactivation case)
-        if not user.is_active:
-            User.objects.filter(pk=user.pk).update(is_active=True)
+    user = User.objects.filter(clerk_id=user_id).first()
+    if not user:
+        raise WebhookProcessingError(f'user {user_id} not found, deferring')
+
+    org_data = data.get('organization', {})
+    org_id = org_data.get('id')
+    if not org_id:
+        raise WebhookProcessingError('membership payload missing organization.id')
+
+    org, created = Organisation.objects.get_or_create(
+        clerk_org_id=org_id,
+        defaults={'name': org_data.get('name', ''), 'slug': org_data.get('slug', '')},
+    )
+    if created:
+        logger.warning('Organisation %s created by membership handler (out-of-order webhook)', org_id)
+        free_amount = getattr(settings, 'FREE_CREDIT_AMOUNT', 10)
+        grant_credits(org, amount=free_amount, description='Free trial credits on signup')
+        logger.info('Granted $%s free credits to new org %s', free_amount, org_id)
+
+    OrganisationMembership.objects.update_or_create(
+        user=user,
+        organisation=org,
+        defaults={'role': data.get('role', 'member'), 'is_active': True},
+    )
+    # Ensure the user account is active (handles reactivation case)
+    if not user.is_active:
+        User.objects.filter(pk=user.pk).update(is_active=True)
 
 
 def _handle_membership_updated(data):
@@ -108,18 +138,20 @@ def _handle_membership_deleted(data):
     user_id = data.get('public_user_data', {}).get('user_id')
     org_id = data.get('organization', {}).get('id')
 
-    if user_id and org_id:
-        OrganisationMembership.objects.filter(
-            user__clerk_id=user_id,
-            organisation__clerk_org_id=org_id,
-        ).update(is_active=False)
+    if not user_id or not org_id:
+        raise WebhookProcessingError('membership.deleted payload missing user_id or organization.id')
 
-        # Deactivate user if they have no other active memberships
-        User.objects.filter(
-            clerk_id=user_id,
-        ).exclude(
-            organisationmembership__is_active=True,
-        ).update(is_active=False)
+    OrganisationMembership.objects.filter(
+        user__clerk_id=user_id,
+        organisation__clerk_org_id=org_id,
+    ).update(is_active=False)
+
+    # Deactivate user if they have no other active memberships
+    User.objects.filter(
+        clerk_id=user_id,
+    ).exclude(
+        organisationmembership__is_active=True,
+    ).update(is_active=False)
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +178,8 @@ def _extract_billing_org_id(data, event_label='billing'):
     payer = data.get('payer')
     org_id = payer.get('organization_id') if isinstance(payer, dict) else None
     if not org_id:
-        logger.warning(
-            '%s: no org id found. payer=%s data_keys=%s',
-            event_label, repr(payer)[:300], list(data.keys()),
+        raise WebhookProcessingError(
+            f'{event_label}: no org id found. payer={repr(payer)[:300]} data_keys={list(data.keys())}'
         )
     return org_id
 
@@ -156,73 +187,64 @@ def _extract_billing_org_id(data, event_label='billing'):
 def _handle_subscription_active(data):
     """Transition org to subscribed mode when a Clerk Billing subscription becomes active."""
     org_id = _extract_billing_org_id(data, 'subscription.active')
-    if not org_id:
-        return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_SUBSCRIBED
     )
-    if updated:
-        logger.info('Org %s transitioned to subscribed billing mode', org_id)
-        try:
-            clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
-            clerk_client.organizations.update(
-                organization_id=org_id,
-                private_metadata={'billing_suspended': False},
-            )
-            logger.info('Clerk org %s billing_suspended cleared', org_id)
-        except Exception:
-            logger.error(
-                'Failed to clear Clerk billing_suspended for org %s', org_id, exc_info=True
-            )
+    if not updated:
+        raise WebhookProcessingError(f'subscription.active: org {org_id} not found')
 
-        # Link the Stripe customer that Clerk created during subscription signup
-        org = Organisation.objects.get(clerk_org_id=org_id)
-        if not org.billing_customer_id:
-            provider = get_billing_provider()
-            result = provider.find_customer_by_org(org.clerk_org_id)
-            if result.success:
-                Organisation.objects.filter(pk=org.pk).update(
-                    billing_customer_id=result.customer_id,
-                )
-                logger.info(
-                    'Linked Stripe customer %s for org %s',
-                    result.customer_id, org_id,
-                )
-            else:
-                # Clerk may not have created the Stripe customer yet — retry later
-                link_billing_customer.apply_async(args=[org.pk], countdown=60)
-                logger.warning(
-                    'Could not find Stripe customer for org %s, queued retry: %s',
-                    org_id, result.error,
-                )
-    else:
-        logger.warning('subscription.active: org %s not found', org_id)
+    logger.info('Org %s transitioned to subscribed billing mode', org_id)
+    try:
+        clerk_client = Clerk(bearer_auth=settings.CLERK_SECRET_KEY)
+        clerk_client.organizations.update(
+            organization_id=org_id,
+            private_metadata={'billing_suspended': False},
+        )
+        logger.info('Clerk org %s billing_suspended cleared', org_id)
+    except ClerkBaseError:
+        logger.error(
+            'Failed to clear Clerk billing_suspended for org %s', org_id, exc_info=True
+        )
+
+    # Link the Stripe customer that Clerk created during subscription signup
+    org = Organisation.objects.get(clerk_org_id=org_id)
+    if not org.billing_customer_id:
+        provider = get_billing_provider()
+        result = provider.find_customer_by_org(org.clerk_org_id)
+        if result.success:
+            Organisation.objects.filter(pk=org.pk).update(
+                billing_customer_id=result.customer_id,
+            )
+            logger.info(
+                'Linked Stripe customer %s for org %s',
+                result.customer_id, org_id,
+            )
+        else:
+            # Clerk may not have created the Stripe customer yet — retry later
+            link_billing_customer.apply_async(args=[org.pk], countdown=60)
+            logger.warning(
+                'Could not find Stripe customer for org %s, queued retry: %s',
+                org_id, result.error,
+            )
 
 
 def _handle_subscription_canceled(data):
     """Revert org to prepaid mode when a Clerk Billing subscription is cancelled or ended."""
     org_id = _extract_billing_org_id(data, 'subscription.canceled')
-    if not org_id:
-        return
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
         billing_mode=Organisation.BILLING_PREPAID
     )
-    if updated:
-        logger.info('Org %s reverted to prepaid billing mode (subscription cancelled)', org_id)
-    else:
-        logger.warning('subscription.canceled: org %s not found', org_id)
+    if not updated:
+        raise WebhookProcessingError(f'subscription.canceled: org {org_id} not found')
+    logger.info('Org %s reverted to prepaid billing mode (subscription cancelled)', org_id)
 
 
 def _handle_subscription_past_due(data):
     """Set billing_mode=past_due and disable the org in Clerk when subscription is past due."""
     org_id = _extract_billing_org_id(data, 'subscription.pastDue')
-    if not org_id:
-        return
-
     org = Organisation.objects.filter(clerk_org_id=org_id).first()
     if not org:
-        logger.warning('subscription.pastDue: org %s not found', org_id)
-        return
+        raise WebhookProcessingError(f'subscription.pastDue: org {org_id} not found')
 
     org.billing_mode = Organisation.BILLING_PAST_DUE
     org.save(update_fields=['billing_mode'])
@@ -235,7 +257,7 @@ def _handle_subscription_past_due(data):
             private_metadata={'billing_suspended': True},
         )
         logger.info('Clerk org %s marked billing_suspended=True', org_id)
-    except Exception:
+    except ClerkBaseError:
         logger.error(
             'Failed to set Clerk billing_suspended for org %s', org_id, exc_info=True
         )
