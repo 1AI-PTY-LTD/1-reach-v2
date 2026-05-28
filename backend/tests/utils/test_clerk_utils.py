@@ -26,6 +26,7 @@ from app.models import (
     User,
 )
 from app.utils.clerk import (
+    WebhookProcessingError,
     _handle_organisation_created as handle_organization_created,
     _handle_organisation_deleted as handle_organization_deleted,
     _handle_membership_created as handle_organization_membership_created,
@@ -272,7 +273,7 @@ class TestHandleOrganizationMembershipCreated:
         org = OrganisationFactory(clerk_org_id='org_123')
 
         data = {
-            'organization': {'id': 'org_123'},
+            'organization': {'id': 'org_123', 'name': 'Acme', 'slug': 'acme'},
             'public_user_data': {'user_id': 'user_123'},
             'role': 'admin'
         }
@@ -291,7 +292,7 @@ class TestHandleOrganizationMembershipCreated:
         org = OrganisationFactory(clerk_org_id='org_reactivate')
 
         data = {
-            'organization': {'id': 'org_reactivate'},
+            'organization': {'id': 'org_reactivate', 'name': 'Reactivate Org', 'slug': 'reactivate'},
             'public_user_data': {'user_id': 'user_reactivate'},
             'role': 'member',
         }
@@ -299,6 +300,80 @@ class TestHandleOrganizationMembershipCreated:
 
         user.refresh_from_db()
         assert user.is_active is True
+
+    def test_creates_org_when_membership_arrives_before_org(self):
+        """Out-of-order: membership arrives before organization.created."""
+        user = UserFactory(clerk_id='user_race')
+
+        data = {
+            'organization': {'id': 'org_race', 'name': 'Race Org', 'slug': 'race-org'},
+            'public_user_data': {'user_id': 'user_race'},
+            'role': 'org:admin',
+        }
+        handle_organization_membership_created(data)
+
+        org = Organisation.objects.get(clerk_org_id='org_race')
+        assert org.name == 'Race Org'
+        membership = OrganisationMembership.objects.get(user__clerk_id='user_race', organisation=org)
+        assert membership.role == 'org:admin'
+        # Free trial credits should be granted
+        assert org.credit_balance > Decimal('0.00')
+        assert CreditTransaction.objects.filter(organisation=org, transaction_type='grant').exists()
+
+    def test_no_duplicate_credits_when_org_created_after_membership(self):
+        """Credits granted exactly once regardless of event order."""
+        user = UserFactory(clerk_id='user_order')
+
+        # Membership arrives first — creates org and grants credits
+        membership_data = {
+            'organization': {'id': 'org_order', 'name': 'Order Org', 'slug': 'order-org'},
+            'public_user_data': {'user_id': 'user_order'},
+            'role': 'org:admin',
+        }
+        handle_organization_membership_created(membership_data)
+
+        org = Organisation.objects.get(clerk_org_id='org_order')
+        balance_after_membership = org.credit_balance
+
+        # org.created arrives second — should NOT grant credits again
+        org_data = {'id': 'org_order', 'name': 'Order Org', 'slug': 'order-org'}
+        handle_organization_created(org_data)
+
+        org.refresh_from_db()
+        assert org.credit_balance == balance_after_membership
+        assert CreditTransaction.objects.filter(organisation=org, transaction_type='grant').count() == 1
+
+    def test_raises_when_user_not_found(self):
+        """Raises WebhookProcessingError when user doesn't exist yet."""
+        OrganisationFactory(clerk_org_id='org_nouser')
+        data = {
+            'organization': {'id': 'org_nouser', 'name': 'No User Org', 'slug': 'no-user'},
+            'public_user_data': {'user_id': 'user_nonexistent'},
+            'role': 'member',
+        }
+        with pytest.raises(WebhookProcessingError):
+            handle_organization_membership_created(data)
+
+    def test_raises_when_payload_missing_user_id(self):
+        """Raises WebhookProcessingError when payload has no user_id."""
+        data = {
+            'organization': {'id': 'org_123', 'name': 'Org', 'slug': 'org'},
+            'public_user_data': {},
+            'role': 'member',
+        }
+        with pytest.raises(WebhookProcessingError):
+            handle_organization_membership_created(data)
+
+    def test_raises_when_payload_missing_org_id(self):
+        """Raises WebhookProcessingError when payload has no organization.id."""
+        UserFactory(clerk_id='user_noorg')
+        data = {
+            'organization': {},
+            'public_user_data': {'user_id': 'user_noorg'},
+            'role': 'member',
+        }
+        with pytest.raises(WebhookProcessingError):
+            handle_organization_membership_created(data)
 
 
 @pytest.mark.django_db
@@ -380,7 +455,8 @@ class TestHandleSubscriptionActive:
             billing_mode=Organisation.BILLING_PREPAID,
         )
 
-        handle_billing_subscription_created({'payer': {'organization_id': 'org_sub_123'}})
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_created({'payer': {'organization_id': 'org_sub_123'}})
 
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
@@ -392,18 +468,21 @@ class TestHandleSubscriptionActive:
             billing_mode=Organisation.BILLING_PREPAID,
         )
 
-        handle_billing_subscription_created({'payer': {'organization_id': 'org_sub_nested'}})
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_created({'payer': {'organization_id': 'org_sub_nested'}})
 
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
-    def test_noop_when_org_not_found(self):
-        """No error raised when org does not exist."""
-        handle_billing_subscription_created({'payer': {'organization_id': 'org_nonexistent'}})
+    def test_raises_when_org_not_found(self):
+        """Raises WebhookProcessingError when org does not exist."""
+        with pytest.raises(WebhookProcessingError):
+            handle_billing_subscription_created({'payer': {'organization_id': 'org_nonexistent'}})
 
-    def test_noop_when_no_org_id(self):
-        """No error raised when payload has no org id."""
-        handle_billing_subscription_created({})
+    def test_raises_when_no_org_id(self):
+        """Raises WebhookProcessingError when payload has no org id."""
+        with pytest.raises(WebhookProcessingError):
+            handle_billing_subscription_created({})
 
 
 @pytest.mark.django_db
@@ -435,13 +514,15 @@ class TestHandleSubscriptionCanceled:
         org.refresh_from_db()
         assert org.credit_balance == Decimal('3.50')
 
-    def test_noop_when_org_not_found(self):
-        """No error raised when org does not exist."""
-        handle_billing_subscription_deleted({'payer': {'organization_id': 'org_nonexistent'}})
+    def test_raises_when_org_not_found(self):
+        """Raises WebhookProcessingError when org does not exist."""
+        with pytest.raises(WebhookProcessingError):
+            handle_billing_subscription_deleted({'payer': {'organization_id': 'org_nonexistent'}})
 
-    def test_noop_when_no_org_id(self):
-        """No error when payload has no org identifier."""
-        handle_billing_subscription_deleted({})  # must not raise
+    def test_raises_when_no_org_id(self):
+        """Raises WebhookProcessingError when payload has no org identifier."""
+        with pytest.raises(WebhookProcessingError):
+            handle_billing_subscription_deleted({})
 
 
 @pytest.mark.django_db
@@ -468,20 +549,25 @@ class TestHandleSubscriptionPastDue:
 
     def test_clerk_api_failure_does_not_raise(self):
         """If Clerk SDK throws, function still completes and billing_mode is still set."""
+        from clerk_backend_api.models.clerkbaseerror import ClerkBaseError
+        from unittest.mock import MagicMock
         org = OrganisationFactory(clerk_org_id='org_clerk_fail')
         with patch('app.utils.clerk.Clerk') as MockClerk:
-            MockClerk.return_value.organizations.update.side_effect = Exception('Clerk down')
+            MockClerk.return_value.organizations.update.side_effect = ClerkBaseError(
+                'Clerk down', MagicMock()
+            )
             handle_billing_payment_failed({'id': 'sub_3', 'payer': {'organization_id': 'org_clerk_fail'}})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
 
-    def test_noop_when_no_org_id(self):
-        """No error when payload has no org identifier."""
-        handle_billing_payment_failed({'id': 'sub_5'})
+    def test_raises_when_no_org_id(self):
+        """Raises WebhookProcessingError when payload has no org identifier."""
+        with pytest.raises(WebhookProcessingError):
+            handle_billing_payment_failed({'id': 'sub_5'})
 
-    def test_noop_when_org_not_found(self):
-        """No error when org not found in DB."""
-        with patch('app.utils.clerk.Clerk'):
+    def test_raises_when_org_not_found(self):
+        """Raises WebhookProcessingError when org not found in DB."""
+        with pytest.raises(WebhookProcessingError):
             handle_billing_payment_failed({'id': 'sub_6', 'payer': {'organization_id': 'org_nonexistent'}})
 
 
@@ -492,11 +578,12 @@ class TestHandleSubscriptionUpdated:
     def test_routes_active_status_with_paid_plan(self):
         """subscription.updated with status=active and a paid plan sets subscribed."""
         org = OrganisationFactory(clerk_org_id='org_updated_active', billing_mode=Organisation.BILLING_PREPAID)
-        handle_billing_subscription_updated({
-            'payer': {'organization_id': 'org_updated_active'},
-            'status': 'active',
-            'items': [{'status': 'active', 'plan': {'amount': 30000, 'name': 'Professional'}}],
-        })
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_updated({
+                'payer': {'organization_id': 'org_updated_active'},
+                'status': 'active',
+                'items': [{'status': 'active', 'plan': {'amount': 30000, 'name': 'Professional'}}],
+            })
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
 
