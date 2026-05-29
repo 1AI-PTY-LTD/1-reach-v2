@@ -14,6 +14,8 @@
  * Both use try/finally to restore state even on test failure.
  */
 
+import fs from 'fs'
+import path from 'path'
 import { test, expect, type Page } from '@playwright/test'
 import {
   authenticatePage,
@@ -26,11 +28,8 @@ import {
   uploadFile, sendMms,
 } from './helpers'
 
-// Minimal valid PNG (1x1 transparent pixel)
-const TINY_PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
-  'base64',
-)
+// 400x400 solid-colour JPEG — SMS providers reject tiny/pixel images
+const TEST_IMAGE = fs.readFileSync(path.join(__dirname, 'fixtures', 'test-image.jpg'))
 
 // ---------------------------------------------------------------------------
 // Shared fixture data
@@ -154,7 +153,7 @@ test.describe('Send SMS — success flow', () => {
 
 test.describe('MMS — file upload and send', () => {
   test('file upload returns accessible URL', async ({ page }) => {
-    const result = await uploadFile(page, TINY_PNG, 'test.png', 'image/png')
+    const result = await uploadFile(page, TEST_IMAGE, 'test.jpg', 'image/jpeg')
     expect(result.success).toBe(true)
     expect(result.url).toBeTruthy()
     expect(result.file_id).toBeTruthy()
@@ -168,7 +167,7 @@ test.describe('MMS — file upload and send', () => {
   })
 
   test('MMS send via API succeeds end-to-end', async ({ page }) => {
-    const upload = await uploadFile(page, TINY_PNG, 'mms-test.png', 'image/png')
+    const upload = await uploadFile(page, TEST_IMAGE, 'mms-test.jpg', 'image/jpeg')
     const result = await sendMms(page, {
       message: 'E2E MMS test',
       media_url: upload.url,
@@ -187,9 +186,9 @@ test.describe('MMS — file upload and send', () => {
     // Upload image via the file input
     const fileInput = page.locator('input[type="file"]')
     await fileInput.setInputFiles({
-      name: 'test-image.png',
-      mimeType: 'image/png',
-      buffer: TINY_PNG,
+      name: 'test-image.jpg',
+      mimeType: 'image/jpeg',
+      buffer: TEST_IMAGE,
     })
 
     // Wait for upload to complete (spinner gone, no error)
