@@ -3,6 +3,7 @@ import dayjs from 'dayjs'
 import {
   authenticatePage,
   deleteContact, ensureContact,
+  createGroup, addMembers, deleteGroup,
   apiRequest, forceStatus, deleteSchedule,
 } from './helpers'
 
@@ -169,5 +170,54 @@ test.describe('Schedule Page', () => {
     await page.goto('/app/schedule')
     await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/Showing .* of .* results/i).first()).toBeVisible()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Group send — group name in Name column
+// ---------------------------------------------------------------------------
+
+test.describe('Schedule Page — group send', () => {
+  let groupContacts: { id: number }[] = []
+  let schedGroup: { id: number }
+  let parentScheduleId: number | undefined
+
+  test.beforeAll(async ({ browser }) => {
+    if (!process.env.CLERK_SECRET_KEY) return
+    const page = await browser.newPage()
+    await authenticatePage(page)
+
+    // Create a group with two members so the batch path is used (single recipient skips group)
+    const [c1, c2] = await Promise.all([
+      ensureContact(page, { first_name: 'GroupName', last_name: 'Tester1', phone: '0414888881' }),
+      ensureContact(page, { first_name: 'GroupName', last_name: 'Tester2', phone: '0414888882' }),
+    ])
+    groupContacts = [c1, c2]
+    schedGroup = await createGroup(page, { name: 'E2E Schedule Group' })
+    await addMembers(page, schedGroup.id, groupContacts.map(c => c.id))
+
+    const result = await apiRequest(page, 'POST', '/api/sms/send/', {
+      message: 'Group name test',
+      recipients: groupContacts.map(c => ({ phone: c.id === c1.id ? '0414888881' : '0414888882', contact_id: c.id })),
+      group_id: schedGroup.id,
+    })
+    parentScheduleId = result.parent_schedule_id
+
+    await page.close()
+  })
+
+  test.afterAll(async ({ browser }) => {
+    if (!process.env.CLERK_SECRET_KEY) return
+    const page = await browser.newPage()
+    await authenticatePage(page)
+    if (parentScheduleId) await deleteSchedule(page, parentScheduleId).catch(() => {})
+    if (schedGroup?.id) await deleteGroup(page, schedGroup.id).catch(() => {})
+    await Promise.all(groupContacts.map(c => deleteContact(page, c.id).catch(() => {})))
+    await page.close()
+  })
+
+  test('group send shows group name in Name column on schedule page', async ({ page }) => {
+    await page.goto('/app/schedule')
+    await expect(page.getByText('E2E Schedule Group').first()).toBeVisible({ timeout: 10000 })
   })
 })

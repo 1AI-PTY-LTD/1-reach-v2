@@ -430,7 +430,6 @@ class TemplateViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet)
 class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     queryset = Schedule.objects.filter(
         parent__isnull=True,  # Exclude child schedules
-        group__isnull=True,   # Exclude group schedules (handled by /api/group-schedules/)
     ).annotate(
         recipient_count=Count('schedule'),
     ).select_related('contact', 'template', 'group').order_by('-scheduled_time')
@@ -945,6 +944,7 @@ class SMSViewSet(viewsets.ViewSet):
         data = serializer.validated_data
         recipients = data['recipients']
         alphanumeric_sender = data.get('alphanumeric_sender') or None
+        group = ContactGroup.objects.filter(id=data['group_id'], organisation=org).first() if data.get('group_id') else None
 
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
@@ -970,6 +970,7 @@ class SMSViewSet(viewsets.ViewSet):
             org, members, data['message'], request,
             format_type=MessageFormat.SMS, message_parts=message_parts,
             alphanumeric_sender=alphanumeric_sender,
+            group=group,
         )
         return Response({
             'success': True,
@@ -1039,6 +1040,7 @@ class SMSViewSet(viewsets.ViewSet):
         data = serializer.validated_data
         recipients = data['recipients']
         alphanumeric_sender = data.get('alphanumeric_sender') or None
+        group = ContactGroup.objects.filter(id=data['group_id'], organisation=org).first() if data.get('group_id') else None
 
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
@@ -1067,6 +1069,7 @@ class SMSViewSet(viewsets.ViewSet):
             format_type=MessageFormat.MMS, message_parts=1,
             media_url=media_url, subject=subject,
             alphanumeric_sender=alphanumeric_sender,
+            group=group,
         )
         return Response({
             'success': True,

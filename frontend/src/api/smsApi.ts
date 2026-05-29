@@ -33,6 +33,7 @@ export async function sendSms(client: ApiClient, props: SendSmsRequest): Promise
   const data = await client.post<SendSmsResponse>('/api/sms/send/', {
     message: props.message,
     recipients: props.recipients,
+    ...(props.group_id && { group_id: props.group_id }),
     ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
   })
 
@@ -85,6 +86,7 @@ export async function sendMms(client: ApiClient, props: SendMmsRequest): Promise
     message: props.message,
     recipients: props.recipients,
     media_url: props.media_url,
+    ...(props.group_id && { group_id: props.group_id }),
     ...(props.subject && { subject: props.subject }),
     ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
   })

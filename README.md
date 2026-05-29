@@ -239,8 +239,14 @@ frontend/
 │   ├── types/             # TypeScript types matching backend snake_case fields
 │   ├── lib/               # ApiClient, ApiClientProvider, cn() utility
 │   └── test/              # Vitest setup, MSW handlers, factories
-└── e2e/                   # Playwright tests
+├── e2e/                   # Playwright tests
+├── csp.dev.json           # Content Security Policy for dev (permissive — allows Azure dev URLs)
+├── csp.prod.json          # Content Security Policy for prod (strict — only 1reach.net domains)
+├── scripts/build-swa-config.js  # Merges CSP + base config → dist/staticwebapp.config.json
+└── staticwebapp.config.base.json  # SPA routing + security headers (shared between environments)
 ```
+
+**CSP configuration:** Content Security Policy is environment-specific. `csp.dev.json` allows Azure dev URLs and Clerk dev domains; `csp.prod.json` restricts to `1reach.net`, `api.1reach.net`, and `clerk.1reach.net`. The `deploy-frontend.yml` workflow runs `build-swa-config.js` at build time to merge the environment-specific CSP into the base SWA config.
 
 **Scheduling UI:** All scheduling flows (Send page, Contact message modal, Group schedule modal) use a unified `ScheduleDateTimePicker` component. It renders a `datetime-local` input with a `min` attribute set to the current time (preventing past-time selection), outputs UTC ISO strings, and shows contextual status messages (past time warning, immediate send notice, or scheduled confirmation).
 
@@ -420,6 +426,37 @@ Note: Welcorp does not provide true handset delivery confirmation — their `SEN
 
 - Confirm Clerk email templates (invitation, sign-up, magic link) are correctly branded
 
+### 3. Social OAuth Configuration
+
+The production Clerk instance uses Clerk's shared OAuth credentials by default (inherited from the dev instance clone). Before real users sign in via Google, GitHub, or other social providers:
+
+- Register production OAuth apps with each provider (Google Cloud Console, GitHub Developer Settings, etc.)
+- Enter the production client ID and client secret in Clerk Dashboard → Social connections
+- Clerk provides the redirect URI to add to each provider's OAuth app config
+- Test each provider's sign-in flow end-to-end on the production frontend
+
+Without this, social sign-in will either fail or show Clerk's development branding in the OAuth consent screen.
+
+### 4. Zero-Downtime Deployment
+
+The current deployment creates a new ACA revision via Bicep on every push. ACA's `activeRevisionsMode: 'Single'` handles the rollover — it creates the new revision, waits for health probes to pass, then routes traffic and deactivates the old revision. This provides near-zero-downtime for most deploys.
+
+However, there are gaps:
+
+- **Database migrations** — the CD workflow applies migrations before deploying the new image. During the window between migration and new revision activation, the old revision runs against the new schema. Additive migrations (new nullable columns, new tables) are safe. Destructive migrations (column renames, drops, type changes) require a multi-deploy approach:
+
+  | Change | Approach | Deploys |
+  |--------|----------|---------|
+  | Add column | Add as nullable — old code ignores it | 1 |
+  | Remove column | Deploy 1: remove all code references. Deploy 2: drop column | 2 |
+  | Rename column | Add new column → write to both → backfill → read from new → drop old | 3–4 |
+  | Add NOT NULL constraint | Deploy 1: ensure all rows satisfy constraint + set default. Deploy 2: add constraint | 2 |
+  | Change column type | Add new column with new type → migrate data → swap code → drop old | 3–4 |
+
+- **Revision activation time** — new revisions take 30-60 seconds to activate (image pull + DB wait + gunicorn startup + probe pass). During this window, the old revision continues serving traffic. If the new revision fails to activate, ACA keeps the old one running (no downtime, but the deploy is stuck).
+
+- **ACA deployment slots** — ACA does not currently support deployment slots like App Service. Traffic splitting between revisions is possible with `Multiple` revision mode, but adds complexity. The current `Single` mode is simpler and sufficient for most cases.
+
 ---
 
 ## Azure Deployment
@@ -450,8 +487,10 @@ All three backend container apps use the **same Docker image** (`backend/Dockerf
 | API scaling | min 0, max 1 | min 1, max 3 |
 | Worker scaling | min 0, max 1 | min 1, max 3 |
 | Beat scaling | min 1, max 1 (always-on singleton) | min 1, max 1 |
-| Static Web App | Separate (free tier) | Separate |
-| Image tags | `dev-<sha>` | `<sha>` |
+| Static Web App | Separate (free tier) | Separate (custom domain: `1reach.net`) |
+| Image tags | `dev-<sha>-<timestamp>` | `prod-<sha>-<timestamp>` |
+| VNet | No (default networking) | Yes (custom VNet + private endpoints for Redis/PostgreSQL) |
+| Custom domain | Azure SWA default URL | `1reach.net` (frontend), `clerk.1reach.net` (Clerk FAPI) |
 
 Dev containers scale to zero when idle to save cost (~30s cold start on first request).
 

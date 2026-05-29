@@ -28,6 +28,7 @@ from tests.factories import (
     ConfigFactory,
     ContactFactory,
     ContactGroupFactory,
+    OrganisationFactory,
     ScheduleFactory,
     create_contact_group_with_members,
 )
@@ -608,3 +609,87 @@ class TestSendEdgeCases:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'eligible' in str(response.data).lower()
+
+
+# ---------------------------------------------------------------------------
+# group_id on batch send endpoints
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestSendWithGroupId:
+    """Tests for optional group_id on /api/sms/send/ and /api/sms/send-mms/."""
+
+    def test_send_sms_with_group_id_sets_group_on_parent(
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_batch_message_task
+    ):
+        """Batch SMS with group_id sets group FK on parent schedule."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello group',
+            'recipients': [
+                {'phone': contacts[0].phone, 'contact_id': contacts[0].id},
+                {'phone': contacts[1].phone, 'contact_id': contacts[1].id},
+            ],
+            'group_id': group.id,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        assert parent.group == group
+
+    def test_send_sms_without_group_id_leaves_group_null(
+        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_batch_message_task
+    ):
+        """Batch SMS without group_id keeps group FK null on parent."""
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello batch',
+            'recipients': [
+                {'phone': '0412345678'},
+                {'phone': '0400000000'},
+            ],
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        assert parent.group is None
+
+    def test_send_sms_with_invalid_group_id_ignores_group(
+        self, authenticated_client, organisation, mock_check_sms_limit, mock_send_batch_message_task
+    ):
+        """group_id from another org is silently ignored (group set to None)."""
+        other_org = OrganisationFactory()
+        other_group = ContactGroupFactory(organisation=other_org)
+
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello',
+            'recipients': [
+                {'phone': '0412345678'},
+                {'phone': '0400000000'},
+            ],
+            'group_id': other_group.id,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        assert parent.group is None
+
+    def test_send_mms_with_group_id_sets_group_on_parent(
+        self, authenticated_client, organisation, user, mock_check_mms_limit, mock_send_batch_message_task
+    ):
+        """Batch MMS with group_id sets group FK on parent schedule."""
+        group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+
+        response = authenticated_client.post('/api/sms/send-mms/', {
+            'message': 'Check this out',
+            'media_url': 'https://example.com/image.jpg',
+            'recipients': [
+                {'phone': contacts[0].phone, 'contact_id': contacts[0].id},
+                {'phone': contacts[1].phone, 'contact_id': contacts[1].id},
+            ],
+            'group_id': group.id,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        assert parent.group == group

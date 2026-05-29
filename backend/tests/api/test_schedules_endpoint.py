@@ -40,8 +40,8 @@ class TestScheduleList:
         assert response.data['pagination']['total'] == 2
 
     def test_list_excludes_children(self, authenticated_client, organisation, user):
-        """List excludes child schedules (parent != None)."""
-        # Parent schedule
+        """List excludes child schedules (parent != None) but includes group parent."""
+        # Parent schedule (group)
         parent = ScheduleFactory(organisation=organisation, for_group=True, created_by=user)
 
         # Child schedules
@@ -50,8 +50,9 @@ class TestScheduleList:
 
         response = authenticated_client.get('/api/schedules/')
 
-        # Should only return standalone schedules, not children
-        assert response.data['pagination']['total'] == 0  # Parent is a group schedule, filtered elsewhere
+        # Parent appears, children do not
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['id'] == parent.id
 
     def test_list_filter_by_date_from(self, authenticated_client, organisation, user):
         """date_from filters schedules."""
@@ -128,6 +129,32 @@ class TestScheduleList:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data['pagination']['total'] == 1
+
+    def test_list_includes_group_schedules(self, authenticated_client, organisation, user):
+        """Group schedule parents appear in the list with group_detail populated."""
+        parent = ScheduleFactory(organisation=organisation, for_group=True, created_by=user)
+
+        response = authenticated_client.get('/api/schedules/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        result = response.data['results'][0]
+        assert result['id'] == parent.id
+        assert result['group_detail'] is not None
+        assert result['group_detail']['name'] == parent.group.name
+
+    def test_list_group_schedule_no_duplicate_children(self, authenticated_client, organisation, user):
+        """Group schedule with children: only parent row appears, not children."""
+        parent = ScheduleFactory(organisation=organisation, for_group=True, created_by=user)
+        ScheduleFactory(organisation=organisation, parent=parent, for_contact=True, created_by=user)
+        ScheduleFactory(organisation=organisation, parent=parent, for_contact=True, created_by=user)
+        ScheduleFactory(organisation=organisation, parent=parent, for_contact=True, created_by=user)
+
+        response = authenticated_client.get('/api/schedules/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['pagination']['total'] == 1
+        assert response.data['results'][0]['id'] == parent.id
 
 
 @pytest.mark.django_db
