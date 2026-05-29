@@ -58,6 +58,37 @@ describe('smsApi', () => {
     })
   })
 
+  describe('sendSms with group_id', () => {
+    it('includes group_id in request when provided', async () => {
+      const result = await sendSms(client, {
+        message: 'Hello group',
+        recipients: [
+          { phone: '0412345678', contact_id: 1 },
+          { phone: '0400000000', contact_id: 2 },
+        ],
+        group_id: 5,
+      })
+
+      expect(result).toHaveProperty('success', true)
+    })
+  })
+
+  describe('sendMms with group_id', () => {
+    it('includes group_id in request when provided', async () => {
+      const result = await sendMms(client, {
+        message: 'Hello group MMS',
+        recipients: [
+          { phone: '0412345678', contact_id: 1 },
+          { phone: '0400000000', contact_id: 2 },
+        ],
+        media_url: 'https://storage.example.com/image.jpg',
+        group_id: 5,
+      })
+
+      expect(result).toHaveProperty('success', true)
+    })
+  })
+
   describe('error handling', () => {
     it('sendSms rejects when API returns 500', async () => {
       server.use(

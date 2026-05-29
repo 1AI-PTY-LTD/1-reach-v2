@@ -152,4 +152,33 @@ describe('ScheduleTable', () => {
 
     expect(screen.getByText('N/A')).toBeInTheDocument()
   })
+
+  it('shows group name for group schedules without contact', () => {
+    const groupSchedule = createSchedule({
+      id: 11,
+      text: 'Group message',
+      phone: undefined,
+      contact_detail: null,
+      group_detail: {
+        id: 1,
+        name: 'Marketing Team',
+        is_active: true,
+        member_count: 5,
+        created_at: '',
+        updated_at: '',
+      },
+      recipient_count: 5,
+    })
+
+    renderWithProviders(
+      <ScheduleTable
+        messages={[groupSchedule]}
+        selectedMessageId={undefined}
+        setSelectedMessageId={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('Marketing Team')).toBeInTheDocument()
+    expect(screen.queryByText('N/A')).not.toBeInTheDocument()
+  })
 })

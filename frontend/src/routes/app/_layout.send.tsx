@@ -310,6 +310,7 @@ function SendContent() {
             message: messageText,
             recipients: mappedRecipients,
             media_url: uploadedFileUrl,
+            ...(selectedGroupId && { group_id: selectedGroupId }),
             ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
         } else {
@@ -317,6 +318,7 @@ function SendContent() {
           await sendSms(client, {
             message: messageText,
             recipients: mappedRecipients,
+            ...(selectedGroupId && { group_id: selectedGroupId }),
             ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
         }
