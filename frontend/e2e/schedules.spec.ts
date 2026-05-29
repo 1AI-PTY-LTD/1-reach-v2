@@ -178,7 +178,7 @@ test.describe('Schedule Page', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Schedule Page — group send', () => {
-  let groupContact: { id: number }
+  let groupContacts: { id: number }[] = []
   let schedGroup: { id: number }
   let parentScheduleId: number | undefined
 
@@ -187,17 +187,21 @@ test.describe('Schedule Page — group send', () => {
     const page = await browser.newPage()
     await authenticatePage(page)
 
-    // Create a group with one member and send via /api/sms/send/ with group_id
-    groupContact = await ensureContact(page, { first_name: 'GroupName', last_name: 'Tester', phone: '0414888888' })
+    // Create a group with two members so the batch path is used (single recipient skips group)
+    const [c1, c2] = await Promise.all([
+      ensureContact(page, { first_name: 'GroupName', last_name: 'Tester1', phone: '0414888881' }),
+      ensureContact(page, { first_name: 'GroupName', last_name: 'Tester2', phone: '0414888882' }),
+    ])
+    groupContacts = [c1, c2]
     schedGroup = await createGroup(page, { name: 'E2E Schedule Group' })
-    await addMembers(page, schedGroup.id, [groupContact.id])
+    await addMembers(page, schedGroup.id, groupContacts.map(c => c.id))
 
     const result = await apiRequest(page, 'POST', '/api/sms/send/', {
       message: 'Group name test',
-      recipients: [{ phone: '0414888888', contact_id: groupContact.id }],
+      recipients: groupContacts.map(c => ({ phone: c.id === c1.id ? '0414888881' : '0414888882', contact_id: c.id })),
       group_id: schedGroup.id,
     })
-    parentScheduleId = result.parent_schedule_id ?? result.schedule_id
+    parentScheduleId = result.parent_schedule_id
 
     await page.close()
   })
@@ -208,7 +212,7 @@ test.describe('Schedule Page — group send', () => {
     await authenticatePage(page)
     if (parentScheduleId) await deleteSchedule(page, parentScheduleId).catch(() => {})
     if (schedGroup?.id) await deleteGroup(page, schedGroup.id).catch(() => {})
-    if (groupContact?.id) await deleteContact(page, groupContact.id).catch(() => {})
+    await Promise.all(groupContacts.map(c => deleteContact(page, c.id).catch(() => {})))
     await page.close()
   })
 
