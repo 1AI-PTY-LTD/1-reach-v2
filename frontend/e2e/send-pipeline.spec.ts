@@ -14,8 +14,9 @@
  * Both use try/finally to restore state even on test failure.
  */
 
-import fs from 'fs'
-import path from 'path'
+import { readFileSync } from 'fs'
+import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 import { test, expect, type Page } from '@playwright/test'
 import {
   authenticatePage,
@@ -29,7 +30,9 @@ import {
 } from './helpers'
 
 // 400x400 solid-colour JPEG — SMS providers reject tiny/pixel images
-const TEST_IMAGE = fs.readFileSync(path.join(__dirname, 'fixtures', 'test-image.jpg'))
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const TEST_IMAGE = readFileSync(join(__dirname, 'fixtures', 'test-image.jpg'))
 
 // ---------------------------------------------------------------------------
 // Shared fixture data
