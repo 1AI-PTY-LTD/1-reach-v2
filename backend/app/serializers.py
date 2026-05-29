@@ -277,6 +277,7 @@ class SendSMSSerializer(serializers.Serializer):
     recipients = serializers.ListField(
         child=RecipientSerializer(), min_length=1, max_length=500,
     )
+    group_id = serializers.IntegerField(min_value=1, required=False, default=None)
     alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
 
     def validate_message(self, value):
@@ -304,6 +305,7 @@ class SendMMSSerializer(serializers.Serializer):
     recipients = serializers.ListField(
         child=RecipientSerializer(), min_length=1, max_length=500,
     )
+    group_id = serializers.IntegerField(min_value=1, required=False, default=None)
     subject = serializers.CharField(max_length=64, required=False, allow_blank=True, allow_null=True)
     alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
 
