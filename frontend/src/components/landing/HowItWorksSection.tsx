@@ -9,7 +9,7 @@ const steps = [
     step: "02",
     title: "Configure Your Channels",
     description:
-      "Set up SMS, MMS, or Email to SMS. Import contacts, create templates, and configure your sender ID.",
+      "Set up SMS or MMS. Import contacts, create templates, and configure your sender ID.",
   },
   {
     step: "03",

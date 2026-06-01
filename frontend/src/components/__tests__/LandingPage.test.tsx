@@ -91,7 +91,7 @@ describe('HeroSection', () => {
   it('renders heading and subheading', () => {
     render(<HeroSection />)
     expect(screen.getByText(/Every message,/)).toBeInTheDocument()
-    expect(screen.getByText(/Send SMS, MMS, and Email to SMS/)).toBeInTheDocument()
+    expect(screen.getByText(/Send SMS and MMS/)).toBeInTheDocument()
   })
 
   it('has light mode background with dark mode variant', () => {
@@ -103,7 +103,7 @@ describe('HeroSection', () => {
 
   it('has light mode text colors with dark mode variants', () => {
     render(<HeroSection />)
-    const subheading = screen.getByText(/Send SMS, MMS, and Email to SMS/)
+    const subheading = screen.getByText(/Send SMS and MMS/)
     expect(subheading.className).toContain('text-zinc-500')
     expect(subheading.className).toContain('dark:text-[#a99cc4]')
   })

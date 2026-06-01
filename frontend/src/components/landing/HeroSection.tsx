@@ -42,7 +42,7 @@ export function HeroSection() {
 
           {/* Subheading */}
           <p className="mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-zinc-500 dark:text-[#a99cc4] lg:text-xl">
-            Send SMS, MMS, and Email to SMS from a single, powerful platform.
+            Send SMS and MMS from a single, powerful platform.
             Reach your customers instantly with reliable, scalable messaging.
           </p>
 
@@ -81,12 +81,15 @@ export function HeroSection() {
               <span className="text-sm font-semibold text-zinc-950 dark:text-white">Campaigns</span>
               <span className="text-xs text-zinc-500 dark:text-[#a99cc4]">Targeted bulk messaging</span>
             </div>
-            <div className="flex flex-col items-center gap-2 rounded-xl border border-zinc-200 dark:border-white/5 bg-white shadow-sm dark:bg-white/[0.03] dark:shadow-none p-6">
+            <div className="flex flex-col items-center gap-2 rounded-xl border border-zinc-200 dark:border-white/5 bg-white shadow-sm dark:bg-white/[0.03] dark:shadow-none p-6 opacity-70 dark:opacity-60">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-teal/15">
                 <Send className="h-6 w-6 text-brand-teal" />
               </div>
               <span className="text-sm font-semibold text-zinc-950 dark:text-white">Email to SMS</span>
               <span className="text-xs text-zinc-500 dark:text-[#a99cc4]">Convert emails to texts</span>
+              <span className="rounded-full bg-brand-purple/10 px-2 py-0.5 text-xs font-medium text-brand-purple dark:bg-brand-purple/20 dark:text-[#c4a0ff]">
+                Coming Soon
+              </span>
             </div>
           </div>
         </div>

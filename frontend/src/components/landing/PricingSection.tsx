@@ -1,26 +1,26 @@
 import { SignUpButton } from "@clerk/clerk-react"
 import { Button } from "./Button"
-import { Check, MessageSquare, Users, Building2 } from "lucide-react"
+import { Check, Clock, MessageSquare, Users, Building2 } from "lucide-react"
 
 const plans = [
   {
     name: "Starter",
     price: "Free",
     period: "",
-    credit: "$50 credit included",
+    credit: "$5 credit included",
     icon: MessageSquare,
     iconColor: "text-brand-teal",
     iconBg: "bg-brand-teal/10",
     description: "Get started with messaging basics and a generous credit to explore the platform.",
     features: [
-      "$50 free credit",
-      "10c per SMS part",
-      "50c per MMS part",
-      "SMS & MMS",
-      "Campaigns",
-      "Templates",
-      "Admin role",
-      "Email support",
+      { label: "$5 free credit" },
+      { label: "10c per SMS part" },
+      { label: "50c per MMS part" },
+      { label: "SMS & MMS" },
+      { label: "Campaigns" },
+      { label: "Templates" },
+      { label: "Admin role" },
+      { label: "Email support" },
     ],
     cta: "Get Started",
     ctaHref: "/sign-up",
@@ -30,20 +30,21 @@ const plans = [
     name: "Professional",
     price: "$300",
     period: "/mo",
-    credit: "$50 credit included",
+    credit: "$5 credit included",
     icon: Users,
     iconColor: "text-brand-purple",
     iconBg: "bg-brand-purple/10",
     description: "For growing teams that need multiple roles, users, and more control.",
     features: [
-      "10c per SMS part",
-      "50c per MMS part",
-      "SMS, MMS & Email to SMS",
-      "Campaigns",
-      "Templates",
-      "Multiple roles & users",
-      "Advanced analytics",
-      "Priority support",
+      { label: "10c per SMS part" },
+      { label: "50c per MMS part" },
+      { label: "SMS & MMS" },
+      { label: "Email to SMS", comingSoon: true },
+      { label: "Campaigns" },
+      { label: "Templates" },
+      { label: "Multiple roles & users" },
+      { label: "Advanced analytics", comingSoon: true },
+      { label: "Priority support" },
     ],
     cta: "Get Started",
     ctaHref: "/sign-up",
@@ -59,14 +60,14 @@ const plans = [
     iconBg: "bg-brand-light-purple/10",
     description: "For organisations with high-volume messaging and custom requirements.",
     features: [
-      "Custom SMS & MMS rates",
-      "All channels included",
-      "Custom integrations",
-      "Dedicated account manager",
-      "SLA guarantee",
-      "Multiple roles & users",
-      "Advanced analytics",
-      "24/7 phone support",
+      { label: "Custom SMS & MMS rates" },
+      { label: "All channels included" },
+      { label: "Custom integrations" },
+      { label: "Dedicated account manager" },
+      { label: "SLA guarantee" },
+      { label: "Multiple roles & users" },
+      { label: "Advanced analytics", comingSoon: true },
+      { label: "24/7 phone support" },
     ],
     cta: "Talk to Sales",
     ctaHref: "#contact",
@@ -123,9 +124,16 @@ export function PricingSection() {
 
               <ul className="mt-8 flex flex-1 flex-col gap-3">
                 {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-3 text-sm text-zinc-500 dark:text-[#a99cc4]">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-purple" />
-                    {feature}
+                  <li
+                    key={feature.label}
+                    className={`flex items-start gap-3 text-sm ${feature.comingSoon ? "text-zinc-400 dark:text-[#7a6a94]" : "text-zinc-500 dark:text-[#a99cc4]"}`}
+                  >
+                    {feature.comingSoon ? (
+                      <Clock className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400 dark:text-[#7a6a94]" />
+                    ) : (
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-purple" />
+                    )}
+                    {feature.label}
                   </li>
                 ))}
               </ul>

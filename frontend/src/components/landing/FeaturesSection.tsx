@@ -24,6 +24,7 @@ const features = [
       "Convert your emails directly to SMS messages. Perfect for teams already using email workflows who need SMS reach.",
     color: "text-brand-teal",
     bgColor: "bg-brand-teal/10",
+    comingSoon: true,
   },
   {
     icon: Megaphone,
@@ -48,6 +49,7 @@ const features = [
       "Real-time delivery reports, engagement metrics, and campaign analytics. Make data-driven decisions with comprehensive insights.",
     color: "text-brand-teal",
     bgColor: "bg-brand-teal/10",
+    comingSoon: true,
   },
 ]
 
@@ -72,12 +74,19 @@ export function FeaturesSection() {
           {features.map((feature) => (
             <div
               key={feature.title}
-              className="group rounded-xl border border-zinc-200 dark:border-white/5 bg-white shadow-sm dark:bg-white/[0.03] dark:shadow-none p-8 transition-all hover:border-brand-purple/30 hover:bg-gray-50 dark:hover:bg-white/[0.05]"
+              className={`group rounded-xl border border-zinc-200 dark:border-white/5 bg-white shadow-sm dark:bg-white/[0.03] dark:shadow-none p-8 transition-all hover:border-brand-purple/30 hover:bg-gray-50 dark:hover:bg-white/[0.05] ${feature.comingSoon ? "opacity-70 dark:opacity-60" : ""}`}
             >
               <div className={`inline-flex h-12 w-12 items-center justify-center rounded-lg ${feature.bgColor}`}>
                 <feature.icon className={`h-6 w-6 ${feature.color}`} />
               </div>
-              <h3 className="mt-5 text-lg font-semibold text-zinc-950 dark:text-white">{feature.title}</h3>
+              <h3 className="mt-5 flex items-center gap-2 text-lg font-semibold text-zinc-950 dark:text-white">
+                {feature.title}
+                {feature.comingSoon && (
+                  <span className="rounded-full bg-brand-purple/10 px-2 py-0.5 text-xs font-medium text-brand-purple dark:bg-brand-purple/20 dark:text-[#c4a0ff]">
+                    Coming Soon
+                  </span>
+                )}
+              </h3>
               <p className="mt-2 text-sm leading-relaxed text-zinc-500 dark:text-[#a99cc4]">
                 {feature.description}
               </p>
