@@ -4,7 +4,7 @@ import { Check, Clock, MessageSquare, Users, Building2 } from "lucide-react"
 
 const plans = [
   {
-    name: "Starter",
+    name: "Prepaid",
     price: "Free",
     period: "",
     credit: "$5 credit included",
