@@ -69,8 +69,8 @@ const plans = [
       { label: "Advanced analytics", comingSoon: true },
       { label: "24/7 phone support" },
     ],
-    cta: "Talk to Sales",
-    ctaHref: "#contact",
+    cta: "Get Started",
+    ctaHref: "/sign-up",
     featured: false,
   },
 ]

@@ -29,13 +29,6 @@ export function CtaSection() {
               <ArrowRight className="h-4 w-4" />
             </Button>
           </SignUpButton>
-          <Button
-            size="lg"
-            asChild
-            className="gap-2 border border-zinc-300 dark:border-white/30 bg-transparent px-8 text-zinc-950 dark:text-white hover:bg-zinc-100 dark:hover:bg-white/10"
-          >
-            <a href="#contact">Talk to Sales</a>
-          </Button>
         </div>
       </div>
     </section>
