@@ -78,7 +78,7 @@ function GroupsComponent() {
         tabs={tabbedContainerOptions.tabs}
         label={
           <div className="flex items-center space-x-3">
-            <Button outline onClick={() => setIsModalOpen(true)}>
+            <Button className="bg-brand-purple text-white hover:bg-brand-purple/90 dark:bg-brand-purple/20 dark:text-purple-300 dark:hover:bg-brand-purple/30" onClick={() => setIsModalOpen(true)}>
               <PencilIcon />
               <Heading>{groupName}</Heading>
             </Button>
