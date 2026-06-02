@@ -17,7 +17,7 @@ export function CtaSection() {
           <span style={{ background: "linear-gradient(135deg, #7400f6 0%, #9d30a0 50%, #048fb5 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>reach your audience?</span>
         </h2>
         <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-zinc-500 dark:text-white/70">
-          Join thousands of businesses already using 1Reach to connect with their customers through SMS, MMS, and Email to SMS.
+          Join thousands of businesses already using 1Reach to connect with their customers through SMS and MMS.
         </p>
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
           <SignUpButton mode="modal">
@@ -29,13 +29,6 @@ export function CtaSection() {
               <ArrowRight className="h-4 w-4" />
             </Button>
           </SignUpButton>
-          <Button
-            size="lg"
-            asChild
-            className="gap-2 border border-zinc-300 dark:border-white/30 bg-transparent px-8 text-zinc-950 dark:text-white hover:bg-zinc-100 dark:hover:bg-white/10"
-          >
-            <a href="#contact">Talk to Sales</a>
-          </Button>
         </div>
       </div>
     </section>

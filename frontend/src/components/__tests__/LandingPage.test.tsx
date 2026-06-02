@@ -91,7 +91,7 @@ describe('HeroSection', () => {
   it('renders heading and subheading', () => {
     render(<HeroSection />)
     expect(screen.getByText(/Every message,/)).toBeInTheDocument()
-    expect(screen.getByText(/Send SMS, MMS, and Email to SMS/)).toBeInTheDocument()
+    expect(screen.getByText(/Send SMS and MMS/)).toBeInTheDocument()
   })
 
   it('has light mode background with dark mode variant', () => {
@@ -103,7 +103,7 @@ describe('HeroSection', () => {
 
   it('has light mode text colors with dark mode variants', () => {
     render(<HeroSection />)
-    const subheading = screen.getByText(/Send SMS, MMS, and Email to SMS/)
+    const subheading = screen.getByText(/Send SMS and MMS/)
     expect(subheading.className).toContain('text-zinc-500')
     expect(subheading.className).toContain('dark:text-[#a99cc4]')
   })
@@ -171,7 +171,7 @@ describe('HowItWorksSection', () => {
 describe('PricingSection', () => {
   it('renders all three pricing plans', () => {
     render(<PricingSection />)
-    expect(screen.getByText('Starter')).toBeInTheDocument()
+    expect(screen.getByText('Prepaid')).toBeInTheDocument()
     expect(screen.getByText('Professional')).toBeInTheDocument()
     expect(screen.getByText('Enterprise')).toBeInTheDocument()
   })
@@ -190,7 +190,7 @@ describe('PricingSection', () => {
 
   it('non-featured cards have light/dark border styles', () => {
     render(<PricingSection />)
-    const starterCard = screen.getByText('Starter').closest('div[class*="rounded-xl"]')
+    const starterCard = screen.getByText('Prepaid').closest('div[class*="rounded-xl"]')
     expect(starterCard?.className).toContain('border-zinc-200')
     expect(starterCard?.className).toContain('dark:border-white/5')
     expect(starterCard?.className).toContain('bg-white')
