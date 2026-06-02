@@ -81,7 +81,7 @@ export default function GroupsWidget({ userGroups }: { userGroups: ContactGroup[
 						className={
 							isSelected
 								? 'bg-brand-purple text-white font-bold'
-								: 'size-8 bg-brand-purple/15 text-brand-purple dark:bg-brand-purple/20 dark:text-purple-300'
+								: 'size-8 bg-brand-purple/10 text-brand-purple dark:bg-brand-purple/20 dark:text-[#c4a0ff]'
 						}
 					></Avatar>
 				</TableCell>

@@ -7,7 +7,6 @@ import type { TabbedContainerProps } from '../../components/TabbedContainer'
 import GroupUsersDetails from '../../components/groups/GroupUsersDetails'
 import { useQuery } from '@tanstack/react-query'
 import { Heading } from '../../ui/heading'
-import { Button } from '../../ui/button'
 import { PencilIcon } from '@heroicons/react/16/solid'
 import GroupsModal from '../../components/groups/GroupsModal'
 import GroupSchedulesDetails from '../../components/groups/GroupSchedulesDetails'
@@ -78,12 +77,16 @@ function GroupsComponent() {
         tabs={tabbedContainerOptions.tabs}
         label={
           <div className="flex items-center space-x-3">
-            <Button className="bg-brand-purple text-white hover:bg-brand-purple/90 dark:bg-brand-purple/20 dark:text-purple-300 dark:hover:bg-brand-purple/30" onClick={() => setIsModalOpen(true)}>
-              <PencilIcon />
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-brand-purple/20 bg-brand-purple/10 px-3 py-1.5 text-brand-purple hover:bg-brand-purple/20 dark:border-brand-purple/30 dark:bg-brand-purple/20 dark:text-[#c4a0ff] dark:hover:bg-brand-purple/30"
+            >
+              <PencilIcon className="size-4 shrink-0" />
               <Heading>{groupName}</Heading>
-            </Button>
+            </button>
             {memberCount !== undefined && (
-              <span className="text-base text-brand-purple dark:text-purple-300 bg-brand-purple/15 dark:bg-brand-purple/20 px-3 py-1.5 rounded-full">
+              <span className="text-base text-brand-purple bg-brand-purple/10 border border-brand-purple/20 dark:bg-brand-purple/20 dark:text-[#c4a0ff] dark:border-brand-purple/30 px-3 py-1.5 rounded-full">
                 {memberCount} member{memberCount !== 1 ? 's' : ''}
               </span>
             )}
