@@ -35,6 +35,18 @@ import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 import { toast } from 'sonner'
 import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms'
 
+function flattenValidationErrors(obj: Record<string, unknown>): string[] {
+  const messages: string[] = []
+  for (const value of Object.values(obj)) {
+    if (Array.isArray(value)) {
+      messages.push(...value.map(String))
+    } else if (typeof value === 'object' && value !== null) {
+      messages.push(...flattenValidationErrors(value as Record<string, unknown>))
+    }
+  }
+  return messages
+}
+
 export const Route = createFileRoute('/app/_layout/send')({
   component: Send,
   errorComponent: RouteErrorComponent,
@@ -88,7 +100,11 @@ function SendContent() {
 
   const extractErrorMessage = (error: any): string => {
     if (error?.detail) return error.detail
-    if (error?.message) return error.message
+    if (error?.body && typeof error.body === 'object' && !Array.isArray(error.body)) {
+      const messages = flattenValidationErrors(error.body)
+      if (messages.length > 0) return messages.join('; ')
+    }
+    if (error?.message && error.message !== `API error: ${error?.status}`) return error.message
     return 'An unexpected error occurred. Please try again.'
   }
 

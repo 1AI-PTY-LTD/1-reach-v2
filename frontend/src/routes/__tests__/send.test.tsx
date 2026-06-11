@@ -133,9 +133,25 @@ describe('Send Page - Business Logic', () => {
   })
 
   describe('extractErrorMessage', () => {
+    function flattenValidationErrors(obj: Record<string, unknown>): string[] {
+      const messages: string[] = []
+      for (const value of Object.values(obj)) {
+        if (Array.isArray(value)) {
+          messages.push(...value.map(String))
+        } else if (typeof value === 'object' && value !== null) {
+          messages.push(...flattenValidationErrors(value as Record<string, unknown>))
+        }
+      }
+      return messages
+    }
+
     const extractErrorMessage = (error: any): string => {
       if (error?.detail) return error.detail
-      if (error?.message) return error.message
+      if (error?.body && typeof error.body === 'object' && !Array.isArray(error.body)) {
+        const messages = flattenValidationErrors(error.body)
+        if (messages.length > 0) return messages.join('; ')
+      }
+      if (error?.message && error.message !== `API error: ${error?.status}`) return error.message
       return 'An unexpected error occurred. Please try again.'
     }
 
@@ -154,6 +170,54 @@ describe('Send Page - Business Logic', () => {
     it('handles null/undefined', () => {
       expect(extractErrorMessage(null)).toBe('An unexpected error occurred. Please try again.')
       expect(extractErrorMessage(undefined)).toBe('An unexpected error occurred. Please try again.')
+    })
+
+    it('extracts nested DRF validation errors from error.body', () => {
+      const error = {
+        message: 'API error: 400',
+        status: 400,
+        body: {
+          recipients: {
+            '0': {
+              phone: ['Phone must be an Australian mobile number (04XXXXXXXX or +614XXXXXXXX).'],
+            },
+          },
+        },
+      }
+      expect(extractErrorMessage(error)).toBe(
+        'Phone must be an Australian mobile number (04XXXXXXXX or +614XXXXXXXX).'
+      )
+    })
+
+    it('joins multiple validation errors with semicolons', () => {
+      const error = {
+        message: 'API error: 400',
+        status: 400,
+        body: {
+          recipients: {
+            '0': { phone: ['Invalid phone number.'] },
+            '1': { phone: ['Invalid phone number.'] },
+          },
+          message: ['Message is required.'],
+        },
+      }
+      expect(extractErrorMessage(error)).toBe(
+        'Invalid phone number.; Invalid phone number.; Message is required.'
+      )
+    })
+
+    it('falls back to default when error.body has no extractable messages', () => {
+      const error = {
+        message: 'API error: 400',
+        status: 400,
+        body: {},
+      }
+      expect(extractErrorMessage(error)).toBe('An unexpected error occurred. Please try again.')
+    })
+
+    it('skips generic API error message and falls back to default', () => {
+      const error = { message: 'API error: 500', status: 500 }
+      expect(extractErrorMessage(error)).toBe('An unexpected error occurred. Please try again.')
     })
   })
 })
