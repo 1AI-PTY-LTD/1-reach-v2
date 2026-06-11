@@ -136,6 +136,40 @@ class TestProcessDeliveryEventSingleSend:
         assert schedule_sent.status == ScheduleStatus.SENT
 
 
+    def test_processing_schedule_found_by_callback(self, schedule_sent):
+        """Callbacks arriving before SENT is committed should still match PROCESSING schedules."""
+        schedule_sent.status = ScheduleStatus.PROCESSING
+        schedule_sent.save(update_fields=['status'])
+
+        result = process_delivery_event({
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': schedule_sent.phone,
+            'error_code': 'INVN',
+            'error_message': 'Welcorp delivery failed: INVN',
+        })
+
+        schedule_sent.refresh_from_db()
+        assert schedule_sent.status == ScheduleStatus.FAILED
+        assert result == {'schedule_id': schedule_sent.pk, 'status': 'failed'}
+
+    def test_processing_schedule_delivered(self, schedule_sent):
+        """PROCESSING schedules can also receive delivered callbacks."""
+        schedule_sent.status = ScheduleStatus.PROCESSING
+        schedule_sent.save(update_fields=['status'])
+
+        result = process_delivery_event({
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'delivered',
+            'recipient_phone': schedule_sent.phone,
+            'timestamp': '2026-04-02T10:30:00+10:00',
+        })
+
+        schedule_sent.refresh_from_db()
+        assert schedule_sent.status == ScheduleStatus.DELIVERED
+        assert result == {'schedule_id': schedule_sent.pk, 'status': 'delivered'}
+
+
 @pytest.mark.django_db
 class TestProcessDeliveryEventBatchSend:
     """Delivery events for batch (multi-recipient) sends."""
@@ -318,3 +352,63 @@ class TestReconcileStaleSent:
         assert result['polled'] == 2
         assert result['events'] == 0
         assert provider.poll_job_status.call_count == 2
+
+    def test_batch_children_are_polled(self, batch_sent_schedules):
+        """Batch children with provider_message_id should be included in polling."""
+        from app.celery import reconcile_stale_sent
+
+        parent, children = batch_sent_schedules
+        stale_time = timezone.now() - timedelta(hours=25)
+
+        # Make children stale — parent has no provider_message_id in real usage
+        # but in this fixture it does; clear it to simulate real batch sends
+        parent.provider_message_id = None
+        parent.sent_time = stale_time
+        parent.save(update_fields=['provider_message_id', 'sent_time'])
+
+        for child in children:
+            child.sent_time = stale_time
+            child.save(update_fields=['sent_time'])
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event') as mock_task:
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        # Children's provider_message_id should be found (deduplicated to 1 poll)
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with('welcorp-job-999')
+
+    def test_oldest_schedules_polled_first(self, organisation, user, contact):
+        """Schedules are polled oldest-first so old backlog doesn't get stuck."""
+        from app.celery import reconcile_stale_sent
+
+        older = Schedule.objects.create(
+            organisation=organisation, contact=contact, phone='0412111111',
+            text='Old', scheduled_time=timezone.now(),
+            status=ScheduleStatus.SENT, format='sms', message_parts=1,
+            provider_message_id='old-job', sent_time=timezone.now() - timedelta(days=14),
+            created_by=user, updated_by=user,
+        )
+        newer = Schedule.objects.create(
+            organisation=organisation, contact=contact, phone='0412222222',
+            text='New', scheduled_time=timezone.now(),
+            status=ScheduleStatus.SENT, format='sms', message_parts=1,
+            provider_message_id='new-job', sent_time=timezone.now() - timedelta(hours=25),
+            created_by=user, updated_by=user,
+        )
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            reconcile_stale_sent()
+
+        # Oldest job should be polled first
+        calls = [c.args[0] for c in provider.poll_job_status.call_args_list]
+        assert calls[0] == 'old-job'

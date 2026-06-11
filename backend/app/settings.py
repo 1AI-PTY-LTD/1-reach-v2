@@ -273,7 +273,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     'reconcile-stale-sent': {
         'task': 'app.celery.reconcile_stale_sent',
-        'schedule': 3600.0,  # every 1 hour
+        'schedule': 900.0,  # every 15 minutes
     },
     'generate-monthly-invoices': {
         'task': 'app.celery.generate_monthly_invoices',
