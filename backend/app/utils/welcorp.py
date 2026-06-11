@@ -20,7 +20,7 @@ Future features to implement:
 import logging
 from typing import Optional
 from pathlib import PurePosixPath
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from django.conf import settings
@@ -275,7 +275,7 @@ class WelcorpSMSProvider(SMSProvider):
         secret = getattr(settings, 'WELCORP_CALLBACK_SECRET', '')
         if not base_url or not secret:
             return None
-        return f'{base_url.rstrip("/")}/api/webhooks/sms-delivery/?token={secret}'
+        return f'{base_url.rstrip("/")}/api/webhooks/sms-delivery/?token={quote(secret)}'
 
     def poll_job_status(self, provider_message_id: str) -> list[DeliveryEvent]:
         """Poll Welcorp GET /jobs/{job_id} for delivery reports.
