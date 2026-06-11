@@ -10,7 +10,7 @@ A multi-tenant SMS/MMS messaging platform for managing contacts, groups, templat
 
 **Key capabilities:**
 - Contact management with CSV import
-- Group messaging with scheduling
+- Group messaging — send to groups from the Send page or via group schedule modal, with scheduling support
 - Template library
 - SMS/MMS sending — single or batch (multi-recipient), async dispatch via Celery with automatic retry and credit refund on failure
 - Alphanumeric sender ID — org admins configure allowed sender IDs, users select one at send time (displayed instead of phone number on recipient handsets; one-way only)
@@ -170,7 +170,7 @@ backend/
 
 **Multi-tenancy:** All business models inherit `TenantModel`, which adds an `organisation` FK. All queries are scoped to the authenticated user's organisation via `TenantScopedMixin`. Org context is extracted from the Clerk JWT `o` claim during authentication.
 
-**Clerk integration:** Users and organisations are created in Clerk and synced to the local DB via webhooks (`POST /api/webhooks/clerk/`). Membership changes (role updates, deactivation, invitations) go through Clerk's API and sync back via webhooks — Clerk is the source of truth.
+**Clerk integration:** Users and organisations are created in Clerk and synced to the local DB via webhooks (`POST /api/webhooks/clerk/`). Membership changes (role updates, deactivation, invitations) go through Clerk's API and sync back via webhooks — Clerk is the source of truth. Webhook handlers are idempotent and retry-safe — duplicate deliveries from Clerk are handled gracefully using `get_or_create` patterns and existence checks.
 
 **Async send pipeline:** Send endpoints (`POST /api/sms/send/`, `send-mms/`, `send-to-group/`) return `202 Accepted` immediately. Single-recipient sends dispatch a `send_message` task; multi-recipient sends create a parent Schedule with per-recipient child Schedules and dispatch a `send_batch_message` task that calls the provider's bulk send interface:
 
@@ -250,7 +250,7 @@ frontend/
 
 **Scheduling UI:** All scheduling flows (Send page, Contact message modal, Group schedule modal) use a unified `ScheduleDateTimePicker` component. It renders a `datetime-local` input with a `min` attribute set to the current time (preventing past-time selection), outputs UTC ISO strings, and shows contextual status messages (past time warning, immediate send notice, or scheduled confirmation).
 
-**Landing page:** Unauthenticated visitors see a marketing landing page (`src/components/landing/`) rendered via Clerk's `<SignedOut>` gate in `__root.tsx`. It includes a hero section with animated canvas background, features grid, pricing tiers, and CTA sections. Sign In / Sign Up buttons open Clerk modals. Once authenticated, users are redirected to `/app/send`. The landing page supports both light and dark mode via `prefers-color-scheme` media queries — light mode uses white/gray backgrounds with dark text (matching the logged-in app's light palette), while dark mode uses the branded navy backgrounds with white text. The `AnimatedMessagesBg` canvas component detects the colour scheme at runtime via `matchMedia` and reduces particle opacity in light mode.
+**Landing page:** Unauthenticated visitors see a marketing landing page (`src/components/landing/`) rendered via Clerk's `<SignedOut>` gate in `__root.tsx`. It includes a hero section with animated canvas background, features grid, pricing tiers (Prepaid and Subscribed plans), and CTA section. Sign In / Sign Up buttons open Clerk modals. Once authenticated, users are redirected to `/app/send`. The landing page supports both light and dark mode via `prefers-color-scheme` media queries — light mode uses white/gray backgrounds with dark text (matching the logged-in app's light palette), while dark mode uses the branded navy backgrounds with white text. The `AnimatedMessagesBg` canvas component detects the colour scheme at runtime via `matchMedia` and reduces particle opacity in light mode.
 
 **Brand colours:** Defined in `tailwind.config.cjs` under `theme.extend.colors.brand`:
 
@@ -303,7 +303,7 @@ All endpoints require Clerk JWT authentication except health/smoke endpoints (un
 docker compose run --rm backend uv run python -m pytest tests/ -x -q
 ```
 
-793 tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+800+ tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose run --rm backend uv run python -m pytest --create-db tests/ -q
@@ -323,7 +323,7 @@ docker compose exec frontend npx vitest run
 docker compose exec frontend npx playwright test
 ```
 
-104 Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), billing-stripe (subscribe via PricingTable with Stripe test card + invoice generation + invoice display + cancel subscription), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
+105+ Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), billing-stripe (subscribe via PricingTable with Stripe test card + invoice generation + invoice display + cancel subscription), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
 
 **Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 
@@ -490,7 +490,7 @@ All three backend container apps use the **same Docker image** (`backend/Dockerf
 | Static Web App | Separate (free tier) | Separate (custom domain: `1reach.net`) |
 | Image tags | `dev-<sha>-<timestamp>` | `prod-<sha>-<timestamp>` |
 | VNet | No (default networking) | Yes (custom VNet + private endpoints for Redis/PostgreSQL) |
-| Custom domain | Azure SWA default URL | `1reach.net` (frontend), `clerk.1reach.net` (Clerk FAPI) |
+| Custom domain | Azure SWA default URL | `1reach.net` (frontend), `api.1reach.net` (backend API), `clerk.1reach.net` (Clerk FAPI) |
 
 Dev containers scale to zero when idle to save cost (~30s cold start on first request).
 
