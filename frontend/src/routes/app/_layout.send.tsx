@@ -46,6 +46,13 @@ function SendContent() {
   const { data: sendersData } = useQuery(alphanumericSendersQueryOptions(client))
   const alphanumericSenders = sendersData?.alphanumeric_senders ?? []
   const [selectedSender, setSelectedSender] = useState('')
+  const senderDefaultApplied = useRef(false)
+  useEffect(() => {
+    if (!senderDefaultApplied.current && alphanumericSenders.length > 0) {
+      setSelectedSender(alphanumericSenders[0])
+      senderDefaultApplied.current = true
+    }
+  }, [alphanumericSenders])
   const [query, setQuery] = useState('')
   const [groupQuery, setGroupQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
@@ -219,7 +226,7 @@ function SendContent() {
     setErrorMessage('')
     setInputValue('')
     setSelectedRecipients([])
-    setSelectedSender('')
+    setSelectedSender(alphanumericSenders[0] ?? '')
     form.reset()
     setUploadedFileUrl(null)
     setSelectedFile(null)
@@ -497,12 +504,12 @@ function SendContent() {
 
             {alphanumericSenders.length > 0 && (
               <Field>
-                <Label className="block mb-2">Sender ID (Optional)</Label>
+                <Label className="block mb-2">Sender ID</Label>
                 <Select
                   value={selectedSender}
                   onChange={(e) => setSelectedSender(e.target.value)}
                 >
-                  <option value="">Default (phone number)</option>
+                  <option value="">None (random number)</option>
                   {alphanumericSenders.map((sender) => (
                     <option key={sender} value={sender}>{sender}</option>
                   ))}
