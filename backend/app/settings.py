@@ -271,6 +271,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'app.celery.cleanup_stale_media_blobs',
         'schedule': 86400.0,  # every 24 hours
     },
+    'reconcile-stale-sent': {
+        'task': 'app.celery.reconcile_stale_sent',
+        'schedule': 3600.0,  # every 1 hour
+    },
     'generate-monthly-invoices': {
         'task': 'app.celery.generate_monthly_invoices',
         'schedule': crontab(day_of_month=1, hour=2, minute=0),  # 1st of month, 2:00 AM

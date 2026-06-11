@@ -159,6 +159,31 @@ class TestGetCallbackUrl:
             assert p.get_callback_url() == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=test-secret-123'
 
 
+    def test_secret_with_percent_is_url_encoded(self):
+        """Secrets containing % must be URL-encoded so Django QueryDict decodes them back correctly."""
+        with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': 'WWRL%164gRfs'}):
+            p = WelcorpSMSProvider()
+            url = p.get_callback_url()
+            assert url == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=WWRL%25164gRfs'
+
+    def test_secret_with_percent_roundtrips_through_querydict(self):
+        """Token survives: get_callback_url → URL decode (Django QueryDict) → validate_callback_request."""
+        secret = 'WWRL%164gRfs'
+        with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': secret}):
+            p = WelcorpSMSProvider()
+            url = p.get_callback_url()
+            # Simulate Django QueryDict decoding: extract token param and URL-decode it
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(url)
+            decoded_token = parse_qs(parsed.query)['token'][0]
+            assert decoded_token == secret
+
+            # Simulate the validate_callback_request path
+            request = Mock()
+            request.GET = {'token': decoded_token}
+            assert p.validate_callback_request(request) is True
+
+
 class TestPostJobCallbackInjection:
     """_post_job includes callback fields when configured."""
 
