@@ -276,6 +276,33 @@ test.describe('Billing gate — error surfaces in UI', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Validation errors
+// ---------------------------------------------------------------------------
+
+test.describe('Send SMS — validation errors', () => {
+  test('invalid phone number shows backend validation error', async ({ page }) => {
+    await page.goto('/app/send')
+
+    const textarea = page.locator('textarea').first()
+    await expect(textarea).toBeVisible({ timeout: 10000 })
+    await textarea.fill('Test message for invalid number')
+
+    // Type an invalid phone number but do NOT press Enter (so it stays as raw input
+    // and gets sent to the backend without frontend validation intercepting it)
+    const recipientInput = page.getByPlaceholder(/search|recipient|phone|contact/i).first()
+    await recipientInput.fill('12345')
+
+    const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
+    await sendBtn.click()
+
+    // Backend returns 400 with nested validation error — should display the actual message
+    await expect(
+      page.getByText(/australian mobile number/i).first()
+    ).toBeVisible({ timeout: 8000 })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Group send
 // ---------------------------------------------------------------------------
 

@@ -656,7 +656,7 @@ def _find_schedule(provider_message_id: str, recipient_phone: str | None) -> Sch
     """
     qs = Schedule.objects.filter(
         provider_message_id=provider_message_id,
-        status=ScheduleStatus.SENT,
+        status__in=[ScheduleStatus.SENT, ScheduleStatus.PROCESSING],
     )
 
     if recipient_phone:
@@ -770,7 +770,7 @@ def reconcile_stale_sent() -> dict:
             sent_time__lte=cutoff,
             provider_message_id__isnull=False,
         )
-        .exclude(parent__isnull=False)
+        .order_by('sent_time')
         .values_list('provider_message_id', flat=True)
         .distinct()[:50]
     )
