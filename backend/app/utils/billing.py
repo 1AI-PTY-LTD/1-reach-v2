@@ -227,70 +227,62 @@ def refund_usage(org, schedule) -> None:
     by a one-to-one constraint). A schedule that is charged again on manual retry
     can therefore be refunded again if the retry also fails permanently.
 
-    trial mode:      credit_balance += amount → INSERT type=refund
-    subscribed mode: INSERT type=refund only (balance unchanged, corrects usage reporting)
+    trial mode:      SELECT FOR UPDATE org → credit_balance += amount → INSERT type=refund
+    subscribed mode: SELECT FOR UPDATE org → INSERT type=refund only (balance unchanged)
     """
-    # Find the most recent charge for this schedule that has not been refunded yet
-    original_tx = CreditTransaction.objects.filter(
-        organisation=org,
-        schedule=schedule,
-        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
-        refund__isnull=True,
-    ).order_by('-created_at').first()
-
-    if not original_tx:
-        logger.debug(
-            'refund_usage: no unrefunded charge for schedule %d — nothing to refund',
-            schedule.pk,
-        )
-        return
-
-    amount = original_tx.amount
-    original_rate = original_tx.unit_rate
-    failure_category = getattr(schedule, 'failure_category', None) or 'unknown'
-    description = f'Refund: send failed ({failure_category})'
-
     try:
-        if org.billing_mode == org.BILLING_PREPAID:
-            with db_transaction.atomic():
+        with db_transaction.atomic():
+            # Serialize concurrent refund attempts for the same org (a delivery
+            # callback and the reconciliation poll can both fail the same schedule
+            # at once). The second caller blocks here until the first commits,
+            # then re-reads and finds the charge already refunded.
+            org.__class__.objects.select_for_update().get(pk=org.pk)
+
+            # Find the most recent charge for this schedule that has not been refunded yet
+            original_tx = CreditTransaction.objects.filter(
+                organisation=org,
+                schedule=schedule,
+                transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
+                refund__isnull=True,
+            ).order_by('-created_at').first()
+
+            if not original_tx:
+                logger.debug(
+                    'refund_usage: no unrefunded charge for schedule %d — nothing to refund',
+                    schedule.pk,
+                )
+                return
+
+            amount = original_tx.amount
+            original_rate = original_tx.unit_rate
+            failure_category = getattr(schedule, 'failure_category', None) or 'unknown'
+            description = f'Refund: send failed ({failure_category})'
+
+            if org.billing_mode == org.BILLING_PREPAID:
                 org.__class__.objects.filter(pk=org.pk).update(
                     credit_balance=F('credit_balance') + amount
                 )
-                new_balance = org.__class__.objects.values_list('credit_balance', flat=True).get(pk=org.pk)
-                CreditTransaction.objects.create(
-                    organisation=org,
-                    transaction_type=CreditTransaction.REFUND,
-                    amount=amount,
-                    balance_after=new_balance,
-                    description=description,
-                    format=getattr(schedule, 'format', None),
-                    schedule=schedule,
-                    created_by=None,
-                    unit_rate=original_rate,
-                    refunded_transaction=original_tx,
-                )
-        else:
-            with db_transaction.atomic():
-                current_balance = get_balance(org)
-                CreditTransaction.objects.create(
-                    organisation=org,
-                    transaction_type=CreditTransaction.REFUND,
-                    amount=amount,
-                    balance_after=current_balance,
-                    description=description,
-                    format=getattr(schedule, 'format', None),
-                    schedule=schedule,
-                    created_by=None,
-                    unit_rate=original_rate,
-                    refunded_transaction=original_tx,
-                )
+            new_balance = get_balance(org)
+            CreditTransaction.objects.create(
+                organisation=org,
+                transaction_type=CreditTransaction.REFUND,
+                amount=amount,
+                balance_after=new_balance,
+                description=description,
+                format=getattr(schedule, 'format', None),
+                schedule=schedule,
+                created_by=None,
+                unit_rate=original_rate,
+                refunded_transaction=original_tx,
+            )
     except IntegrityError:
-        # Another process refunded the same charge concurrently — the one-to-one
-        # constraint on refunded_transaction rejected the duplicate, and the
-        # atomic block rolled back the balance update. Nothing left to do.
+        # Backstop only: callers that already hold the org lock in an outer
+        # transaction cannot race here, but if a refund for the same charge
+        # slips through anyway the one-to-one constraint on refunded_transaction
+        # rejects it and the atomic block rolls back the balance update.
         logger.warning(
-            'refund_usage: charge %d for schedule %d was refunded concurrently, skipping',
-            original_tx.pk, schedule.pk,
+            'refund_usage: charge for schedule %d was refunded concurrently, skipping',
+            schedule.pk,
         )
         return
 
