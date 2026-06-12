@@ -336,6 +336,9 @@ CELERY_WORKER_MAX_MEMORY_PER_CHILD = int(os.environ.get('CELERY_WORKER_MAX_MEMOR
 # inspect/events tooling) can observe failures and stalls.
 CELERY_WORKER_SEND_TASK_EVENTS = True
 CELERY_TASK_SEND_SENT_EVENT = True
+# All tasks are fire-and-forget (nothing calls .get()); storing their return
+# values just accumulates result keys in Redis until expiry.
+CELERY_TASK_IGNORE_RESULT = True
 
 # Message retry policy
 MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
