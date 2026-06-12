@@ -218,6 +218,25 @@ Set via the Configs API (`POST /api/configs/` with `{ "name": "sms_rate", "value
 |---|---|---|
 | `allowed_alphanumeric_senders` | Whitelist of sender IDs users can select at send time | `["MYCOMPANY","ALERTS"]` |
 
+> **ACMA Sender ID Register (compliance — mandatory from 1 July 2026).**
+> Alphanumeric sender IDs used for Australian SMS must be registered with the
+> ACMA SMS Sender ID Register; unregistered IDs are blocked or labelled
+> "unverified" by carriers. Registration is handled **manually with Welcorp**:
+> the customer's sender ID is submitted to Welcorp, and only once Welcorp
+> confirms the registration is the ID added to the org's
+> `allowed_alphanumeric_senders` Config. Never add an unregistered sender ID
+> to an org's config. Note that alphanumeric senders are one-way — recipients
+> cannot reply STOP — so opt-out handling relies on the platform's
+> `Contact.opt_out` flag (set automatically on carrier OPTO callbacks and
+> editable via the contacts API/UI).
+
+**Recipient opt-outs (Spam Act 2003):** every send path skips contacts whose
+`opt_out` flag is set — direct sends, group sends, and scheduled sends (which
+also re-check at dispatch time). Carrier-reported opt-outs (Welcorp `OPTO`)
+automatically set `opt_out=True` on all matching contacts in the org. Sending
+organisations remain responsible for consent and sender identification — see
+the Terms of Service (`/terms`).
+
 **SMS/Storage/Billing providers:** All three are pluggable via `settings.SMS_PROVIDER_CLASS`, `settings.STORAGE_PROVIDER_CLASS`, and `settings.METERED_BILLING_PROVIDER_CLASS`. Mock providers are used by default (dev/testing). The `SMSProvider` base class defines `send_sms()`, `send_bulk_sms()`, `send_mms()`, and `send_bulk_mms()` public methods that handle phone validation/normalisation, then delegate to abstract `_send_sms_impl()` and `_send_mms_impl()` methods. Bulk methods (`_send_bulk_sms_impl`, `_send_bulk_mms_impl`) have default implementations that loop over the individual send method — providers with native batch support can override them.
 
 **Delivery status tracking:** The `SMSProvider` base class also defines a provider-agnostic delivery callback/polling interface. Providers can override `parse_delivery_callback()` to handle incoming webhooks, `validate_callback_request()` for authentication, `get_callback_url()` to register callbacks in send payloads, and `poll_job_status()` to fetch delivery reports on demand. All methods return `DeliveryEvent` objects consumed by the `process_delivery_event` Celery task, which updates schedule status and triggers billing refunds on carrier-reported failures. A `reconcile_stale_sent` beat task polls the provider for schedules stuck in SENT >24h as a fallback when callbacks are missed. The Welcorp provider (`welcorp.py`) implements all four methods. Welcorp's `SENT` status means "carrier accepted" (the best confirmation available — no handset delivery status exists), so it is mapped to `DELIVERED` to mark the schedule as terminal.
