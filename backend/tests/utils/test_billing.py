@@ -337,6 +337,47 @@ class TestRefundUsage:
             transaction_type=CreditTransaction.REFUND,
         ).count() == 1
 
+    def test_refund_links_the_charge_it_reverses(self):
+        org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+        charge = CreditTransaction.objects.get(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.DEDUCT
+        )
+
+        refund_usage(org, schedule)
+
+        refund_tx = CreditTransaction.objects.get(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND
+        )
+        assert refund_tx.refunded_transaction_id == charge.pk
+
+    def test_refund_after_retry_recharge_refunds_again(self):
+        """A schedule re-charged on manual retry is refunded again on a second failure.
+
+        Regression test: the old schedule-level idempotency check made any second
+        refund a no-op, silently keeping the retry charge.
+        """
+        org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+
+        record_usage(org, 1, 'sms', 'initial send', user, schedule)
+        refund_usage(org, schedule)
+        record_usage(org, 1, 'sms', 'retry send', user, schedule)
+        refund_usage(org, schedule)
+
+        assert get_balance(org) == Decimal('10.00')  # fully restored
+        assert CreditTransaction.objects.filter(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND,
+        ).count() == 2
+        # Each refund links a distinct charge
+        linked = CreditTransaction.objects.filter(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND,
+        ).values_list('refunded_transaction_id', flat=True)
+        assert len(set(linked)) == 2
+
     def test_refund_with_no_original_charge_is_noop(self):
         org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
         user = UserFactory()

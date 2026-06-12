@@ -250,6 +250,14 @@ class CreditTransaction(TenantModel, AuditMixin):
         related_name='credit_transactions'
     )
     unit_rate = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    # For REFUND rows: the DEDUCT/USAGE charge this refund reverses. The one-to-one
+    # constraint guarantees each charge is refunded at most once at the DB level,
+    # while still allowing a schedule that is re-charged on manual retry to be
+    # refunded again if the retry also fails.
+    refunded_transaction = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='refund',
+    )
 
     class Meta:
         db_table = 'credit_transactions'
