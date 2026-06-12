@@ -56,6 +56,10 @@ class Organisation(models.Model):
     past_due_source = models.CharField(
         max_length=20, choices=PAST_DUE_SOURCE_CHOICES, null=True, blank=True,
     )
+    # updated_at of the last applied Clerk billing event. Svix delivers
+    # unordered, so a delayed subscription.updated(active) could otherwise
+    # overwrite a newer past_due state; events older than this are skipped.
+    billing_event_at = models.DateTimeField(null=True, blank=True)
     billing_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
 
     class Meta:

@@ -650,6 +650,53 @@ class TestHandleSubscriptionActiveClears:
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
         assert org.past_due_source is None
 
+    def test_stale_active_event_does_not_overwrite_newer_past_due(self):
+        """Out-of-order delivery: a delayed 'active' must not un-block a newer past_due.
+
+        Svix delivers unordered. The org's billing_event_at records the last
+        applied payload updated_at; older events are skipped.
+        """
+        from datetime import datetime, timezone as dt_timezone
+
+        org = OrganisationFactory(
+            clerk_org_id='org_ooo',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
+            billing_event_at=datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc),
+        )
+        stale_ms = int(datetime(2026, 6, 10, 11, 0, tzinfo=dt_timezone.utc).timestamp() * 1000)
+
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_created({
+                'payer': {'organization_id': 'org_ooo'},
+                'updated_at': stale_ms,
+            })
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE  # not overwritten
+
+    def test_newer_active_event_applies_and_records_timestamp(self):
+        """A genuinely newer event applies and advances billing_event_at."""
+        from datetime import datetime, timezone as dt_timezone
+
+        org = OrganisationFactory(
+            clerk_org_id='org_newer',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
+            billing_event_at=datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc),
+        )
+        newer = datetime(2026, 6, 10, 13, 0, tzinfo=dt_timezone.utc)
+
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_created({
+                'payer': {'organization_id': 'org_newer'},
+                'updated_at': int(newer.timestamp() * 1000),
+            })
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+        assert org.billing_event_at == newer
+
     def test_does_not_clear_stripe_invoice_past_due(self):
         """subscription.active must not un-block past_due caused by an unpaid Stripe invoice.
 
