@@ -274,6 +274,10 @@ module worker 'modules/container-app.bicep' = {
       { name: 'DB_POOL_MIN_SIZE', value: '1' }
       { name: 'DB_POOL_MAX_SIZE', value: '4' }
     ])
+    // NOTE: without a scale rule, a no-ingress app stays at minReplicas, so
+    // WORKER_MAX_REPLICAS currently has no effect. Deliberately left without
+    // a rule to keep replica count (and cost) fixed; add a CPU or Redis
+    // queue-length KEDA rule here if send volume ever needs elastic workers.
   }
 }
 

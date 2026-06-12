@@ -16,6 +16,10 @@ param ingressExternal bool = false
 param targetPort int = 8000
 param secrets array = []
 param env array = []
+// NOTE: worker/beat run no HTTP server and ACA supports only HTTP/TCP probes
+// (no exec probes), so they intentionally have no healthProbePath. A crashed
+// process exits and ACA restarts the container; "alive but hung" is bounded
+// by Celery task time limits and surfaced via Sentry.
 param healthProbePath string = ''
 param customDomains array = []
 // 'Multiple' enables zero-downtime deploys for ingress apps: a new revision

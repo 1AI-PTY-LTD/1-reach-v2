@@ -27,6 +27,9 @@ resource env 'Microsoft.App/managedEnvironments@2025-01-01' = {
       infrastructureSubnetId: infrastructureSubnetId
       internal: false
     } : null
+    // NOTE: zoneRedundant is intentionally not set — it can only be chosen
+    // when an environment is first created (changing it forces recreation).
+    // Revisit if the environment is ever rebuilt.
   }
 }
 

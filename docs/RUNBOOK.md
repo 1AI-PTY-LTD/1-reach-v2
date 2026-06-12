@@ -67,6 +67,26 @@ service-principal secret. One-off setup:
    `AZURE_SUBSCRIPTION_ID`.
 3. Delete the `AZURE_CREDENTIALS` secret.
 
+## Redis (Celery broker) — recommended manual configuration
+
+The Celery queue (queued sends, in-flight retries) lives in Redis memory.
+Azure Cache for Redis is provisioned outside this repo; two settings matter:
+
+- **Eviction policy**: Azure's default `volatile-lru` silently deletes keys —
+  including queued tasks — under memory pressure. `noeviction` turns that
+  into loud write errors instead. One-off manual command (run when convenient;
+  it only changes the existing cache's config):
+
+  ```bash
+  az redis update --name <cache-name> --resource-group <rg> \
+    --set "redisConfiguration.maxmemory-policy"="noeviction"
+  ```
+
+- **Loss tolerance**: even if queued tasks are lost (restart/failover), the
+  database is the source of truth — `dispatch_due_messages` re-enqueues
+  schedules stuck in QUEUED after ~5 minutes, so losses self-heal. Premium-tier
+  persistence is therefore not required.
+
 ## Known constraints / accepted risks
 
 - **Shared PostgreSQL server**: the production Postgres flexible server is
