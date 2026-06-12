@@ -14,6 +14,9 @@ import json
 import logging
 import os
 import ssl as _ssl
+from urllib.parse import quote as _urlquote
+
+import certifi
 from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 from decimal import Decimal as _Decimal
@@ -302,19 +305,25 @@ CELERY_BEAT_SCHEDULE = {
 }
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
-# Redis SSL — required for Azure Cache for Redis (rediss:// URLs)
+# Redis SSL — required for Azure Cache for Redis (rediss:// URLs).
+# Certificates are verified against certifi's CA bundle: Azure Cache presents
+# publicly-trusted certs, and CERT_NONE would let the client handshake with
+# anything answering on the hostname (silent DNS misdirection, key harvesting).
 def _ensure_redis_ssl(url):
     if url and url.startswith('rediss://') and 'ssl_cert_reqs' not in url:
         sep = '&' if '?' in url else '?'
-        return url + sep + 'ssl_cert_reqs=CERT_NONE'
+        return (
+            url + sep
+            + 'ssl_cert_reqs=CERT_REQUIRED&ssl_ca_certs=' + _urlquote(certifi.where(), safe='')
+        )
     return url
 
 CELERY_BROKER_URL = _ensure_redis_ssl(CELERY_BROKER_URL)
 CELERY_RESULT_BACKEND = _ensure_redis_ssl(CELERY_RESULT_BACKEND)
 
 if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
-    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
-    CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
+    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
+    CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
 
 
 # SMS Provider

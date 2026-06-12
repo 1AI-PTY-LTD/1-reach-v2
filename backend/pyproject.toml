@@ -18,6 +18,7 @@ dependencies = [
     "clerk-backend-api",
     "azure-storage-blob==12.19.0",
     "celery[redis]>=5.3",
+    "certifi",  # CA bundle for Redis TLS verification (explicit: security control)
     "stripe>=8.0",
     "redis>=5.0",
     "gunicorn",
