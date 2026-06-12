@@ -210,6 +210,11 @@ class Schedule(TenantModel, AuditMixin):
     retry_count = models.PositiveSmallIntegerField(default=0)
     max_retries = models.PositiveSmallIntegerField(default=3)
     next_retry_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    # Committed immediately before each provider HTTP call. Crash recovery uses
+    # it to distinguish "worker died before calling the provider" (safe to
+    # re-send) from "send outcome unknown" (must not blindly re-send — risk of
+    # duplicate SMS delivery). Cleared when the task transitions to PROCESSING.
+    dispatch_attempted_at = models.DateTimeField(blank=True, null=True)
     failure_category = models.CharField(
         max_length=40, choices=FailureCategory.choices, blank=True, null=True
     )

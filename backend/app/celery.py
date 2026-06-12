@@ -320,7 +320,8 @@ def send_message(self, schedule_id: int) -> dict:
                 status__in=[ScheduleStatus.QUEUED, ScheduleStatus.RETRYING],
             )
             schedule.status = ScheduleStatus.PROCESSING
-            schedule.save(update_fields=['status', 'updated_at'])
+            schedule.dispatch_attempted_at = None
+            schedule.save(update_fields=['status', 'dispatch_attempted_at', 'updated_at'])
     except Schedule.DoesNotExist:
         logger.warning(
             'send_message: schedule %d not found or wrong status — skipping',
@@ -333,6 +334,11 @@ def send_message(self, schedule_id: int) -> dict:
             schedule_id,
         )
         return {'skipped': True, 'reason': 'concurrent_lock'}
+
+    # Committed before the provider HTTP call so crash recovery can tell
+    # "worker died before calling the provider" (safe to re-send) from
+    # "worker died with the send outcome unknown" (must NOT blindly re-send).
+    Schedule.objects.filter(pk=schedule.pk).update(dispatch_attempted_at=timezone.now())
 
     # Call provider outside the lock to avoid holding it during network I/O
     provider = get_sms_provider()
@@ -371,7 +377,8 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
                 status__in=[ScheduleStatus.QUEUED, ScheduleStatus.RETRYING],
             )
             parent.status = ScheduleStatus.PROCESSING
-            parent.save(update_fields=['status', 'updated_at'])
+            parent.dispatch_attempted_at = None
+            parent.save(update_fields=['status', 'dispatch_attempted_at', 'updated_at'])
     except Schedule.DoesNotExist:
         logger.warning(
             'send_batch_message: parent %d not found or wrong status — skipping',
@@ -401,6 +408,10 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
     # Mark children as PROCESSING
     child_pks = [c.pk for c in children]
     Schedule.objects.filter(pk__in=child_pks).update(status=ScheduleStatus.PROCESSING)
+
+    # Committed before the provider HTTP call — see send_message. The marker
+    # lives on the parent; the children share the single bulk call's fate.
+    Schedule.objects.filter(pk=parent.pk).update(dispatch_attempted_at=timezone.now())
 
     # Build recipients and call provider
     provider = get_sms_provider()
@@ -527,6 +538,63 @@ def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: di
         )
 
 
+_UNKNOWN_OUTCOME_ERROR = (
+    'Send outcome unknown: the worker was interrupted after contacting the '
+    'provider. Not retried automatically to avoid duplicate delivery — '
+    'retry manually if the message did not arrive.'
+)
+
+
+def _fail_unknown_outcome(individual_pks: list, parent_pks: list) -> int:
+    """Fail stale PROCESSING schedules whose provider call may have gone out.
+
+    Marks them FAILED with a clear explanation, refunds the prepaid charge,
+    and syncs batch parents. Returns the number of schedules failed.
+    """
+    failed = 0
+    for pk in individual_pks:
+        with transaction.atomic():
+            schedule = Schedule.objects.select_for_update().filter(
+                pk=pk, status=ScheduleStatus.PROCESSING,
+            ).first()
+            if not schedule:
+                continue
+            schedule.status = ScheduleStatus.FAILED
+            schedule.failure_category = 'unknown'
+            schedule.error = _UNKNOWN_OUTCOME_ERROR
+            schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+            refund_usage(schedule.organisation, schedule)
+            failed += 1
+        logger.error('dispatch_due_messages: schedule %d failed with unknown send outcome', pk)
+
+    for pk in parent_pks:
+        with transaction.atomic():
+            parent = Schedule.objects.select_for_update().filter(
+                pk=pk, status=ScheduleStatus.PROCESSING,
+            ).first()
+            if not parent:
+                continue
+            children = list(Schedule.objects.select_for_update().filter(
+                parent=parent,
+                status__in=[ScheduleStatus.PENDING, ScheduleStatus.QUEUED,
+                            ScheduleStatus.RETRYING, ScheduleStatus.PROCESSING],
+            ))
+            for child in children:
+                child.status = ScheduleStatus.FAILED
+                child.failure_category = 'unknown'
+                child.error = _UNKNOWN_OUTCOME_ERROR
+                child.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+                refund_usage(child.organisation, child)
+            parent.status = ScheduleStatus.FAILED
+            parent.failure_category = 'unknown'
+            parent.error = _UNKNOWN_OUTCOME_ERROR
+            parent.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+            failed += 1 + len(children)
+        logger.error('dispatch_due_messages: batch parent %d failed with unknown send outcome', pk)
+
+    return failed
+
+
 # ---------------------------------------------------------------------------
 # Beat task: dispatch due PENDING schedules
 # ---------------------------------------------------------------------------
@@ -590,18 +658,42 @@ def dispatch_due_messages() -> dict:
     stale_qs = Schedule.objects.filter(
         status=ScheduleStatus.PROCESSING, updated_at__lte=stale_cutoff,
     )
+
+    # --- Unknown-outcome schedules: the worker died AFTER the provider call was
+    # started (dispatch_attempted_at committed pre-call). The SMS may or may not
+    # have gone out — blindly re-sending risks duplicate delivery to the
+    # recipient, so fail them with a refund and leave manual retry to the user.
+    unknown_individual_pks = list(
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=False)
+        .exclude(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    unknown_parent_pks = list(
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=False)
+        .filter(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    failed_unknown = 0
+    if unknown_individual_pks or unknown_parent_pks:
+        failed_unknown = _fail_unknown_outcome(unknown_individual_pks, unknown_parent_pks)
+
+    # --- Safe-to-resend schedules: the worker died BEFORE calling the provider
+    # (no dispatch_attempted_at). Re-queue and re-dispatch.
     stale_individual_pks = list(
-        stale_qs.filter(parent__isnull=True)
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=True)
         .exclude(Exists(has_children))
         .values_list('pk', flat=True)
     )
     stale_parent_pks = list(
-        stale_qs.filter(parent__isnull=True)
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=True)
         .filter(Exists(has_children))
         .values_list('pk', flat=True)
     )
+    # Children carry no marker of their own (the parent's bulk call decides
+    # their fate); only reset children whose parent wasn't just failed above.
     stale_child_pks = list(
         stale_qs.filter(parent__isnull=False)
+        .exclude(parent_id__in=unknown_parent_pks)
         .values_list('pk', flat=True)
     )
 
@@ -632,7 +724,12 @@ def dispatch_due_messages() -> dict:
         )
 
         if not due:
-            return {'dispatched': 0, 'recovered_queued': recovered_queued, 'recovered_processing': recovered_processing}
+            return {
+                'dispatched': 0,
+                'recovered_queued': recovered_queued,
+                'recovered_processing': recovered_processing,
+                'failed_unknown': failed_unknown,
+            }
 
         Schedule.objects.filter(pk__in=due).update(
             status=ScheduleStatus.QUEUED,
@@ -652,7 +749,12 @@ def dispatch_due_messages() -> dict:
             send_message.delay(schedule_id)
 
     logger.info('dispatch_due_messages: dispatched %d schedules', len(due))
-    return {'dispatched': len(due), 'recovered_queued': recovered_queued, 'recovered_processing': recovered_processing}
+    return {
+        'dispatched': len(due),
+        'recovered_queued': recovered_queued,
+        'recovered_processing': recovered_processing,
+        'failed_unknown': failed_unknown,
+    }
 
 
 # ---------------------------------------------------------------------------

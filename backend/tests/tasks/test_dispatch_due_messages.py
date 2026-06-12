@@ -87,7 +87,7 @@ class TestDispatchDueMessages:
             mock_batch.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_batch.delay.assert_called_once_with(parent.pk)
         mock_send.delay.assert_not_called()
 
@@ -104,7 +104,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -118,7 +118,7 @@ class TestDispatchDueMessages:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_called_once_with(parent.pk)
         mock_batch.delay.assert_not_called()
 
@@ -142,7 +142,7 @@ class TestDispatchDueMessages:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_called_once_with(individual.pk)
         mock_batch.delay.assert_not_called()
         individual.refresh_from_db()
@@ -158,7 +158,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -173,7 +173,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -183,7 +183,7 @@ class TestDispatchDueMessages:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
 
@@ -198,7 +198,7 @@ class TestDispatchDueMessages:
             mock_batch.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_batch.delay.assert_called_once_with(parent.pk)
         mock_send.delay.assert_not_called()
 
@@ -255,7 +255,7 @@ class TestDispatchBatchSize:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 500, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 500, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         assert mock_send.delay.call_count == 500
         mock_batch.delay.assert_not_called()
         # Remaining 10 stay PENDING, picked up next tick
@@ -282,7 +282,7 @@ class TestDispatchRetrying:
             mock_batch.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_batch.delay.assert_called_once_with(parent.pk)
         mock_send.delay.assert_not_called()
         parent.refresh_from_db()
@@ -309,7 +309,7 @@ class TestDispatchRetrying:
             mock_send.delay.return_value = None
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_called_once_with(individual.pk)
         mock_batch.delay.assert_not_called()
         individual.refresh_from_db()
@@ -326,7 +326,7 @@ class TestDispatchRetrying:
              patch('app.celery.send_batch_message') as mock_batch:
             result = dispatch_due_messages()
 
-        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0}
+        assert result == {'dispatched': 0, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
         mock_send.delay.assert_not_called()
         mock_batch.delay.assert_not_called()
         parent.refresh_from_db()
@@ -409,6 +409,91 @@ class TestStaleProcessingRecovery:
         assert child.pk not in dispatched_pks
         dispatched_batch_pks = {c[0][0] for c in mock_batch.delay.call_args_list}
         assert child.pk not in dispatched_batch_pks
+
+    def test_unknown_outcome_individual_fails_with_refund_instead_of_resend(self, db, organisation, user):
+        """A stale PROCESSING send whose provider call may have gone out is failed, not re-sent.
+
+        Regression test: recovery previously re-queued every stale PROCESSING
+        schedule, so a worker dying after the provider call meant the recipient
+        received the SMS twice.
+        """
+        from decimal import Decimal
+        from app.models import CreditTransaction
+        from app.utils.billing import record_usage
+
+        organisation.billing_mode = organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+
+        individual = Schedule.objects.create(
+            organisation=organisation,
+            phone='0412345678',
+            text='Maybe sent',
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            status=ScheduleStatus.PROCESSING,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            max_retries=3,
+            created_by=user,
+            updated_by=user,
+        )
+        record_usage(organisation, 1, 'sms', 'dispatch', user, individual)
+        Schedule.objects.filter(pk=individual.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=15),
+            dispatch_attempted_at=timezone.now() - timedelta(minutes=15),
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            result = dispatch_due_messages()
+
+        mock_send.delay.assert_not_called()
+        mock_batch.delay.assert_not_called()
+        individual.refresh_from_db()
+        assert individual.status == ScheduleStatus.FAILED
+        assert individual.failure_category == 'unknown'
+        assert 'duplicate' in individual.error
+        assert result['failed_unknown'] == 1
+        # Prepaid reservation refunded
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
+        assert CreditTransaction.objects.filter(
+            organisation=organisation, schedule=individual,
+            transaction_type=CreditTransaction.REFUND,
+        ).exists()
+
+    def test_unknown_outcome_batch_parent_fails_children_with_refunds(self, db, organisation, user):
+        """A stale PROCESSING batch parent with an attempted provider call fails its children too."""
+        from decimal import Decimal
+        from app.utils.billing import record_usage
+
+        organisation.billing_mode = organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+
+        parent = _make_parent(organisation, user, status=ScheduleStatus.PROCESSING)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.PROCESSING)
+        record_usage(organisation, 1, 'sms', 'dispatch', user, child)
+        Schedule.objects.filter(pk=parent.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=15),
+            dispatch_attempted_at=timezone.now() - timedelta(minutes=15),
+        )
+        Schedule.objects.filter(pk=child.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=15),
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            dispatch_due_messages()
+
+        mock_batch.delay.assert_not_called()
+        mock_send.delay.assert_not_called()
+        parent.refresh_from_db()
+        child.refresh_from_db()
+        assert parent.status == ScheduleStatus.FAILED
+        assert child.status == ScheduleStatus.FAILED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')  # child refunded
 
     def test_leaves_fresh_processing_schedule_alone(self, db, organisation, user):
         """A schedule in PROCESSING updated recently is NOT touched."""
