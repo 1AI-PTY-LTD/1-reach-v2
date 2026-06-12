@@ -205,6 +205,13 @@ CSRF_TRUSTED_ORIGINS = [
     o.strip() for o in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()
 ]
 
+# Request body limits — deliberate values rather than accidental defaults, so
+# oversized payloads are rejected early instead of consuming worker memory.
+# File uploads (CSV import, MMS media) are size-checked by their handlers;
+# these bound non-file request bodies and the in-memory upload threshold.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(2 * 1024 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(5 * 1024 * 1024)))
+
 
 # Django REST Framework
 REST_FRAMEWORK = {
