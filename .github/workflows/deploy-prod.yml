@@ -162,17 +162,32 @@ jobs:
       - name: Delete replica
         if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true' && always()
         run: |
+          # A leftover replica keeps billing and widens the attack surface —
+          # fail the job loudly if deletion does not go through.
           az postgres flexible-server delete \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name "${{ steps.replica.outputs.name }}" --yes 2>/dev/null || true
+            --name "${{ steps.replica.outputs.name }}" --yes \
+            || { echo "::error::Failed to delete replica ${{ steps.replica.outputs.name }} — delete it manually."; exit 1; }
 
       - name: Remove runner IP from firewall
         if: always()
         run: |
+          # The runner's public IP must not stay whitelisted on the production
+          # database. Tolerate "rule never created" (an early step failed),
+          # but a failed deletion of an existing rule must fail the job.
+          EXISTS=$(az postgres flexible-server firewall-rule list \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
+            --query "[?name=='github-runner'] | length(@)" -o tsv 2>/dev/null || echo 0)
+          if [ "$EXISTS" = "0" ]; then
+            echo "No github-runner firewall rule present — nothing to remove."
+            exit 0
+          fi
           az postgres flexible-server firewall-rule delete \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
-            --rule-name github-runner --yes 2>/dev/null || true
+            --rule-name github-runner --yes \
+            || { echo "::error::Failed to remove the github-runner firewall rule — REMOVE IT MANUALLY in the Azure portal."; exit 1; }
 
       - name: Log in to ACR
         run: az acr login --name ${{ vars.ACR_LOGIN_SERVER }}
