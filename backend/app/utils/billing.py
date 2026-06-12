@@ -20,7 +20,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import IntegrityError
 from django.db import transaction as db_transaction
-from django.db.models import F, Sum
+from django.db.models import Case, F, Sum, When
 
 from rest_framework.exceptions import APIException
 
@@ -96,34 +96,49 @@ def get_rate(format: str, org=None) -> Decimal:
     return Decimal(str(rate))
 
 
+def _net_spend(qs) -> Decimal:
+    """Sum charges (deduct/usage) minus refunds over a CreditTransaction queryset.
+
+    Refunded sends must not keep consuming the monthly cap — a failed message
+    that was refunded costs the org nothing, so it frees its share of the limit.
+    """
+    result = qs.filter(
+        transaction_type__in=[
+            CreditTransaction.DEDUCT, CreditTransaction.USAGE, CreditTransaction.REFUND,
+        ],
+    ).aggregate(
+        total=Sum(
+            Case(
+                When(transaction_type=CreditTransaction.REFUND, then=-F('amount')),
+                default=F('amount'),
+            )
+        )
+    )['total']
+    return result or Decimal('0.00')
+
+
 def get_monthly_usage(org, format: str) -> Decimal:
     """
-    Sum CreditTransaction dollar amounts for a given format (eg SMS) this calendar month (Adelaide TZ).
-    Covers both type=deduct and type=usage rows (not grants or refunds).
+    Net CreditTransaction dollar amounts for a given format (eg SMS) this calendar
+    month (Adelaide TZ): deduct/usage charges minus refunds.
     """
-    result = CreditTransaction.objects.filter(
+    return _net_spend(CreditTransaction.objects.filter(
         organisation=org,
         format=format,
-        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
         created_at__gte=_month_start(),
-    ).aggregate(total=Sum('amount'))['total']
-
-    return result or Decimal('0.00')
+    ))
 
 
 def get_total_monthly_spend(org) -> Decimal:
     """
-    Sum ALL CreditTransaction dollar amounts this month across all formats.
-    Covers only per-message usage charges (type=deduct or type=usage).
+    Net CreditTransaction dollar amounts this month across all formats:
+    per-message charges (type=deduct or type=usage) minus refunds.
     The flat Clerk Billing subscription fee is managed entirely by Clerk and is NOT included.
     """
-    result = CreditTransaction.objects.filter(
+    return _net_spend(CreditTransaction.objects.filter(
         organisation=org,
-        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
         created_at__gte=_month_start(),
-    ).aggregate(total=Sum('amount'))['total']
-
-    return result or Decimal('0.00')
+    ))
 
 
 def get_monthly_limit_info(org) -> dict:

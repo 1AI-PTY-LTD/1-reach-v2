@@ -270,6 +270,31 @@ class TestGetTotalMonthlySpend:
         org = OrganisationFactory()
         assert get_total_monthly_spend(org) == Decimal('0.00')
 
+    def test_refunds_reduce_monthly_spend(self):
+        """Refunded sends free their share of the monthly cap.
+
+        Regression test: monthly spend previously summed only charges, so a
+        failed-and-refunded send consumed the limit forever.
+        """
+        from django.utils import timezone as tz
+
+        org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = Schedule.objects.create(
+            organisation=org, phone='0412345678', text='Test',
+            scheduled_time=tz.now(), status=ScheduleStatus.FAILED,
+            format=MessageFormat.SMS, message_parts=1,
+            failure_category='invalid_number', created_by=user, updated_by=user,
+        )
+        record_usage(org, 1, 'sms', 'send one', user, schedule)
+        record_usage(org, 1, 'sms', 'send two', user)
+
+        assert get_total_monthly_spend(org) == 2 * settings.SMS_RATE
+        refund_usage(org, schedule)
+
+        assert get_total_monthly_spend(org) == settings.SMS_RATE
+        assert get_monthly_usage(org, 'sms') == settings.SMS_RATE
+
 
 
 @pytest.mark.django_db
