@@ -186,9 +186,19 @@ STORAGES = {
 SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'False' if DEBUG else 'True') == 'True'
 CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'False' if DEBUG else 'True') == 'True'
 SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0' if DEBUG else '31536000'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = 'same-origin'
+
+# Deployment-checklist items that are deliberate decisions, not gaps
+# (CI runs `manage.py check --deploy --fail-level WARNING`):
+SILENCED_SYSTEM_CHECKS = [
+    'security.W008',        # SECURE_SSL_REDIRECT: TLS redirect handled by ACA ingress
+    'security.W021',        # SECURE_HSTS_PRELOAD: not submitting to the preload list
+    'drf_spectacular.W001', # schema generation can't introspect ClerkJWTAuthentication
+    'drf_spectacular.W002', # plain APIViews (webhooks/health) have no serializer
+]
 
 # Azure Container Apps ingress terminates TLS and forwards requests over HTTP
 # with X-Forwarded-Proto set. Without this, request.is_secure() is always
