@@ -286,6 +286,31 @@ class CreditTransaction(TenantModel, AuditMixin):
         return f'{self.transaction_type} ${self.amount} for {self.organisation}'
 
 
+class WebhookEvent(models.Model):
+    """Processed webhook event ids, for replay/duplicate suppression.
+
+    Inserted in the same transaction as the event's side effects: a failed
+    handler rolls the row back (so provider retries reprocess), while a
+    concurrent or replayed delivery hits the unique constraint and is skipped.
+    """
+    PROVIDER_CLERK = 'clerk'
+    PROVIDER_STRIPE = 'stripe'
+
+    provider = models.CharField(max_length=20)
+    event_id = models.CharField(max_length=255)
+    event_type = models.CharField(max_length=100, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'webhook_events'
+        constraints = [
+            models.UniqueConstraint(fields=['provider', 'event_id'], name='uniq_webhook_provider_event'),
+        ]
+
+    def __str__(self):
+        return f'{self.provider}:{self.event_id}'
+
+
 class Invoice(TenantModel, AuditMixin):
     STATUS_DRAFT = 'draft'
     STATUS_OPEN = 'open'

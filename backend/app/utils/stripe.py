@@ -16,10 +16,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
+from django.db import IntegrityError
 from django.db import transaction as db_transaction
 
 
-from app.models import CreditPurchase, Invoice, Organisation, CreditTransaction
+from app.models import CreditPurchase, Invoice, Organisation, CreditTransaction, WebhookEvent
 from app.utils.billing import grant_credits
 from app.utils.metered_billing import (
     CheckoutResult,
@@ -237,6 +238,7 @@ class StripeMeteredBillingProvider(MeteredBillingProvider):
         )
         data_obj = event.data.object
         return {
+            'id': event.id,
             'type': event.type,
             'data': data_obj.to_dict() if isinstance(data_obj, stripe.StripeObject) else data_obj,
         }
@@ -272,21 +274,39 @@ class StripeWebhookView(APIView):
             return Response({'error': 'Invalid signature'}, status=400)
 
         event_type = event['type']
+        event_id = event.get('id', '')
         invoice_data = event['data']
         invoice_id = invoice_data.get('id', '')
 
-        if event_type == 'invoice.paid':
-            self._handle_invoice_paid(invoice_id)
-        elif event_type in ('invoice.payment_failed', 'invoice.overdue'):
-            self._handle_invoice_payment_failed(invoice_id)
-        elif event_type == 'invoice.voided':
-            self._handle_invoice_voided(invoice_id)
-        elif event_type == 'checkout.session.completed':
-            self._handle_checkout_completed(invoice_data)
-        elif event_type == 'checkout.session.expired':
-            self._handle_checkout_expired(invoice_data)
-        else:
-            logger.debug('Ignoring Stripe event: %s', event_type)
+        # Dedup on the Stripe event id (stable across Stripe's at-least-once
+        # retries). The marker commits atomically with the handler's side
+        # effects: a failed handler rolls it back so the retry reprocesses,
+        # while a duplicate delivery hits the unique constraint and is skipped.
+        with db_transaction.atomic():
+            if event_id:
+                try:
+                    with db_transaction.atomic():
+                        WebhookEvent.objects.create(
+                            provider=WebhookEvent.PROVIDER_STRIPE,
+                            event_id=event_id,
+                            event_type=event_type,
+                        )
+                except IntegrityError:
+                    logger.info('Stripe event %s already processed — skipping duplicate', event_id)
+                    return Response({'status': 'ok', 'duplicate': True})
+
+            if event_type == 'invoice.paid':
+                self._handle_invoice_paid(invoice_id)
+            elif event_type in ('invoice.payment_failed', 'invoice.overdue'):
+                self._handle_invoice_payment_failed(invoice_id)
+            elif event_type == 'invoice.voided':
+                self._handle_invoice_voided(invoice_id)
+            elif event_type == 'checkout.session.completed':
+                self._handle_checkout_completed(invoice_data)
+            elif event_type == 'checkout.session.expired':
+                self._handle_checkout_expired(invoice_data)
+            else:
+                logger.debug('Ignoring Stripe event: %s', event_type)
 
         return Response({'status': 'ok'})
 

@@ -61,6 +61,35 @@ class TestStripeWebhookView:
         assert invoice.status == Invoice.STATUS_PAID
 
     @patch('app.utils.stripe.get_billing_provider')
+    def test_duplicate_event_id_processed_once(self, mock_get_provider, webhook_client, org_with_invoice):
+        """Stripe retries (same event.id) must not re-run handlers."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'id': 'evt_dedup_1',
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        first = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+        # Flip the invoice back to OPEN to detect any re-processing
+        Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.STATUS_OPEN)
+        second = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.data.get('duplicate') is True
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_OPEN  # duplicate did not re-run
+
+    @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_paid_restores_subscribed_from_past_due(self, mock_get_provider, webhook_client, org_with_invoice):
         org, invoice = org_with_invoice
         # Set org to past_due
@@ -330,6 +359,7 @@ class TestStripeWebhookView:
         """Regression: parse_webhook converts StripeObject to plain dict."""
         org, invoice = org_with_invoice
         mock_event = Mock()
+        mock_event.id = 'evt_stripe_obj_1'
         mock_event.type = 'invoice.paid'
         mock_event.data.object = stripe.StripeObject.construct_from(
             {'id': 'inv_test_123'}, key=None,

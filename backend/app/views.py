@@ -10,7 +10,7 @@ import json
 
 from clerk_backend_api import Clerk
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.db.models import Count, OuterRef, Subquery, Sum
 from django.db.models.functions import TruncMonth
@@ -199,11 +199,30 @@ class ClerkWebhookView(APIView):
         logger.info('Clerk webhook: type=%s data_keys=%s', event_type, list(data.keys()))
 
         handler = clerk.WEBHOOK_HANDLERS.get(event_type)
-        if handler:
-            handler(data)
-            logger.info('Processed Clerk webhook event: %s', event_type)
-        else:
+        if not handler:
             logger.warning('Unhandled Clerk webhook event: %s', event_type)
+            return Response({'status': 'ok'})
+
+        # Dedup on the svix message id (stable across Svix's at-least-once
+        # retries). The marker row commits atomically with the handler's side
+        # effects: a failed handler rolls it back so the retry reprocesses,
+        # while a duplicate delivery hits the unique constraint and is skipped.
+        svix_id = request.headers.get('svix-id', '')
+        with transaction.atomic():
+            if svix_id:
+                try:
+                    with transaction.atomic():
+                        WebhookEvent.objects.create(
+                            provider=WebhookEvent.PROVIDER_CLERK,
+                            event_id=svix_id,
+                            event_type=event_type or '',
+                        )
+                except IntegrityError:
+                    logger.info('Clerk webhook %s already processed — skipping duplicate', svix_id)
+                    return Response({'status': 'ok', 'duplicate': True})
+
+            handler(data)
+        logger.info('Processed Clerk webhook event: %s', event_type)
 
         return Response({'status': 'ok'})
 
