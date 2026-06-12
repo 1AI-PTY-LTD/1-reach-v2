@@ -665,6 +665,35 @@ class TestGroupScheduleBilling:
         assert organisation.credit_balance == Decimal('10.00')
         assert organisation.credit_balance > balance_after_create
 
+    def test_cancel_action_refunds_credits_for_trial_org(
+        self, authenticated_client, organisation, user
+    ):
+        """POST /cancel/ releases the prepaid reservation like DELETE does.
+
+        Regression test: the cancel action previously cancelled the schedules
+        but silently kept the credits reserved at creation.
+        """
+        organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.save()
+        grant_credits(organisation, Decimal('10.00'), 'Test grant')
+
+        group, _ = create_contact_group_with_members(organisation, num_members=2, user=user)
+        create_response = authenticated_client.post(
+            '/api/group-schedules/',
+            self._make_payload(group),
+            format='json',
+        )
+        assert create_response.status_code == status.HTTP_201_CREATED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance < Decimal('10.00')  # reservation taken
+
+        parent_id = create_response.data['id']
+        cancel_response = authenticated_client.post(f'/api/group-schedules/{parent_id}/cancel/')
+
+        assert cancel_response.status_code == status.HTTP_200_OK
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
+
     def test_destroy_does_not_error_for_subscribed_org(
         self, authenticated_client, organisation, user
     ):

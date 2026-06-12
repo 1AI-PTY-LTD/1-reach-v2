@@ -790,42 +790,13 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
         """PATCH /api/group-schedules/{id}/ - same as update."""
         return self.update(request, pk)
 
-    @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """POST /api/group-schedules/{id}/cancel/ - cancel parent and pending children."""
-        parent = self.get_queryset().filter(pk=pk).first()
-        if not parent:
-            return Response(status=status.HTTP_404_NOT_FOUND)
+    def _cancel_and_refund(self, request, parent):
+        """Cancel parent + pending children atomically and release prepaid reservations.
 
-        if parent.status != ScheduleStatus.PENDING:
-            return Response(
-                {'detail': 'Only pending group schedules can be cancelled.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Cancel the parent and all pending children atomically
-        with transaction.atomic():
-            Schedule.objects.filter(
-                parent=parent, status=ScheduleStatus.PENDING,
-            ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
-            parent.status = ScheduleStatus.CANCELLED
-            parent.updated_by = request.user
-            parent.save()
-
-        return Response({'message': 'Group schedule cancelled.'})
-
-    def destroy(self, request, pk=None):
-        parent = self.get_queryset().filter(pk=pk).first()
-        if not parent:
-            return Response(status=status.HTTP_404_NOT_FOUND)
-
-        if parent.status != ScheduleStatus.PENDING:
-            return Response(
-                {'detail': 'Only pending group schedules can be cancelled.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Cancel the parent and all pending children atomically, then refund credits
+        Shared by the cancel action and destroy — both must refund the credits
+        reserved per child at creation (refund_usage is a no-op for children
+        that were never charged, e.g. subscribed orgs).
+        """
         org = getattr(request, 'org', None)
         with transaction.atomic():
             pending_children = list(
@@ -839,8 +810,36 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
             parent.save()
 
             for child in pending_children:
-                refund_usage(org, child)
+                refund_usage(org, child, description='Refund: schedule cancelled')
 
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """POST /api/group-schedules/{id}/cancel/ - cancel parent and pending children."""
+        parent = self.get_queryset().filter(pk=pk).first()
+        if not parent:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        if parent.status != ScheduleStatus.PENDING:
+            return Response(
+                {'detail': 'Only pending group schedules can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        self._cancel_and_refund(request, parent)
+        return Response({'message': 'Group schedule cancelled.'})
+
+    def destroy(self, request, pk=None):
+        parent = self.get_queryset().filter(pk=pk).first()
+        if not parent:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        if parent.status != ScheduleStatus.PENDING:
+            return Response(
+                {'detail': 'Only pending group schedules can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        self._cancel_and_refund(request, parent)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
