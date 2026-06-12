@@ -208,6 +208,7 @@ class TestScheduleCreate:
         Regression test: POST /api/schedules/ previously bypassed billing
         entirely, so prepaid orgs could schedule sends for free.
         """
+        _fund(organisation, '0.00')
         future = timezone.now() + timedelta(hours=1)
         data = {'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat()}
 

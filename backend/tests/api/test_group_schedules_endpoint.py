@@ -597,6 +597,7 @@ class TestGroupScheduleBilling:
     ):
         """Prepaid org: credit_balance decreases by members × message_parts × rate."""
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
@@ -638,6 +639,7 @@ class TestGroupScheduleBilling:
     ):
         """Prepaid org: cancelling a PENDING group schedule restores the reserved credits."""
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
@@ -674,6 +676,7 @@ class TestGroupScheduleBilling:
         and children, so billing and the actual send used a stale part count.
         """
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
@@ -702,6 +705,7 @@ class TestGroupScheduleBilling:
     ):
         """Re-pricing is gated: the whole update rolls back if unaffordable."""
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('0.20'), 'Test grant')
 
@@ -732,6 +736,7 @@ class TestGroupScheduleBilling:
         but silently kept the credits reserved at creation.
         """
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 

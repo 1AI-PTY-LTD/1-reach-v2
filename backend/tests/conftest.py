@@ -11,6 +11,7 @@ This module provides:
 
 import json
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import Mock, patch
 
 import pytest
@@ -100,11 +101,17 @@ def admin_user(db):
 
 @pytest.fixture
 def organisation(db):
-    """Create a test organisation."""
+    """Create a test organisation.
+
+    Funded by default (real orgs get free credits at signup) so prepaid
+    deductions don't trip the record_usage balance floor in tests that
+    aren't about billing. Balance-sensitive tests set their own value.
+    """
     return Organisation.objects.create(
         clerk_org_id='org_test123',
         name='Test Organisation',
-        slug='test-organisation'
+        slug='test-organisation',
+        credit_balance=Decimal('100.00'),
     )
 
 

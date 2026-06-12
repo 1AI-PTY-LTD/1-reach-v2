@@ -99,6 +99,28 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
 
+    def test_send_sms_402_when_deduction_would_go_negative(
+        self, authenticated_client, organisation, mock_check_sms_limit,
+        mock_send_message_task,
+    ):
+        """Simulates the gate/deduct race: the gate passed but the balance is gone.
+
+        check_can_send is unlocked, so concurrent sends can all pass it; the
+        locked floor in record_usage must reject the deduction with 402 and
+        roll back the created schedule.
+        """
+        organisation.credit_balance = Decimal('0.05')  # below one SMS part
+        organisation.save()
+
+        data = {'message': 'Test', 'recipients': [{'phone': '0412345678'}]}
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('0.05')  # untouched
+        assert Schedule.objects.count() == 0  # creation rolled back
+        mock_send_message_task.delay.assert_not_called()
+
     def test_send_sms_gates_on_full_multipart_cost(
         self, authenticated_client, mock_check_sms_limit,
         mock_send_message_task, mock_send_batch_message_task,

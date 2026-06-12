@@ -22,12 +22,24 @@ from django.db import IntegrityError
 from django.db import transaction as db_transaction
 from django.db.models import F, Sum
 
+from rest_framework.exceptions import APIException
+
 from app.models import CreditTransaction, Config
 from app.utils.metered_billing import InvoiceLineItem
 
 logger = logging.getLogger(__name__)
 
 ADELAIDE_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
+
+
+class InsufficientBalanceError(APIException):
+    """Raised when a prepaid deduction would take the balance below zero.
+
+    An APIException so view-layer callers surface it as HTTP 402 automatically;
+    the deduction transaction is rolled back by the surrounding atomic block.
+    """
+    status_code = 402
+    default_detail = 'Insufficient balance. Purchase more credits to continue sending.'
 
 
 def _month_start() -> datetime:
@@ -175,6 +187,11 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
     trial mode:      SELECT FOR UPDATE → deduct credit_balance → INSERT type=deduct
     subscribed mode: INSERT type=usage, balance unchanged (tracked for Clerk Billing reporting)
 
+    Raises InsufficientBalanceError (HTTP 402 via DRF) if the deduction would
+    take a prepaid balance below zero. check_can_send() is an unlocked
+    pre-check, so concurrent sends near zero balance can all pass it — this
+    locked floor is what actually prevents negative balances.
+
     user: the User who initiated the send (request.user); None for system/webhook actions.
     """
     rate = get_rate(format, org)
@@ -184,6 +201,8 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
         with db_transaction.atomic():
             locked_org = org.__class__.objects.select_for_update().get(pk=org.pk)
             new_balance = locked_org.credit_balance - cost
+            if new_balance < 0:
+                raise InsufficientBalanceError()
             org.__class__.objects.filter(pk=org.pk).update(
                 credit_balance=F('credit_balance') - cost
             )

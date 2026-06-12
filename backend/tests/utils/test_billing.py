@@ -144,6 +144,25 @@ class TestCheckCanSend:
 
 @pytest.mark.django_db
 class TestRecordUsage:
+    def test_trial_deduction_below_zero_raises_and_rolls_back(self):
+        """The locked balance floor is what prevents negative balances.
+
+        check_can_send() is an unlocked pre-check, so concurrent sends can all
+        pass it — record_usage must refuse the deduction itself.
+        """
+        from app.utils.billing import InsufficientBalanceError
+
+        org = OrganisationFactory(
+            credit_balance=Decimal('0.05'),
+            billing_mode=Organisation.BILLING_PREPAID,
+        )
+
+        with pytest.raises(InsufficientBalanceError):
+            record_usage(org, 1, format='sms', description='Test SMS')  # costs 0.10
+
+        assert get_balance(org) == Decimal('0.05')  # unchanged
+        assert not CreditTransaction.objects.filter(organisation=org).exists()
+
     def test_trial_deducts_balance(self):
         org = OrganisationFactory(
             credit_balance=Decimal('1.00'),
