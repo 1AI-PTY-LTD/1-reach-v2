@@ -99,6 +99,25 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
 
+    def test_send_sms_gates_on_full_multipart_cost(
+        self, authenticated_client, mock_check_sms_limit,
+        mock_send_message_task, mock_send_batch_message_task,
+    ):
+        """Billing gate counts recipients × message_parts, not just recipients.
+
+        Regression test: the gate previously checked units=len(recipients), so a
+        2-part message to 2 recipients was gated at half its real cost.
+        """
+        data = {
+            'message': 'x' * 200,  # >160 chars → 2 parts
+            'recipients': [{'phone': '0412345678'}, {'phone': '0412345679'}],
+        }
+
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_check_sms_limit.call_args.kwargs['units'] == 4
+
     def test_send_sms_validates_phone_number(
         self, authenticated_client, mock_check_sms_limit, mock_send_message_task
     ):
@@ -204,6 +223,19 @@ class TestSendToGroup:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['results']['total'] == 2  # Only 2 queued
+
+    def test_send_to_group_gates_on_full_multipart_cost(
+        self, authenticated_client, organisation, user, mock_check_sms_limit,
+        mock_send_batch_message_task,
+    ):
+        """Billing gate counts members × message_parts, not just members."""
+        group, _ = create_contact_group_with_members(organisation, num_members=3, user=user)
+
+        data = {'message': 'x' * 200, 'group_id': group.id}  # 2 parts × 3 members
+        response = authenticated_client.post('/api/sms/send-to-group/', data)
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_check_sms_limit.call_args.kwargs['units'] == 6
 
     def test_send_to_group_validates_group_exists(
         self, authenticated_client, mock_check_sms_limit, mock_send_message_task

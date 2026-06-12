@@ -949,11 +949,11 @@ class SMSViewSet(viewsets.ViewSet):
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
 
-        can_send, error = check_can_send(org, units=len(recipients), format='sms')
+        # Gate on the full cost: each recipient is charged message_parts units
+        message_parts = _estimate_parts(data['message'], 'sms')
+        can_send, error = check_can_send(org, units=len(recipients) * message_parts, format='sms')
         if not can_send:
             raise ValidationError(error)
-
-        message_parts = _estimate_parts(data['message'], 'sms')
 
         if len(recipients) == 1:
             return self._dispatch_single(
@@ -1003,11 +1003,12 @@ class SMSViewSet(viewsets.ViewSet):
             raise ValidationError('No eligible contacts found in group.')
 
         member_count = len(contacts)
-        can_send, error = check_can_send(org, units=member_count, format='sms')
+        # Gate on the full cost: each member is charged message_parts units
+        message_parts = _estimate_parts(data['message'], 'sms')
+        can_send, error = check_can_send(org, units=member_count * message_parts, format='sms')
         if not can_send:
             raise ValidationError(error)
 
-        message_parts = _estimate_parts(data['message'], 'sms')
         members = [{'phone': c.phone, 'contact': c} for c in contacts]
         parent = self._dispatch_batch(
             org, members, data['message'], request,
