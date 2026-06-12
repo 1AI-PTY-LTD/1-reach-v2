@@ -187,11 +187,24 @@ def _extract_billing_org_id(data, event_label='billing'):
 def _handle_subscription_active(data):
     """Transition org to subscribed mode when a Clerk Billing subscription becomes active."""
     org_id = _extract_billing_org_id(data, 'subscription.active')
-    updated = Organisation.objects.filter(clerk_org_id=org_id).update(
-        billing_mode=Organisation.BILLING_SUBSCRIBED
-    )
-    if not updated:
+    org = Organisation.objects.filter(clerk_org_id=org_id).first()
+    if not org:
         raise WebhookProcessingError(f'subscription.active: org {org_id} not found')
+
+    # A Clerk subscription becoming active only clears Clerk-set past_due.
+    # If a Stripe metered invoice is still unpaid, the org stays blocked until
+    # invoice.paid clears it.
+    if (org.billing_mode == Organisation.BILLING_PAST_DUE
+            and org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE):
+        logger.warning(
+            'subscription.active: org %s stays past_due — Stripe invoice still unpaid', org_id,
+        )
+        return
+
+    Organisation.objects.filter(pk=org.pk).update(
+        billing_mode=Organisation.BILLING_SUBSCRIBED,
+        past_due_source=None,
+    )
 
     logger.info('Org %s transitioned to subscribed billing mode', org_id)
     try:
@@ -232,7 +245,8 @@ def _handle_subscription_canceled(data):
     """Revert org to prepaid mode when a Clerk Billing subscription is cancelled or ended."""
     org_id = _extract_billing_org_id(data, 'subscription.canceled')
     updated = Organisation.objects.filter(clerk_org_id=org_id).update(
-        billing_mode=Organisation.BILLING_PREPAID
+        billing_mode=Organisation.BILLING_PREPAID,
+        past_due_source=None,
     )
     if not updated:
         raise WebhookProcessingError(f'subscription.canceled: org {org_id} not found')
@@ -247,7 +261,8 @@ def _handle_subscription_past_due(data):
         raise WebhookProcessingError(f'subscription.pastDue: org {org_id} not found')
 
     org.billing_mode = Organisation.BILLING_PAST_DUE
-    org.save(update_fields=['billing_mode'])
+    org.past_due_source = Organisation.PAST_DUE_SOURCE_CLERK
+    org.save(update_fields=['billing_mode', 'past_due_source'])
     logger.warning('subscription.pastDue: org %s set to past_due', org_id)
 
     try:

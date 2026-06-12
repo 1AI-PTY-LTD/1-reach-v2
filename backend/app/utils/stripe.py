@@ -301,10 +301,16 @@ class StripeWebhookView(APIView):
             )
             org = invoice.organisation
             if org.billing_mode == Organisation.BILLING_PAST_DUE:
-                # Only restore to subscribed if no other uncollectable invoices
-                # remain for this org. This prevents incorrectly restoring when:
-                # - Clerk set past_due (subscription fee unpaid, not a Stripe invoice)
-                # - Multiple invoices failed but only one was paid
+                # A paid metered invoice only clears Stripe-set past_due. If Clerk
+                # set past_due (subscription fee unpaid — no Stripe invoice row of
+                # ours), only subscription.active may restore the org.
+                if org.past_due_source == Organisation.PAST_DUE_SOURCE_CLERK:
+                    logger.info(
+                        'Invoice %s paid for org %s but past_due was set by Clerk — keeping past_due',
+                        invoice_id, org.clerk_org_id,
+                    )
+                    return
+                # Only restore to subscribed if no other uncollectable invoices remain
                 has_other_unpaid = Invoice.objects.filter(
                     organisation=org,
                     status=Invoice.STATUS_UNCOLLECTABLE,
@@ -312,6 +318,7 @@ class StripeWebhookView(APIView):
                 if not has_other_unpaid:
                     Organisation.objects.filter(pk=org.pk).update(
                         billing_mode=Organisation.BILLING_SUBSCRIBED,
+                        past_due_source=None,
                     )
                     logger.info(
                         'Restored org %s to subscribed after invoice %s paid',
@@ -334,12 +341,16 @@ class StripeWebhookView(APIView):
             invoice = Invoice.objects.select_related('organisation').get(
                 provider_invoice_id=invoice_id,
             )
-            Organisation.objects.filter(pk=invoice.organisation.pk).update(
-                billing_mode=Organisation.BILLING_PAST_DUE,
-            )
+            org = invoice.organisation
+            updates = {'billing_mode': Organisation.BILLING_PAST_DUE}
+            # Clerk-set past_due is stickier: don't relabel it, or invoice.paid
+            # would clear it while the subscription fee is still unpaid.
+            if org.billing_mode != Organisation.BILLING_PAST_DUE:
+                updates['past_due_source'] = Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+            Organisation.objects.filter(pk=org.pk).update(**updates)
             logger.warning(
                 'Invoice payment failed for org %s (invoice %s) — set to past_due',
-                invoice.organisation.clerk_org_id, invoice_id,
+                org.clerk_org_id, invoice_id,
             )
         else:
             logger.warning('invoice.payment_failed: no matching invoice for %s', invoice_id)

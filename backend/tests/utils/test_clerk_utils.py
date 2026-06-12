@@ -536,6 +536,7 @@ class TestHandleSubscriptionPastDue:
             handle_billing_payment_failed({'id': 'sub_1', 'payer': {'organization_id': 'org_pastdue'}})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_CLERK
 
     def test_calls_clerk_api_to_disable_org(self):
         """Clerk SDK organizations.update() is called with billing_suspended=True."""
@@ -641,11 +642,31 @@ class TestHandleSubscriptionActiveClears:
         org = OrganisationFactory(
             clerk_org_id='org_unsuspend',
             billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
         )
         with patch('app.utils.clerk.Clerk'):
             handle_billing_subscription_created({'payer': {'organization_id': 'org_unsuspend'}})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+        assert org.past_due_source is None
+
+    def test_does_not_clear_stripe_invoice_past_due(self):
+        """subscription.active must not un-block past_due caused by an unpaid Stripe invoice.
+
+        Only invoice.paid may clear Stripe-sourced past_due — otherwise a plan
+        change in Clerk would unblock an org that still owes a metered invoice.
+        """
+        org = OrganisationFactory(
+            clerk_org_id='org_stripe_block',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE,
+        )
+        with patch('app.utils.clerk.Clerk') as MockClerk:
+            handle_billing_subscription_created({'payer': {'organization_id': 'org_stripe_block'}})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+        MockClerk.return_value.organizations.update.assert_not_called()
 
     def test_calls_clerk_api_to_clear_suspension(self):
         """Clerk SDK organizations.update() is called with billing_suspended=False."""

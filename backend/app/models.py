@@ -34,6 +34,17 @@ class Organisation(models.Model):
         (BILLING_PAST_DUE, 'Past Due'),
     ]
 
+    # Who put the org into past_due: the Clerk subscription fee or a Stripe
+    # metered invoice. Each source may only be cleared by its own "paid" signal —
+    # an invoice.paid webhook must not un-block an org whose Clerk subscription
+    # fee is still unpaid, and vice versa.
+    PAST_DUE_SOURCE_CLERK = 'clerk'
+    PAST_DUE_SOURCE_STRIPE_INVOICE = 'stripe_invoice'
+    PAST_DUE_SOURCE_CHOICES = [
+        (PAST_DUE_SOURCE_CLERK, 'Clerk subscription'),
+        (PAST_DUE_SOURCE_STRIPE_INVOICE, 'Stripe invoice'),
+    ]
+
     clerk_org_id = models.CharField(max_length=255, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, blank=True)
@@ -42,6 +53,9 @@ class Organisation(models.Model):
     is_active = models.BooleanField(default=True)
     credit_balance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     billing_mode = models.CharField(max_length=20, choices=BILLING_MODE_CHOICES, default=BILLING_PREPAID)
+    past_due_source = models.CharField(
+        max_length=20, choices=PAST_DUE_SOURCE_CHOICES, null=True, blank=True,
+    )
     billing_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
 
     class Meta:
