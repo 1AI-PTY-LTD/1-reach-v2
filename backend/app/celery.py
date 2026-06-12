@@ -648,13 +648,18 @@ def dispatch_due_messages() -> dict:
 # ---------------------------------------------------------------------------
 
 def _find_schedule(provider_message_id: str, recipient_phone: str | None) -> Schedule | None:
-    """Find a schedule matching a delivery callback event.
+    """Find and lock a schedule matching a delivery callback event.
 
     For batch sends, children share the same provider_message_id (Welcorp job_id)
     so we additionally match on phone number. For single sends, provider_message_id
     alone is sufficient.
+
+    Locks the row (select_for_update) — must be called inside a transaction.
+    A concurrent event for the same schedule (duplicate callback, or callback +
+    reconciliation poll) blocks here and, once the first commits a terminal
+    status, no longer matches the status filter.
     """
-    qs = Schedule.objects.filter(
+    qs = Schedule.objects.select_for_update().filter(
         provider_message_id=provider_message_id,
         status__in=[ScheduleStatus.SENT, ScheduleStatus.PROCESSING],
     )
@@ -670,7 +675,12 @@ def _find_schedule(provider_message_id: str, recipient_phone: str | None) -> Sch
 
 
 def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
-    """Transition a SENT schedule to DELIVERED."""
+    """Transition a SENT schedule to DELIVERED.
+
+    Media blob cleanup happens in process_delivery_event after the transaction
+    commits — Azure I/O must not run while holding the row lock, and a cleanup
+    failure must not roll back the delivery status.
+    """
     timestamp = event_data.get('timestamp')
     if timestamp:
         try:
@@ -685,7 +695,6 @@ def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
     schedule.save(update_fields=['status', 'delivered_time', 'updated_at'])
 
     logger.info('Schedule %d delivered at %s', schedule.pk, delivered_time)
-    _cleanup_media_blob(schedule)
     _sync_parent_status(schedule)
 
 
@@ -717,10 +726,13 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
 def process_delivery_event(event_data: dict) -> dict:
     """Process a delivery status callback from the SMS provider.
 
-    Looks up the schedule by provider_message_id (and phone for batch sends),
-    then transitions it to DELIVERED or FAILED.
+    Looks up and row-locks the schedule by provider_message_id (and phone for
+    batch sends), then transitions it to DELIVERED or FAILED in one transaction.
 
-    Idempotent: only processes schedules in SENT status.
+    Idempotent and race-safe: only SENT/PROCESSING schedules match, the row
+    lock serializes concurrent events for the same schedule (duplicate callback
+    POSTs, or a callback racing the reconciliation poll), and the loser re-reads
+    a terminal status and skips — so the refund can never be issued twice.
     """
     provider_message_id = event_data.get('provider_message_id')
     recipient_phone = event_data.get('recipient_phone')
@@ -730,21 +742,28 @@ def process_delivery_event(event_data: dict) -> dict:
         logger.error('process_delivery_event: missing provider_message_id')
         return {'skipped': True, 'reason': 'missing provider_message_id'}
 
-    schedule = _find_schedule(provider_message_id, recipient_phone)
-    if not schedule:
-        logger.info(
-            'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
-            provider_message_id, recipient_phone,
-        )
-        return {'skipped': True, 'reason': 'schedule_not_found'}
-
-    if delivery_status == 'delivered':
-        _handle_delivery_success(schedule, event_data)
-    elif delivery_status == 'failed':
-        _handle_delivery_failure(schedule, event_data)
-    else:
+    if delivery_status not in ('delivered', 'failed'):
         logger.warning('process_delivery_event: unknown status %r', delivery_status)
         return {'skipped': True, 'reason': f'unknown_status:{delivery_status}'}
+
+    with transaction.atomic():
+        schedule = _find_schedule(provider_message_id, recipient_phone)
+        if not schedule:
+            logger.info(
+                'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
+                provider_message_id, recipient_phone,
+            )
+            return {'skipped': True, 'reason': 'schedule_not_found'}
+
+        if delivery_status == 'delivered':
+            _handle_delivery_success(schedule, event_data)
+        else:
+            _handle_delivery_failure(schedule, event_data)
+
+    # Post-commit, non-critical: blob cleanup does Azure I/O and must not hold
+    # the row lock or roll back the status change on failure.
+    if delivery_status == 'delivered':
+        _cleanup_media_blob(schedule)
 
     return {'schedule_id': schedule.pk, 'status': delivery_status}
 
