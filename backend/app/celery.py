@@ -252,38 +252,45 @@ def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_cat
 
 
 def _sync_parent_status(schedule: Schedule) -> None:
-    """Update parent group schedule status based on children's statuses."""
+    """Update parent group schedule status based on children's statuses.
+
+    Locks the parent row so two children completing concurrently can't both
+    compute the rollup from a stale snapshot and leave the parent wrong.
+    """
     parent = schedule.parent
     if not parent:
         return
 
-    terminal = {ScheduleStatus.SENT, ScheduleStatus.DELIVERED, ScheduleStatus.FAILED, ScheduleStatus.CANCELLED}
-    children_statuses = set(
-        Schedule.objects.filter(parent=parent).values_list('status', flat=True)
-    )
+    with transaction.atomic():
+        parent = Schedule.objects.select_for_update().get(pk=parent.pk)
 
-    if not children_statuses:
-        return
+        terminal = {ScheduleStatus.SENT, ScheduleStatus.DELIVERED, ScheduleStatus.FAILED, ScheduleStatus.CANCELLED}
+        children_statuses = set(
+            Schedule.objects.filter(parent=parent).values_list('status', flat=True)
+        )
 
-    all_terminal = children_statuses.issubset(terminal)
+        if not children_statuses:
+            return
 
-    if all_terminal:
-        if children_statuses <= {ScheduleStatus.CANCELLED}:
-            new_status = ScheduleStatus.CANCELLED
-        elif ScheduleStatus.FAILED in children_statuses:
-            new_status = ScheduleStatus.FAILED
-        elif children_statuses <= {ScheduleStatus.DELIVERED}:
-            new_status = ScheduleStatus.DELIVERED
-        elif children_statuses <= {ScheduleStatus.DELIVERED, ScheduleStatus.CANCELLED}:
-            new_status = ScheduleStatus.DELIVERED
+        all_terminal = children_statuses.issubset(terminal)
+
+        if all_terminal:
+            if children_statuses <= {ScheduleStatus.CANCELLED}:
+                new_status = ScheduleStatus.CANCELLED
+            elif ScheduleStatus.FAILED in children_statuses:
+                new_status = ScheduleStatus.FAILED
+            elif children_statuses <= {ScheduleStatus.DELIVERED}:
+                new_status = ScheduleStatus.DELIVERED
+            elif children_statuses <= {ScheduleStatus.DELIVERED, ScheduleStatus.CANCELLED}:
+                new_status = ScheduleStatus.DELIVERED
+            else:
+                new_status = ScheduleStatus.SENT
         else:
-            new_status = ScheduleStatus.SENT
-    else:
-        new_status = ScheduleStatus.PROCESSING
+            new_status = ScheduleStatus.PROCESSING
 
-    if parent.status != new_status:
-        parent.status = new_status
-        parent.save(update_fields=['status', 'updated_at'])
+        if parent.status != new_status:
+            parent.status = new_status
+            parent.save(update_fields=['status', 'updated_at'])
 
 
 def _block_if_org_ineligible(schedule: Schedule) -> dict | None:
