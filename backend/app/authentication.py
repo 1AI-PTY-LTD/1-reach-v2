@@ -71,6 +71,14 @@ class ClerkJWTAuthentication(BaseAuthentication):
             if django_request.org_id:
                 django_request.org = Organisation.objects.filter(clerk_org_id=django_request.org_id).first()
                 if not django_request.org:
+                    # The JWT references an org our webhook hasn't synced yet
+                    # (or that failed to sync). Without this guard the request
+                    # proceeds with org_id set but org=None — TenantScopedMixin
+                    # then queries against a nonexistent org and views that use
+                    # request.org fail in confusing, view-specific ways.
                     logger.warning('Organisation not found in DB: %s', django_request.org_id)
+                    raise AuthenticationFailed(
+                        'Organisation is not synced yet — please retry shortly.'
+                    )
 
         return user, payload
