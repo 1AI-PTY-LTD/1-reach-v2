@@ -764,6 +764,11 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
             else:
                 update_fields['template'] = None
 
+        # Recompute message_parts when the effective text changes — the part count
+        # drives billing and what the provider actually sends.
+        new_text = update_fields.get('text', parent.text) or ''
+        new_parts = _estimate_parts(new_text, MessageFormat.SMS)
+
         # Update parent and propagate relevant fields to pending children
         with transaction.atomic():
             for field, value in update_fields.items():
@@ -779,6 +784,32 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 Schedule.objects.filter(
                     parent=parent, status=ScheduleStatus.PENDING,
                 ).update(**child_fields)
+
+            if org and new_parts != parent.message_parts:
+                # Swap the prepaid reservation and re-gate at the new cost.
+                # All children are PENDING here (guarded above).
+                children_qs = Schedule.objects.filter(parent=parent)
+                if org.billing_mode == org.BILLING_PREPAID:
+                    for child in children_qs:
+                        refund_usage(org, child, description='Refund: schedule re-priced')
+
+                can_send, error = check_can_send(org, units=children_qs.count() * new_parts, format='sms')
+                if not can_send:
+                    transaction.set_rollback(True)
+                    return Response({'detail': error}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
+                parent.message_parts = new_parts
+                parent.save(update_fields=['message_parts'])
+                children_qs.update(message_parts=new_parts)
+
+                if org.billing_mode == org.BILLING_PREPAID:
+                    group_name = parent.group.name if parent.group else ''
+                    for child in children_qs:
+                        record_usage(
+                            org, new_parts, format='sms',
+                            description=f"SMS to group '{group_name}' (re-priced)",
+                            user=request.user, schedule=child,
+                        )
 
         parent.refresh_from_db()
         resp = ScheduleSerializer(parent).data
