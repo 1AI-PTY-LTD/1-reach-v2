@@ -569,9 +569,11 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     def recipients(self, request, pk=None):
         """GET /api/schedules/{id}/recipients/ — list child schedules for a batch parent."""
         parent = self.get_object()
+        # select both FKs the serializer nests (contact_detail, group_detail) —
+        # group sends set group on every child, so missing it is one query per row
         children = Schedule.objects.filter(
             parent=parent,
-        ).select_related('contact').order_by('id')
+        ).select_related('contact', 'group').order_by('id')
         serializer = ScheduleSerializer(children, many=True)
         return Response(serializer.data)
 
