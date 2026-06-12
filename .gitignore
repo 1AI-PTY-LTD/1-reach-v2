@@ -9,3 +9,6 @@ test-results/
 .pytest_cache/
 */playwright-report/
 .DS_Store
+*.apk
+dist/
+staticfiles/
