@@ -58,10 +58,14 @@ DB_POOL_TIMEOUT=10
 # Fallback when DB_POOL=false (0 = close after each request)
 DB_CONN_MAX_AGE=0
 
-# Security (set to True in production; False locally)
+# Security — defaults are secure when DEBUG=0 and relaxed when DEBUG=1, so
+# these only need setting to override (e.g. False locally with DEBUG=0).
 SESSION_COOKIE_SECURE=False
 CSRF_COOKIE_SECURE=False
 SECURE_HSTS_SECONDS=0
+# Comma-separated origins trusted for CSRF (required for the Django admin in
+# deployed environments, e.g. https://api.1reach.net)
+CSRF_TRUSTED_ORIGINS=
 
 # Message retry config (optional — these are the defaults)
 MESSAGE_MAX_RETRIES=3

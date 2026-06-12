@@ -175,14 +175,29 @@ STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
-# Security headers (env-driven so local dev is unaffected — defaults are safe for dev)
-SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'False') == 'True'
-CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'False') == 'True'
-SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0'))
+# Security headers — env-overridable; defaults are secure outside DEBUG and
+# relaxed for local dev.
+SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'False' if DEBUG else 'True') == 'True'
+CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'False' if DEBUG else 'True') == 'True'
+SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0' if DEBUG else '31536000'))
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
-# NOTE: SECURE_SSL_REDIRECT intentionally omitted — must stay False on Azure App Service
-# (Azure terminates TLS at the load balancer; setting True causes infinite redirect loops)
+SECURE_REFERRER_POLICY = 'same-origin'
+
+# Azure Container Apps ingress terminates TLS and forwards requests over HTTP
+# with X-Forwarded-Proto set. Without this, request.is_secure() is always
+# False behind the ingress, breaking secure-cookie handling and the CSRF
+# origin check on the Django admin. (The ingress overwrites any client-sent
+# value, so the header is trustworthy in deployed environments.)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# NOTE: SECURE_SSL_REDIRECT intentionally omitted — TLS terminates at the ACA
+# ingress; enabling it causes infinite redirect loops.
+
+# Origins trusted for CSRF (Django 4+ checks the Origin header on POSTs —
+# needed for the admin at e.g. https://api.1reach.net behind the ingress).
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()
+]
 
 
 # Django REST Framework
