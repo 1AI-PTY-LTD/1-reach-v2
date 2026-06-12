@@ -232,6 +232,10 @@ class Schedule(TenantModel, AuditMixin):
             models.Index(fields=['scheduled_time', 'status']),
             models.Index(fields=['contact', 'status', '-scheduled_time'], name='schedule_contact_status_desc'),
             models.Index(fields=['status', 'scheduled_time'], name='schedule_status_time_idx'),
+            # The schedule list UI: org-scoped, optionally status-filtered,
+            # ordered by newest first. The FK index alone forces a sort.
+            models.Index(fields=['organisation', 'status', '-scheduled_time'],
+                         name='schedule_org_status_desc'),
         ]
 
     def __str__(self):
