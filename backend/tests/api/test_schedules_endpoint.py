@@ -185,6 +185,43 @@ class TestScheduleCreate:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data['text'] == 'Test message'
 
+    def test_create_schedule_links_contact_via_contact_id(self, authenticated_client, organisation, user):
+        """The contact_id payload key (what the frontend sends) links the contact.
+
+        Regression test: contact_id was silently ignored (the serializer only
+        knew 'contact'), so scheduled messages lost their contact link and
+        never appeared in the contact's schedule list.
+        """
+        _fund(organisation)
+        contact = ContactFactory(organisation=organisation, created_by=user)
+        future = timezone.now() + timedelta(hours=1)
+
+        response = authenticated_client.post('/api/schedules/', {
+            'contact_id': contact.id,
+            'phone': contact.phone,
+            'text': 'Linked',
+            'scheduled_time': future.isoformat(),
+        })
+
+        assert response.status_code == status.HTTP_201_CREATED
+        schedule = Schedule.objects.get(pk=response.data['id'])
+        assert schedule.contact_id == contact.id
+
+    def test_create_schedule_rejects_other_orgs_contact(self, authenticated_client, organisation, user):
+        """Relation fields are org-scoped — no linking (or reading back) foreign contacts."""
+        _fund(organisation)
+        other_contact = ContactFactory()  # belongs to a different org
+        future = timezone.now() + timedelta(hours=1)
+
+        for field in ('contact', 'contact_id'):
+            response = authenticated_client.post('/api/schedules/', {
+                field: other_contact.id,
+                'phone': '0412345678',
+                'text': 'IDOR attempt',
+                'scheduled_time': future.isoformat(),
+            })
+            assert response.status_code == status.HTTP_400_BAD_REQUEST, field
+
     def test_create_prepaid_reserves_credits(self, authenticated_client, organisation, user):
         """Prepaid orgs are charged at creation, like group schedules and immediate sends."""
         _fund(organisation)

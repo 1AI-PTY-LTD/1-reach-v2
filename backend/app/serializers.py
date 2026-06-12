@@ -183,12 +183,37 @@ class ScheduleSerializer(serializers.ModelSerializer):
     contact_detail = ContactSerializer(source='contact', read_only=True)
     group_detail = ContactGroupSerializer(source='group', read_only=True)
     recipient_count = serializers.IntegerField(read_only=True, default=0)
+    # Write aliases matching the frontend payloads. Before these existed the
+    # frontend's contact_id/template_id keys were silently ignored, so
+    # scheduled messages lost their contact/template links (and never showed
+    # up in the contact's schedule list).
+    contact_id = serializers.PrimaryKeyRelatedField(
+        source='contact', queryset=Contact.objects.all(),
+        required=False, allow_null=True, write_only=True,
+    )
+    template_id = serializers.PrimaryKeyRelatedField(
+        source='template', queryset=Template.objects.all(),
+        required=False, allow_null=True, write_only=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scope every writable relation to the requesting org. The default
+        # ModelSerializer querysets span all orgs, which would let a caller
+        # link (and read back via *_detail) another org's contact/template.
+        request = self.context.get('request')
+        org = getattr(request, 'org', None) if request else None
+        if org is not None:
+            for name in ('contact', 'contact_id', 'template', 'template_id', 'group'):
+                field = self.fields.get(name)
+                if field is not None and getattr(field, 'queryset', None) is not None:
+                    field.queryset = field.queryset.filter(organisation=org)
 
     class Meta:
         model = Schedule
         fields = [
-            'id', 'name', 'template', 'text', 'message_parts',
-            'contact', 'contact_detail', 'phone',
+            'id', 'name', 'template', 'template_id', 'text', 'message_parts',
+            'contact', 'contact_id', 'contact_detail', 'phone',
             'group', 'group_detail', 'parent', 'recipient_count',
             'scheduled_time', 'sent_time',
             'status', 'error',
