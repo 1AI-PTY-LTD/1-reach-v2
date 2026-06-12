@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
 import { Checkbox } from '../../ui/checkbox'
+import { isTrustedStripeUrl } from '../../utils/trustedUrls'
 import LoadingSpinner from '../shared/LoadingSpinner'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import { getInvoicesQueryOptions, getInvoicePreviewQueryOptions, downloadInvoices } from '../../api/billingApi'
@@ -205,7 +206,7 @@ export function InvoicesModal({
                     </TableCell>
                     <TableCell className="text-right font-mono">${invoice.amount}</TableCell>
                     <TableCell className="text-right">
-                      {invoice.invoice_url ? (
+                      {isTrustedStripeUrl(invoice.invoice_url) ? (
                         <a
                           href={invoice.invoice_url}
                           target="_blank"
