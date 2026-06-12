@@ -43,7 +43,9 @@ jobs:
       - name: Run backend tests
         run: |
           docker compose up -d redis
-          docker compose run --rm -e CONTAINER_ROLE= backend sh -c "pip install uv -q && uv sync -q && uv run python -m pytest tests/ -q"
+          # --cov-fail-under guards against silent coverage regressions
+          # (current backend coverage sits around 86%).
+          docker compose run --rm -e CONTAINER_ROLE= backend sh -c "pip install uv -q && uv sync -q && uv run python -m pytest tests/ -q --cov-fail-under=80"
 
       - name: Django deployment checklist
         run: |
