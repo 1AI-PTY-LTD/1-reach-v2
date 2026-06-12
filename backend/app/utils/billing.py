@@ -219,8 +219,8 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
     )
 
 
-def refund_usage(org, schedule) -> None:
-    """Reverse the credit charge for a failed or undelivered send.
+def refund_usage(org, schedule, description: str | None = None) -> None:
+    """Reverse the credit charge for a failed, cancelled, or undelivered send.
 
     Idempotent per charge: each DEDUCT/USAGE transaction is refunded at most once
     (REFUND rows link to the charge they reverse via refunded_transaction, enforced
@@ -256,7 +256,8 @@ def refund_usage(org, schedule) -> None:
             amount = original_tx.amount
             original_rate = original_tx.unit_rate
             failure_category = getattr(schedule, 'failure_category', None) or 'unknown'
-            description = f'Refund: send failed ({failure_category})'
+            if description is None:
+                description = f'Refund: send failed ({failure_category})'
 
             if org.billing_mode == org.BILLING_PREPAID:
                 org.__class__.objects.filter(pk=org.pk).update(

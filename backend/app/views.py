@@ -439,15 +439,86 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     filterset_class = ScheduleFilter
     http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
+    def perform_create(self, serializer):
+        """Gate scheduled sends on billing and reserve prepaid credits up front.
+
+        Mirrors group-schedule creation: prepaid orgs are charged at creation so
+        the balance reflects committed sends; subscribed orgs are charged by the
+        Celery task on successful send. message_parts is always computed
+        server-side from the text — never trusted from the client.
+        """
+        org = getattr(self.request, 'org', None)
+        if not org:
+            raise ValidationError('Organisation required.')
+
+        fmt = serializer.validated_data.get('format') or MessageFormat.SMS
+        text = serializer.validated_data.get('text') or ''
+        message_parts = _estimate_parts(text, fmt)
+
+        can_send, error = check_can_send(org, units=message_parts, format=fmt)
+        if not can_send:
+            raise ValidationError(error)
+
+        serializer.validated_data['message_parts'] = message_parts
+        with transaction.atomic():
+            super().perform_create(serializer)
+            if org.billing_mode == org.BILLING_PREPAID:
+                schedule = serializer.instance
+                record_usage(
+                    org, message_parts, format=fmt,
+                    description=f'{fmt.upper()} to {schedule.phone} (scheduled)',
+                    user=self.request.user, schedule=schedule,
+                )
+
+    def perform_update(self, serializer):
+        """Re-price a pending schedule when its text or format changes.
+
+        The prepaid reservation made at creation is swapped (refund + re-charge)
+        so the org is charged for exactly what will be sent, and the new cost is
+        re-gated against balance and the monthly limit.
+        """
+        org = getattr(self.request, 'org', None)
+        if not org:
+            raise ValidationError('Organisation required.')
+
+        schedule = serializer.instance
+        fmt = serializer.validated_data.get('format', schedule.format) or MessageFormat.SMS
+        text = serializer.validated_data.get('text', schedule.text) or ''
+        new_parts = _estimate_parts(text, fmt)
+
+        if new_parts == schedule.message_parts and fmt == (schedule.format or MessageFormat.SMS):
+            super().perform_update(serializer)
+            return
+
+        serializer.validated_data['message_parts'] = new_parts
+        with transaction.atomic():
+            if org.billing_mode == org.BILLING_PREPAID:
+                refund_usage(org, schedule, description='Refund: schedule re-priced')
+            can_send, error = check_can_send(org, units=new_parts, format=fmt)
+            if not can_send:
+                raise ValidationError(error)
+            super().perform_update(serializer)
+            if org.billing_mode == org.BILLING_PREPAID:
+                record_usage(
+                    org, new_parts, format=fmt,
+                    description=f'{fmt.upper()} to {schedule.phone} (re-priced)',
+                    user=self.request.user, schedule=schedule,
+                )
+
     def perform_destroy(self, instance):
         """Soft delete by setting status=CANCELLED (v1 used DELETED, v2 uses CANCELLED)."""
         # Only allow deleting PENDING schedules
         if instance.status != ScheduleStatus.PENDING:
             raise ValidationError(f'Cannot delete schedule - only {ScheduleStatus.PENDING} schedules can be deleted')
 
-        instance.status = ScheduleStatus.CANCELLED
-        instance.updated_by = self.request.user
-        instance.save(update_fields=['status', 'updated_by'])
+        with transaction.atomic():
+            instance.status = ScheduleStatus.CANCELLED
+            instance.updated_by = self.request.user
+            instance.save(update_fields=['status', 'updated_by'])
+            # Release the prepaid reservation (no-op when nothing was charged)
+            org = getattr(self.request, 'org', None)
+            if org:
+                refund_usage(org, instance, description='Refund: schedule cancelled')
 
     @action(detail=True, methods=['get'], url_path='recipients')
     def recipients(self, request, pk=None):

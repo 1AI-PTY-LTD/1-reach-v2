@@ -192,6 +192,10 @@ class ScheduleSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
+            # Server-controlled: message_parts is computed from the text (it drives
+            # billing), status only changes via dedicated endpoints/tasks, and
+            # parent links are only created internally for batch sends.
+            'message_parts', 'status', 'parent',
             'sent_time', 'provider_message_id', 'retry_count',
             'next_retry_at', 'failure_category', 'delivered_time',
             'created_at', 'updated_at',
