@@ -314,6 +314,19 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
 }
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
+# Task execution guards — the worker runs only a few concurrency slots, so a
+# hung task (e.g. a stuck provider connection) must not pin one forever.
+# Long-running beat tasks (invoicing, reconciliation, blob cleanup) override
+# these per-task in app/celery.py.
+CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', '300'))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get('CELERY_TASK_SOFT_TIME_LIMIT', '240'))
+# Recycle prefork children before slow memory leaks can OOM the replica (KiB).
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = int(os.environ.get('CELERY_WORKER_MAX_MEMORY_PER_CHILD', '262144'))
+# Emit task lifecycle events so monitoring (Sentry cron checks, celery
+# inspect/events tooling) can observe failures and stalls.
+CELERY_WORKER_SEND_TASK_EVENTS = True
+CELERY_TASK_SEND_SENT_EVENT = True
+
 # Message retry policy
 MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
 MESSAGE_RETRY_BASE_DELAY = int(os.environ.get('MESSAGE_RETRY_BASE_DELAY', '60'))   # seconds

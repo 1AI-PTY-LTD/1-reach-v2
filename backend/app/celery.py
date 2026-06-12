@@ -962,7 +962,9 @@ def process_delivery_event(event_data: dict) -> dict:
 # Reconciliation
 # ---------------------------------------------------------------------------
 
-@shared_task(name='app.celery.reconcile_stale_sent')
+# Polls up to 50 provider jobs at up to 30s each — needs more than the
+# global 300s task time limit.
+@shared_task(name='app.celery.reconcile_stale_sent', time_limit=1800, soft_time_limit=1740)
 def reconcile_stale_sent() -> dict:
     """Poll provider for delivery status of schedules stuck in SENT.
 
@@ -1012,7 +1014,8 @@ def reconcile_stale_sent() -> dict:
 # Media blob cleanup
 # ---------------------------------------------------------------------------
 
-@shared_task(name='app.celery.cleanup_stale_media_blobs')
+# Iterates blobs with per-blob Azure I/O — may exceed the global time limit.
+@shared_task(name='app.celery.cleanup_stale_media_blobs', time_limit=3600, soft_time_limit=3540)
 def cleanup_stale_media_blobs() -> dict:
     """Delete media blobs for failed schedules older than 7 days.
 
@@ -1073,7 +1076,8 @@ def link_billing_customer(self, org_pk: int) -> None:
         raise self.retry(countdown=60 * (2 ** self.request.retries))
 
 
-@shared_task(name='app.celery.generate_monthly_invoices')
+# One Stripe invoice (several API calls) per subscribed org — monthly, slow.
+@shared_task(name='app.celery.generate_monthly_invoices', time_limit=3600, soft_time_limit=3540)
 def generate_monthly_invoices() -> dict:
     """Generate and send invoices for all subscribed orgs for the previous month.
 
