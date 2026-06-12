@@ -246,6 +246,12 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 30,
     'socket_timeout': 30,
     'socket_keepalive': True,
+    # Redis re-delivers unacknowledged tasks after this many seconds. Retries are
+    # scheduled with apply_async(countdown=...) and sit unacked in a worker until
+    # their ETA: max backoff is MESSAGE_RETRY_MAX_DELAY (3600s) plus +25% jitter
+    # = up to 4500s, which exceeds the 3600s default and guarantees duplicate
+    # delivery of max-backoff retries. 5400s clears the worst case with margin.
+    'visibility_timeout': 5400,
 }
 CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 30,
