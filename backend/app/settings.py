@@ -173,7 +173,13 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# STATICFILES_STORAGE was removed in Django 5.1 and silently ignored — the
+# STORAGES dict is the only supported form, so whitenoise's compressed
+# manifest storage (hashed filenames + far-future caching) actually applies.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
 
 # Security headers — env-overridable; defaults are secure outside DEBUG and
 # relaxed for local dev.
