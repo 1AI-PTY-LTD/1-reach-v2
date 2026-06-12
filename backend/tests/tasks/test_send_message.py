@@ -62,6 +62,30 @@ class TestSendMessageSuccess:
         assert schedule_queued.provider_message_id == 'mock-sms-123'
         assert schedule_queued.error is None
 
+    def test_success_does_not_regress_delivered_status(
+        self, schedule_queued, organisation
+    ):
+        """A delivery callback landing mid-send must not be overwritten with SENT.
+
+        Regression test: _handle_success previously saved status=SENT from a
+        stale instance, regressing DELIVERED back to SENT (the schedule then
+        never received another callback and stayed SENT forever).
+        """
+        def _send_sms_and_deliver(**kwargs):
+            # Simulate the delivery callback racing the provider call: the
+            # schedule is advanced to DELIVERED before _handle_success runs.
+            Schedule.objects.filter(pk=schedule_queued.pk).update(
+                status=ScheduleStatus.DELIVERED, delivered_time=timezone.now(),
+            )
+            return SendResult(success=True, message_id='race-123', message_parts=1)
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            mock_get.return_value.send_sms.side_effect = _send_sms_and_deliver
+            send_message(schedule_queued.pk)
+
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.DELIVERED  # not regressed
+
     def test_success_records_usage_for_subscribed_org(
         self, schedule_queued, mock_sms_provider
     ):

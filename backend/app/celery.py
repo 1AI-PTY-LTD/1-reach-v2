@@ -161,12 +161,24 @@ def _dispatch_to_provider(provider, schedule: Schedule) -> SendResult:
 def _handle_success(schedule: Schedule, result: SendResult) -> None:
     org = schedule.organisation
     with transaction.atomic():
-        schedule.status = ScheduleStatus.SENT
-        schedule.sent_time = timezone.now()
-        schedule.provider_message_id = result.message_id
-        schedule.error = None
-        schedule.failure_category = None
-        schedule.save(update_fields=[
+        # Re-fetch under lock: a delivery callback can race us (it matches
+        # PROCESSING schedules via a provider_message_id left over from a
+        # previous attempt) and must not be regressed from DELIVERED/FAILED
+        # back to SENT by this stale instance.
+        locked = Schedule.objects.select_for_update().get(pk=schedule.pk)
+        if locked.status != ScheduleStatus.PROCESSING:
+            logger.warning(
+                '_handle_success: schedule %d already advanced to %s — not overwriting with SENT',
+                locked.pk, locked.status,
+            )
+            return
+
+        locked.status = ScheduleStatus.SENT
+        locked.sent_time = timezone.now()
+        locked.provider_message_id = result.message_id
+        locked.error = None
+        locked.failure_category = None
+        locked.save(update_fields=[
             'status', 'sent_time', 'provider_message_id',
             'error', 'failure_category', 'updated_at',
         ])
@@ -176,16 +188,16 @@ def _handle_success(schedule: Schedule, result: SendResult) -> None:
         if org.billing_mode == org.BILLING_SUBSCRIBED:
             record_usage(
                 org,
-                units=schedule.message_parts,
-                format=schedule.format or 'sms',
-                description=f'{(schedule.format or "sms").upper()} to {schedule.phone}',
+                units=locked.message_parts,
+                format=locked.format or 'sms',
+                description=f'{(locked.format or "sms").upper()} to {locked.phone}',
                 user=None,
-                schedule=schedule,
+                schedule=locked,
             )
 
     # Media blob cleanup is deferred until delivery callback (DELIVERED/FAILED)
     # so Welcorp has time to fetch the media URL asynchronously.
-    _sync_parent_status(schedule)
+    _sync_parent_status(locked)
 
 
 def _schedule_retry(schedule: Schedule, result: SendResult, failure_category: str) -> None:
