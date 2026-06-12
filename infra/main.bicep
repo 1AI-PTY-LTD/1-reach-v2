@@ -172,7 +172,10 @@ var sharedEnv = [
   { name: 'CLERK_AUTHORIZED_PARTIES', value: CLERK_AUTHORIZED_PARTIES }
 
   // Networking
-  { name: 'ALLOWED_HOSTS', value: ALLOWED_HOSTS }
+  // The ACA environment's default domain is appended as a wildcard suffix so
+  // revision-specific FQDNs (used by the zero-downtime smoke test) pass
+  // Django's host validation.
+  { name: 'ALLOWED_HOSTS', value: '${ALLOWED_HOSTS},.${acaEnv.outputs.defaultDomain}' }
   { name: 'CORS_ALLOWED_ORIGINS', value: CORS_ALLOWED_ORIGINS }
 
   // Storage
@@ -233,6 +236,7 @@ module api 'modules/container-app.bicep' = {
     ingressEnabled: true
     ingressExternal: true
     targetPort: 8000
+    activeRevisionsMode: 'Multiple' // zero-downtime: smoke-test new revision before traffic shift
     secrets: secrets
     env: union(sharedEnv, [
       { name: 'CONTAINER_ROLE', value: 'api' }
