@@ -123,20 +123,26 @@ class ContactGroupSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        """Create ContactGroup and optionally add members."""
+        """Create ContactGroup and optionally add members, atomically."""
+        from django.db import transaction
+
+        from app.models import Contact, ContactGroupMember
+
         member_ids = validated_data.pop('member_ids', [])
-        group = ContactGroup.objects.create(**validated_data)
 
-        # Add members if provided
-        if member_ids:
-            from app.models import Contact, ContactGroupMember
-            request = self.context.get('request')
-            org = request.organisation if request else None
+        with transaction.atomic():
+            group = ContactGroup.objects.create(**validated_data)
 
-            for contact_id in member_ids:
-                contact = Contact.objects.filter(id=contact_id, organisation=org).first()
-                if contact:
-                    ContactGroupMember.objects.create(group=group, contact=contact)
+            if member_ids:
+                # The view sets request.org (request.organisation never existed,
+                # so member_ids previously crashed with an AttributeError).
+                request = self.context.get('request')
+                org = getattr(request, 'org', None) if request else None
+                contacts = Contact.objects.filter(id__in=member_ids, organisation=org)
+                ContactGroupMember.objects.bulk_create(
+                    [ContactGroupMember(group=group, contact=c) for c in contacts],
+                    ignore_conflicts=True,
+                )
 
         return group
 

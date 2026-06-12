@@ -382,14 +382,8 @@ class ContactGroupViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelView
             member_count=Count('contactgroupmember'),
         ).order_by('name')
 
-    def perform_create(self, serializer):
-        super().perform_create(serializer)
-        member_ids = serializer.validated_data.get('member_ids', [])
-        if member_ids:
-            group = serializer.instance
-            contacts = Contact.objects.filter(id__in=member_ids, organisation=group.organisation)
-            members = [ContactGroupMember(contact=c, group=group) for c in contacts]
-            ContactGroupMember.objects.bulk_create(members, ignore_conflicts=True)
+    # Member creation from member_ids lives in ContactGroupSerializer.create
+    # (atomic with the group row) — no view-level duplication.
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
