@@ -629,20 +629,32 @@ def dispatch_due_messages() -> dict:
         .filter(Exists(has_children))
         .values_list('pk', flat=True)
     )
-    all_stale_queued = stale_queued_individual_pks + stale_queued_parent_pks
+    # Orphaned children: QUEUED but their parent already reached a terminal
+    # state, so no batch task will ever pick them up (e.g. recovery reset a
+    # child after the parent's bulk send finished without it). A child row is a
+    # complete sendable message — dispatch it individually. Children whose
+    # parent is still active are left for the parent's batch task.
+    terminal = [ScheduleStatus.SENT, ScheduleStatus.DELIVERED,
+                ScheduleStatus.FAILED, ScheduleStatus.CANCELLED]
+    stale_queued_orphan_pks = list(
+        stale_queued_qs.filter(parent__isnull=False, parent__status__in=terminal)
+        .values_list('pk', flat=True)
+    )
+    all_stale_queued = stale_queued_individual_pks + stale_queued_parent_pks + stale_queued_orphan_pks
     recovered_queued = len(all_stale_queued)
     if all_stale_queued:
         Schedule.objects.filter(pk__in=all_stale_queued).update(updated_at=now)
-        for pk in stale_queued_individual_pks:
+        for pk in stale_queued_individual_pks + stale_queued_orphan_pks:
             send_message.delay(pk)
         for pk in stale_queued_parent_pks:
             send_batch_message.delay(pk)
         logger.warning(
             'dispatch_due_messages: re-dispatched %d stale QUEUED schedules '
-            '(%d individual, %d batch parents)',
+            '(%d individual, %d batch parents, %d orphaned children)',
             len(all_stale_queued),
             len(stale_queued_individual_pks),
             len(stale_queued_parent_pks),
+            len(stale_queued_orphan_pks),
         )
 
     # --- Recover stale PROCESSING schedules (worker crashed mid-task) --------------------

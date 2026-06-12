@@ -596,6 +596,44 @@ class TestStaleQueuedRecovery:
         dispatched_batch_pks = {c[0][0] for c in mock_batch.delay.call_args_list}
         assert child.pk not in dispatched_batch_pks
 
+    def test_orphaned_queued_child_dispatched_individually(self, db, organisation, user):
+        """A stale QUEUED child whose parent is already terminal is sent individually.
+
+        Regression test: such children were stranded forever — the parent's
+        batch task only runs for QUEUED/RETRYING parents, so a SENT parent
+        never picked them up.
+        """
+        parent = _make_parent(organisation, user, status=ScheduleStatus.SENT)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
+        Schedule.objects.filter(pk=child.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=10)
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            mock_send.delay.return_value = None
+            dispatch_due_messages()
+
+        mock_send.delay.assert_called_once_with(child.pk)
+        mock_batch.delay.assert_not_called()
+
+    def test_stale_queued_child_of_active_parent_left_for_parent(self, db, organisation, user):
+        """A stale QUEUED child whose parent is still active is NOT dispatched individually."""
+        parent = _make_parent(organisation, user, status=ScheduleStatus.QUEUED)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
+        Schedule.objects.filter(pk__in=[parent.pk, child.pk]).update(
+            updated_at=timezone.now() - timedelta(minutes=10)
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            mock_batch.delay.return_value = None
+            dispatch_due_messages()
+
+        dispatched_pks = {c[0][0] for c in mock_send.delay.call_args_list}
+        assert child.pk not in dispatched_pks
+        mock_batch.delay.assert_called_once_with(parent.pk)
+
     def test_fresh_queued_not_redispatched(self, db, organisation, user):
         """A QUEUED schedule with recent updated_at is NOT re-dispatched."""
         individual = Schedule.objects.create(
