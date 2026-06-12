@@ -20,7 +20,7 @@ from django.db import IntegrityError
 from django.db import transaction as db_transaction
 
 
-from app.models import CreditPurchase, Invoice, Organisation, CreditTransaction, WebhookEvent
+from app.models import CreditPurchase, Invoice, Organisation, WebhookEvent
 from app.utils.billing import grant_credits
 from app.utils.metered_billing import (
     CheckoutResult,
@@ -409,20 +409,27 @@ class StripeWebhookView(APIView):
                 logger.debug('checkout.session.completed: purchase %s already completed', session_id)
                 return
 
+            # Defense in depth: the granted amount comes from our own
+            # CreditPurchase row, but the session's amount_total must agree —
+            # a mismatch means a tampered/foreign payload or a data bug, and
+            # granting on it would be minting credits.
+            amount_total = session_data.get('amount_total')
+            expected_cents = int(purchase.amount * 100)
+            if amount_total is not None and int(amount_total) != expected_cents:
+                logger.error(
+                    'checkout.session.completed: amount_total %s does not match purchase '
+                    '%s (%s cents) for session %s — NOT granting credits',
+                    amount_total, purchase.pk, expected_cents, session_id,
+                )
+                return
+
             org = purchase.organisation
-            new_balance = grant_credits(
+            grant_tx = grant_credits(
                 org, purchase.amount, f'Credit purchase: ${purchase.amount}',
             )
 
             purchase.status = CreditPurchase.STATUS_COMPLETED
             purchase.completed_at = timezone.now()
-            
-            # Link the grant transaction (the most recent GRANT for this org)
-            grant_tx = CreditTransaction.objects.filter(
-                organisation=org,
-                transaction_type=CreditTransaction.GRANT,
-                balance_after=new_balance,
-            ).order_by('-created_at').first()
             purchase.credit_transaction = grant_tx
             purchase.save()
 

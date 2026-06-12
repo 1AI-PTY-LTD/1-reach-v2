@@ -35,8 +35,9 @@ from tests.factories import ConfigFactory, OrganisationFactory, UserFactory
 class TestGrantCredits:
     def test_adds_to_balance(self):
         org = OrganisationFactory(credit_balance=Decimal('0.00'))
-        new_balance = grant_credits(org, Decimal('10.00'), 'Free trial')
-        assert new_balance == Decimal('10.00')
+        tx = grant_credits(org, Decimal('10.00'), 'Free trial')
+        assert tx.balance_after == Decimal('10.00')
+        assert get_balance(org) == Decimal('10.00')
 
     def test_creates_transaction(self):
         from app.models import CreditTransaction
@@ -51,8 +52,8 @@ class TestGrantCredits:
 
     def test_accumulates(self):
         org = OrganisationFactory(credit_balance=Decimal('5.00'))
-        new_balance = grant_credits(org, Decimal('3.00'), 'Top-up')
-        assert new_balance == Decimal('8.00')
+        tx = grant_credits(org, Decimal('3.00'), 'Top-up')
+        assert tx.balance_after == Decimal('8.00')
 
 
 @pytest.mark.django_db

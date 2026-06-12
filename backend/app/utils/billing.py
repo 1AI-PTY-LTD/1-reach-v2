@@ -47,15 +47,19 @@ def _month_start() -> datetime:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def grant_credits(org, amount: Decimal, description: str) -> Decimal:
-    """Add dollar credit to org balance. Always succeeds. Returns the new balance."""
+def grant_credits(org, amount: Decimal, description: str) -> CreditTransaction:
+    """Add dollar credit to org balance. Always succeeds.
+
+    Returns the GRANT transaction (its balance_after holds the new balance),
+    so callers can link it directly instead of guessing the row afterwards.
+    """
     with db_transaction.atomic():
         org.__class__.objects.filter(pk=org.pk).update(
             credit_balance=F('credit_balance') + amount
         )
         org.refresh_from_db(fields=['credit_balance'])
 
-        CreditTransaction.objects.create(
+        tx = CreditTransaction.objects.create(
             organisation=org,
             transaction_type=CreditTransaction.GRANT,
             amount=amount,
@@ -70,7 +74,7 @@ def grant_credits(org, amount: Decimal, description: str) -> Decimal:
         'Granted $%s to org %s. New balance: $%s',
         amount, org.clerk_org_id, org.credit_balance,
     )
-    return org.credit_balance
+    return tx
 
 
 def get_balance(org) -> Decimal:
