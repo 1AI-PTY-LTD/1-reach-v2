@@ -836,7 +836,12 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
     _sync_parent_status(schedule)
 
 
-@shared_task(name='app.celery.process_delivery_event', queue='messages', acks_late=True)
+@shared_task(
+    name='app.celery.process_delivery_event',
+    queue='messages',
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def process_delivery_event(event_data: dict) -> dict:
     """Process a delivery status callback from the SMS provider.
 
