@@ -15,6 +15,7 @@ import logging
 import os
 import ssl as _ssl
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from decimal import Decimal as _Decimal
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
@@ -34,6 +35,15 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true')
 TEST = os.environ.get('TEST', '0').lower() in ('1', 'true')
+
+# TEST mode disables Clerk webhook signature verification (for CI/E2E seeding)
+# and exposes test-only endpoints. Forged webhooks could grant credits and flip
+# billing modes, so refuse to boot if it ever reaches a non-DEBUG environment.
+if TEST and not DEBUG:
+    raise ImproperlyConfigured(
+        'TEST=1 disables webhook signature verification and must never be set '
+        'in production. Unset TEST or (for local/CI use only) also set DEBUG=1.'
+    )
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
