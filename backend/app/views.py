@@ -40,11 +40,29 @@ from app.utils.sms import get_sms_provider
 logger = logging.getLogger(__name__)
 
 
+def _allowed_alphanumeric_senders(org) -> list:
+    """Parse the org's allowed sender-ID list, tolerating malformed config.
+
+    The Config value is free-form text editable via the configs API — a bad
+    value must read as "no senders allowed", not crash sends with a 500.
+    """
+    config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
+    if not config:
+        return []
+    try:
+        allowed = json.loads(config.value)
+    except (TypeError, ValueError):
+        logger.warning(
+            'allowed_alphanumeric_senders config for org %s is not valid JSON — treating as empty',
+            org.clerk_org_id,
+        )
+        return []
+    return allowed if isinstance(allowed, list) else []
+
+
 def _validate_alphanumeric_sender(org, alphanumeric_sender):
     """Validate that the alphanumeric sender is in the org's allowed list."""
-    config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
-    allowed = json.loads(config.value) if config else []
-    if alphanumeric_sender not in allowed:
+    if alphanumeric_sender not in _allowed_alphanumeric_senders(org):
         raise ValidationError('Alphanumeric sender not permitted for this organisation.')
 
 
@@ -1284,9 +1302,7 @@ class SMSViewSet(viewsets.ViewSet):
     def alphanumeric_senders(self, request):
         """GET /api/sms/alphanumeric-senders/ — list allowed alphanumeric senders for the org."""
         org = self._get_org(request)
-        config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
-        senders = json.loads(config.value) if config else []
-        return Response({'alphanumeric_senders': senders})
+        return Response({'alphanumeric_senders': _allowed_alphanumeric_senders(org)})
 
 
 class BillingViewSet(TenantScopedMixin, viewsets.GenericViewSet):
