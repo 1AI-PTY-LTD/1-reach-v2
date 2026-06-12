@@ -62,6 +62,34 @@ class TestSendMessageSuccess:
         assert schedule_queued.provider_message_id == 'mock-sms-123'
         assert schedule_queued.error is None
 
+    def test_opted_out_recipient_fails_with_refund_at_send_time(
+        self, schedule_queued, organisation, contact, user
+    ):
+        """A contact who opts out after scheduling is never sent to.
+
+        The schedule fails with category opt_out and the prepaid reservation
+        is refunded; the provider is not called.
+        """
+        from app.utils.billing import record_usage
+
+        organisation.billing_mode = organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        record_usage(organisation, 1, 'sms', 'dispatch', user, schedule_queued)
+        contact.opt_out = True
+        contact.save(update_fields=['opt_out'])
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = send_message(schedule_queued.pk)
+
+        mock_get.return_value.send_sms.assert_not_called()
+        assert result == {'skipped': True, 'reason': 'recipient_opted_out'}
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.FAILED
+        assert schedule_queued.failure_category == 'opt_out'
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')  # refunded
+
     def test_inactive_org_cancels_and_refunds_instead_of_sending(
         self, schedule_queued, organisation, user
     ):

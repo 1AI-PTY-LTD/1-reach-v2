@@ -330,6 +330,36 @@ def _block_if_org_ineligible(schedule: Schedule) -> dict | None:
     return None
 
 
+def _fail_if_opted_out(schedule: Schedule) -> bool:
+    """Fail the send when the recipient has opted out, instead of sending.
+
+    Checked at send time because contacts can opt out (or a carrier OPTO can
+    arrive) after a message was scheduled. Returns True when the send was
+    blocked; the schedule is FAILED with category opt_out and any prepaid
+    charge refunded.
+    """
+    if not schedule.phone:
+        return False
+    opted_out = Contact.objects.filter(
+        organisation=schedule.organisation, phone=schedule.phone, opt_out=True,
+    ).exists()
+    if not opted_out:
+        return False
+
+    with transaction.atomic():
+        schedule.status = ScheduleStatus.FAILED
+        schedule.failure_category = FailureCategory.OPT_OUT.value
+        schedule.error = 'Recipient has opted out of receiving messages.'
+        schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+        refund_usage(schedule.organisation, schedule)
+    logger.warning(
+        'send blocked: recipient %s opted out — failed schedule %d without sending',
+        schedule.phone, schedule.pk,
+    )
+    _sync_parent_status(schedule)
+    return True
+
+
 def _handle_failure(schedule: Schedule, result: SendResult) -> None:
     failure_category_value = result.failure_category
     is_retryable = result.retryable
@@ -392,6 +422,9 @@ def send_message(self, schedule_id: int) -> dict:
     blocked = _block_if_org_ineligible(schedule)
     if blocked:
         return blocked
+
+    if _fail_if_opted_out(schedule):
+        return {'skipped': True, 'reason': 'recipient_opted_out'}
 
     # Committed before the provider HTTP call so crash recovery can tell
     # "worker died before calling the provider" (safe to re-send) from
@@ -466,6 +499,15 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
         parent.save(update_fields=['status', 'updated_at'])
         logger.info('send_batch_message: parent %d has no pending children', parent_schedule_id)
         return {'parent_id': parent_schedule_id, 'no_children': True}
+
+    # Recipients who opted out since scheduling are failed (with refund), not sent
+    children = [c for c in children if not _fail_if_opted_out(c)]
+    if not children:
+        logger.warning(
+            'send_batch_message: all recipients of parent %d opted out — nothing sent',
+            parent_schedule_id,
+        )
+        return {'parent_id': parent_schedule_id, 'skipped': True, 'reason': 'all_recipients_opted_out'}
 
     # Mark children as PROCESSING
     child_pks = [c.pk for c in children]

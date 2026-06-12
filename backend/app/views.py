@@ -476,6 +476,14 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
         text = serializer.validated_data.get('text') or ''
         message_parts = _estimate_parts(text, fmt)
 
+        # Spam Act: never schedule sends to recipients who have opted out
+        # (also re-checked at send time, in case they opt out later).
+        phone = serializer.validated_data.get('phone') or ''
+        if phone and Contact.objects.filter(
+            organisation=org, phone=phone, opt_out=True,
+        ).exists():
+            raise ValidationError('Recipient has opted out of receiving messages.')
+
         can_send, error = check_can_send(org, units=message_parts, format=fmt)
         if not can_send:
             raise ValidationError(error)
@@ -984,6 +992,24 @@ class SMSViewSet(viewsets.ViewSet):
             raise NotFound('Contact not found.')
         return contact
 
+    @staticmethod
+    def _drop_opted_out(org, recipients):
+        """Remove recipients whose number has opted out (Spam Act compliance).
+
+        Returns (remaining_recipients, skipped_count); raises 400 when nobody
+        is left to send to.
+        """
+        phones = [r['phone'] for r in recipients]
+        opted_out = set(Contact.objects.filter(
+            organisation=org, opt_out=True, phone__in=phones,
+        ).values_list('phone', flat=True))
+        if not opted_out:
+            return recipients, 0
+        remaining = [r for r in recipients if r['phone'] not in opted_out]
+        if not remaining:
+            raise ValidationError('All recipients have opted out of receiving messages.')
+        return remaining, len(recipients) - len(remaining)
+
     def _dispatch_single(self, org, recipient, message, request, *,
                          format_type, message_parts, media_url=None, subject=None,
                          alphanumeric_sender=None):
@@ -1071,6 +1097,8 @@ class SMSViewSet(viewsets.ViewSet):
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
 
+        recipients, skipped_opt_out = self._drop_opted_out(org, recipients)
+
         # Gate on the full cost: each recipient is charged message_parts units
         message_parts = _estimate_parts(data['message'], 'sms')
         can_send, error = check_can_send(org, units=len(recipients) * message_parts, format='sms')
@@ -1099,6 +1127,7 @@ class SMSViewSet(viewsets.ViewSet):
             'message': f'SMS queued for {len(recipients)} recipients',
             'parent_schedule_id': parent.pk,
             'total': len(recipients),
+            'skipped_opted_out': skipped_opt_out,
         }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='send-to-group', throttle_classes=[SMSThrottle])
@@ -1168,6 +1197,8 @@ class SMSViewSet(viewsets.ViewSet):
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
 
+        recipients, skipped_opt_out = self._drop_opted_out(org, recipients)
+
         can_send, error = check_can_send(org, units=len(recipients), format='mms')
         if not can_send:
             raise ValidationError(error)
@@ -1199,6 +1230,7 @@ class SMSViewSet(viewsets.ViewSet):
             'message': f'MMS queued for {len(recipients)} recipients',
             'parent_schedule_id': parent.pk,
             'total': len(recipients),
+            'skipped_opted_out': skipped_opt_out,
         }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='upload-file')

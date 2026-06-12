@@ -99,6 +99,45 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
 
+    def test_send_sms_blocks_opted_out_recipient(
+        self, authenticated_client, organisation, contact,
+        mock_check_sms_limit, mock_send_message_task,
+    ):
+        """Direct sends to opted-out numbers are rejected (Spam Act compliance).
+
+        Regression test: only group sends filtered opt_out; direct sends went
+        straight through.
+        """
+        contact.opt_out = True
+        contact.save(update_fields=['opt_out'])
+
+        data = {'message': 'Test', 'recipients': [{'phone': contact.phone}]}
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'opted out' in str(response.data).lower()
+        assert Schedule.objects.count() == 0
+        mock_send_message_task.delay.assert_not_called()
+
+    def test_send_sms_skips_opted_out_in_multi_recipient(
+        self, authenticated_client, organisation, contact,
+        mock_check_sms_limit, mock_send_batch_message_task,
+    ):
+        """Multi-recipient sends drop opted-out numbers and report the skip."""
+        contact.opt_out = True
+        contact.save(update_fields=['opt_out'])
+
+        data = {
+            'message': 'Test',
+            'recipients': [{'phone': contact.phone}, {'phone': '0499999999'}, {'phone': '0488888888'}],
+        }
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert response.data['total'] == 2
+        assert response.data['skipped_opted_out'] == 1
+        assert not Schedule.objects.filter(phone=contact.phone).exists()
+
     def test_send_sms_402_when_deduction_would_go_negative(
         self, authenticated_client, organisation, mock_check_sms_limit,
         mock_send_message_task,
