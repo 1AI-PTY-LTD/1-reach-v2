@@ -208,6 +208,12 @@ CSRF_TRUSTED_ORIGINS = [
 
 # Django REST Framework
 REST_FRAMEWORK = {
+    # DRF's default renderers include the browsable HTML API explorer, which
+    # would serve forms and endpoint listings to any browser in production.
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        *(['rest_framework.renderers.BrowsableAPIRenderer'] if DEBUG else []),
+    ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'app.authentication.ClerkJWTAuthentication',
     ],
