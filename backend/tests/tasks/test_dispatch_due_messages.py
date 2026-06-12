@@ -148,6 +148,50 @@ class TestDispatchDueMessages:
         individual.refresh_from_db()
         assert individual.status == ScheduleStatus.QUEUED
 
+    def test_skips_schedules_of_inactive_orgs(self, db, organisation, user):
+        """Schedules belonging to soft-deleted orgs are never dispatched."""
+        organisation.is_active = False
+        organisation.save()
+        Schedule.objects.create(
+            organisation=organisation, phone='0412345678', text='Orphaned',
+            scheduled_time=timezone.now() - timedelta(minutes=5),
+            status=ScheduleStatus.PENDING, format=MessageFormat.SMS,
+            message_parts=1, max_retries=3, created_by=user, updated_by=user,
+        )
+
+        with patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            result = dispatch_due_messages()
+
+        assert result['dispatched'] == 0
+        mock_send.delay.assert_not_called()
+        mock_batch.delay.assert_not_called()
+
+    def test_holds_schedules_of_past_due_orgs(self, db, organisation, user):
+        """Past-due orgs' PENDING schedules wait and resume when billing recovers."""
+        organisation.billing_mode = organisation.BILLING_PAST_DUE
+        organisation.save()
+        schedule = Schedule.objects.create(
+            organisation=organisation, phone='0412345678', text='Held',
+            scheduled_time=timezone.now() - timedelta(minutes=5),
+            status=ScheduleStatus.PENDING, format=MessageFormat.SMS,
+            message_parts=1, max_retries=3, created_by=user, updated_by=user,
+        )
+
+        with patch('app.celery.send_message') as mock_send:
+            result = dispatch_due_messages()
+        assert result['dispatched'] == 0
+        mock_send.delay.assert_not_called()
+
+        # Org recovers → schedule dispatches on the next tick
+        organisation.billing_mode = organisation.BILLING_SUBSCRIBED
+        organisation.save()
+        with patch('app.celery.send_message') as mock_send:
+            mock_send.delay.return_value = None
+            result = dispatch_due_messages()
+        assert result['dispatched'] == 1
+        mock_send.delay.assert_called_once_with(schedule.pk)
+
     def test_ignores_future_schedules(self, db, organisation, user):
         """Parents scheduled in the future are left untouched."""
         future = timezone.now() + timedelta(hours=1)

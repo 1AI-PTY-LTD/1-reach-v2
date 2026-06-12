@@ -62,6 +62,44 @@ class TestSendMessageSuccess:
         assert schedule_queued.provider_message_id == 'mock-sms-123'
         assert schedule_queued.error is None
 
+    def test_inactive_org_cancels_and_refunds_instead_of_sending(
+        self, schedule_queued, organisation, user
+    ):
+        """A queued send for a soft-deleted org is cancelled with a refund, not sent."""
+        from app.utils.billing import record_usage
+
+        organisation.billing_mode = organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        record_usage(organisation, 1, 'sms', 'dispatch', user, schedule_queued)
+        organisation.is_active = False
+        organisation.save(update_fields=['is_active'])  # don't clobber the deducted balance
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = send_message(schedule_queued.pk)
+
+        mock_get.return_value.send_sms.assert_not_called()
+        assert result == {'skipped': True, 'reason': 'org_inactive'}
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.CANCELLED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')  # refunded
+
+    def test_past_due_org_parks_schedule_instead_of_sending(
+        self, schedule_queued, organisation
+    ):
+        """A queued send for a past_due org is parked back to PENDING, not sent."""
+        organisation.billing_mode = organisation.BILLING_PAST_DUE
+        organisation.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = send_message(schedule_queued.pk)
+
+        mock_get.return_value.send_sms.assert_not_called()
+        assert result == {'skipped': True, 'reason': 'org_past_due'}
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.PENDING
+
     def test_success_does_not_regress_delivered_status(
         self, schedule_queued, organisation
     ):

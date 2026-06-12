@@ -276,6 +276,52 @@ def _sync_parent_status(schedule: Schedule) -> None:
         parent.save(update_fields=['status', 'updated_at'])
 
 
+def _block_if_org_ineligible(schedule: Schedule) -> dict | None:
+    """Re-check org eligibility at send time (billing gates ran at enqueue time).
+
+    An org can be soft-deleted or fall past_due while schedules sit in the
+    queue. Inactive org → cancel the schedule (and any pending children) with a
+    refund. Past-due org → park everything back in PENDING; dispatch_due_messages
+    skips past_due orgs, so sending resumes automatically once billing recovers.
+
+    Returns a task-result dict when the send is blocked, else None.
+    """
+    org = schedule.organisation
+    active_child_statuses = [
+        ScheduleStatus.PENDING, ScheduleStatus.QUEUED,
+        ScheduleStatus.RETRYING, ScheduleStatus.PROCESSING,
+    ]
+
+    if not org.is_active:
+        with transaction.atomic():
+            children = list(Schedule.objects.select_for_update().filter(
+                parent=schedule, status__in=active_child_statuses,
+            ))
+            for s in [schedule, *children]:
+                s.status = ScheduleStatus.CANCELLED
+                s.save(update_fields=['status', 'updated_at'])
+                refund_usage(org, s, description='Refund: organisation deactivated')
+        logger.warning(
+            'send blocked: org %s is inactive — cancelled schedule %d (+%d children)',
+            org.clerk_org_id, schedule.pk, len(children),
+        )
+        return {'skipped': True, 'reason': 'org_inactive'}
+
+    if org.billing_mode == Organisation.BILLING_PAST_DUE:
+        with transaction.atomic():
+            Schedule.objects.filter(pk=schedule.pk).update(status=ScheduleStatus.PENDING)
+            Schedule.objects.filter(
+                parent=schedule, status__in=active_child_statuses,
+            ).update(status=ScheduleStatus.PENDING)
+        logger.warning(
+            'send blocked: org %s is past_due — parked schedule %d as PENDING',
+            org.clerk_org_id, schedule.pk,
+        )
+        return {'skipped': True, 'reason': 'org_past_due'}
+
+    return None
+
+
 def _handle_failure(schedule: Schedule, result: SendResult) -> None:
     failure_category_value = result.failure_category
     is_retryable = result.retryable
@@ -335,6 +381,10 @@ def send_message(self, schedule_id: int) -> dict:
         )
         return {'skipped': True, 'reason': 'concurrent_lock'}
 
+    blocked = _block_if_org_ineligible(schedule)
+    if blocked:
+        return blocked
+
     # Committed before the provider HTTP call so crash recovery can tell
     # "worker died before calling the provider" (safe to re-send) from
     # "worker died with the send outcome unknown" (must NOT blindly re-send).
@@ -391,6 +441,10 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
             parent_schedule_id,
         )
         return {'skipped': True, 'reason': 'concurrent_lock'}
+
+    blocked = _block_if_org_ineligible(parent)
+    if blocked:
+        return blocked
 
     # Load children that need sending (PENDING from scheduled creates, QUEUED/RETRYING from dispatch)
     children = list(
@@ -726,12 +780,17 @@ def dispatch_due_messages() -> dict:
         #   2. Batch parents (parent=None, has children) — dispatched via send_batch_message
         # Children (parent set) are NOT dispatched directly — handled by parent's batch task.
         due = list(
-            Schedule.objects.select_for_update(skip_locked=True)
+            Schedule.objects.select_for_update(skip_locked=True, of=('self',))
             .filter(
                 Q(status=ScheduleStatus.PENDING, scheduled_time__lte=now) |
                 Q(status=ScheduleStatus.RETRYING, next_retry_at__lte=now),
             )
             .exclude(parent__isnull=False)  # exclude children
+            # Deleted orgs never dispatch; past_due orgs are held in PENDING and
+            # resume automatically once billing recovers (send tasks also
+            # re-check, for messages already queued when the org was blocked).
+            .filter(organisation__is_active=True)
+            .exclude(organisation__billing_mode=Organisation.BILLING_PAST_DUE)
             .values_list('pk', flat=True)[:batch_size]
         )
 
