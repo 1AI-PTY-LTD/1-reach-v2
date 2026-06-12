@@ -25,18 +25,39 @@ export class ApiClient {
     })
 
     if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}))
-      const message = errorBody.detail || errorBody.error ||
-        (Array.isArray(errorBody) ? errorBody[0] : undefined) ||
-        `API error: ${response.status}`
-      const error = new Error(message) as Error & { status: number; body: unknown }
-      error.status = response.status
-      error.body = errorBody
-      throw error
+      throw await this.buildError(response)
     }
 
     if (response.status === 204) return undefined as T
     return response.json()
+  }
+
+  /** Build a typed error from a failed response, with session-expiry handling. */
+  private async buildError(response: Response): Promise<Error> {
+    const errorBody = await response.json().catch(() => ({}))
+    const detail: string = errorBody.detail || errorBody.error ||
+      (Array.isArray(errorBody) ? errorBody[0] : '') || ''
+
+    let message = detail || `API error: ${response.status}`
+
+    if (response.status === 401) {
+      // "Org not synced" is a transient 401 right after signup (the Clerk
+      // webhook hasn't landed yet) — surface it and let the caller retry.
+      // Any other 401 means the session is gone (expired, or signed out in
+      // another tab): say so clearly and return to the sign-in page, since
+      // every subsequent call would fail the same way.
+      if (!detail.includes('not synced')) {
+        message = 'Your session has expired — please sign in again.'
+        window.location.assign('/')
+      }
+    } else if (response.status === 403 && !detail) {
+      message = "You don't have permission to perform this action."
+    }
+
+    const error = new Error(message) as Error & { status: number; body: unknown }
+    error.status = response.status
+    error.body = errorBody
+    return error
   }
 
   get<T>(path: string) {
@@ -85,8 +106,7 @@ export class ApiClient {
     })
 
     if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}))
-      throw new Error(errorBody.detail || `Upload failed: ${response.status}`)
+      throw await this.buildError(response)
     }
 
     return response.json()
