@@ -14,6 +14,9 @@ jobs:
   #   backup create: --name (server) → --server-name, --backup-name → --name
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC azure/login
+      contents: read
     environment: prod
     outputs:
       image_tag: ${{ steps.image.outputs.tag }}
@@ -32,7 +35,12 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          # OIDC workload-identity federation: GitHub mints a short-lived token
+          # per run that Entra only accepts for this repo+environment, so no
+          # long-lived service-principal secret is stored in GitHub.
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get runner IP
         id: ip
@@ -210,6 +218,9 @@ jobs:
   deploy-bicep:
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC azure/login
+      contents: read
     environment: prod
     steps:
       - uses: actions/checkout@v4
@@ -217,7 +228,12 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          # OIDC workload-identity federation: GitHub mints a short-lived token
+          # per run that Entra only accepts for this repo+environment, so no
+          # long-lived service-principal secret is stored in GitHub.
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy infrastructure + app via Bicep
         run: |
