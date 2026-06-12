@@ -952,4 +952,4 @@ The replica-tested migration flow requires General Purpose or Memory Optimized t
 
 ---
 
-See [v1_migration.md](v1_migration.md) for v1 → v2 migration details.
+See [docs/RUNBOOK.md](docs/RUNBOOK.md) for deployment, rollback, and operations procedures.
