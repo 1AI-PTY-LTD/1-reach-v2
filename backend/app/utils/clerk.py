@@ -63,7 +63,7 @@ def _handle_organisation_created(data):
     )
 
     if created:
-        free_amount = getattr(settings, 'FREE_CREDIT_AMOUNT', 10)
+        free_amount = settings.FREE_CREDIT_AMOUNT
         grant_credits(
             org,
             amount=free_amount,
@@ -118,7 +118,7 @@ def _handle_membership_created(data):
     )
     if created:
         logger.warning('Organisation %s created by membership handler (out-of-order webhook)', org_id)
-        free_amount = getattr(settings, 'FREE_CREDIT_AMOUNT', 10)
+        free_amount = settings.FREE_CREDIT_AMOUNT
         grant_credits(org, amount=free_amount, description='Free trial credits on signup')
         logger.info('Granted $%s free credits to new org %s', free_amount, org_id)
 
