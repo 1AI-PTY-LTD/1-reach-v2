@@ -282,9 +282,25 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         serializer = ScheduleSerializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
+    # Hard ceiling on rows per import: a 5 MB CSV can hold ~250k rows, which
+    # would tie up a gunicorn worker and the DB for minutes. 10k keeps a
+    # single request comfortably bounded; larger lists import in batches.
+    IMPORT_MAX_ROWS = 10_000
+
     @action(detail=False, methods=['post'], url_path='import', throttle_classes=[ImportThrottle])
     def import_contacts(self, request):
-        """POST /api/contacts/import/ — bulk import contacts from a CSV file."""
+        """POST /api/contacts/import/ — bulk import contacts from a CSV file.
+
+        Expected CSV format (matches the guidance shown in the upload UI):
+          - UTF-8 encoded, comma-separated, with a header row
+          - Required column: ``phone`` — Australian mobile, ``04XXXXXXXX`` or
+            ``+614XXXXXXXX`` (spaces tolerated, normalised to ``04…``)
+          - Optional columns: ``first_name``, ``last_name`` (each truncated
+            to 100 characters); other columns are ignored
+          - Limits: 5 MB file size, 10,000 data rows per import
+          - Rows with invalid phones or numbers that already exist in the org
+            are skipped and reported back in ``error_records`` (HTTP 207)
+        """
         org = getattr(request, 'org', None)
         if not org:
             return Response({'detail': 'Organisation required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -314,7 +330,13 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         error_records = []
         to_create = []
 
-        for row in reader:
+        for row_number, row in enumerate(reader, start=1):
+            if row_number > self.IMPORT_MAX_ROWS:
+                return Response(
+                    {'detail': f'CSV has too many rows — at most {self.IMPORT_MAX_ROWS:,} '
+                               'contacts can be imported per file. Split the file and retry.'},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
             first_name = (row.get('first_name') or '').strip()[:100]
             last_name = (row.get('last_name') or '').strip()[:100]
             phone_raw = row.get('phone', '')

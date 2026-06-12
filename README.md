@@ -310,6 +310,14 @@ Fonts: Inter (body/sans) and Poppins (headings/mono) loaded via Google Fonts in 
 | Webhooks | `POST /api/webhooks/clerk/`, `POST /api/webhooks/sms-delivery/`, `POST /api/webhooks/stripe/` |
 | Health | `GET /api/health/` (DB + Redis connectivity), `GET /api/health/smoke/` (DB write + Redis write + deploy version) |
 
+**CSV import format** (`POST /api/contacts/import/`, multipart `file` field):
+UTF-8 CSV with a header row. Required column: `phone` (Australian mobile,
+`04XXXXXXXX` or `+614XXXXXXXX`; spaces tolerated). Optional columns:
+`first_name`, `last_name` (truncated to 100 chars); other columns are ignored.
+Limits: 5 MB and 10,000 data rows per file (HTTP 413 beyond that). Rows with
+invalid phones or numbers that already exist in the org are skipped and
+returned in `error_records` with HTTP 207.
+
 All endpoints require Clerk JWT authentication except health/smoke endpoints (unauthenticated). Most require `IsOrgMember`; user management and billing endpoints require `IsOrgAdmin`.
 
 ---
