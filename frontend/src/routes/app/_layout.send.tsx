@@ -327,9 +327,10 @@ function SendContent() {
           contact_id: r.contactId ?? null,
         }))
 
+        let response
         if (uploadedFileUrl) {
           // MMS: single batch API call for all recipients
-          await sendMms(client, {
+          response = await sendMms(client, {
             message: messageText,
             recipients: mappedRecipients,
             media_url: uploadedFileUrl,
@@ -338,18 +339,29 @@ function SendContent() {
           })
         } else {
           // SMS: single batch API call for all recipients
-          await sendSms(client, {
+          response = await sendSms(client, {
             message: messageText,
             recipients: mappedRecipients,
             ...(selectedGroupId && { group_id: selectedGroupId }),
             ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
         }
+        // Multi-recipient sends report how many were actually queued and how
+        // many were dropped because the recipient has opted out.
+        const queued = response.total ?? total
+        const skipped = response.skipped_opted_out ?? 0
         resetForm()
         setLastActionWasSchedule(false)
-        setSummaryCounts({ total, success: total, error: 0, errors: [] })
+        setSummaryCounts({
+          total,
+          success: queued,
+          error: skipped,
+          errors: skipped > 0
+            ? [`${skipped} recipient${skipped !== 1 ? 's' : ''} skipped — opted out of receiving messages`]
+            : [],
+        })
         setSummaryOpen(true)
-        toast.success(`${total} message${total !== 1 ? 's' : ''} queued`)
+        toast.success(`${queued} message${queued !== 1 ? 's' : ''} queued${skipped ? `, ${skipped} skipped (opted out)` : ''}`)
       } catch (error) {
         const errorMsg = extractErrorMessage(error)
         toast.error(errorMsg)
