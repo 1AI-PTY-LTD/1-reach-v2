@@ -70,7 +70,8 @@ export default function ContactsWidget({
     }
 
     const renderedContacts = contactsToRender.map((entry: Contact, i: number) => {
-        const initials = entry.first_name.charAt(0) + entry.last_name.charAt(0);
+        // Names are optional on imported contacts — never crash the list on a blank one
+        const initials = `${entry.first_name?.charAt(0) ?? ''}${entry.last_name?.charAt(0) ?? ''}` || '#';
         const isSelected = params?.contactId === entry.id.toString();
 
         return (
