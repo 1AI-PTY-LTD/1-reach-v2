@@ -181,15 +181,15 @@ jobs:
         id: image
         working-directory: backend
         run: |
+          # SHA tags only — production images stay immutable. A :latest tag in
+          # prod ACR is an ambiguity hazard (anything resolving it can silently
+          # repoint) and the Bicep deploy only ever uses the SHA tag.
           IMAGE="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:${{ github.sha }}"
-          IMAGE_LATEST="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:latest"
           docker build \
             --build-arg DEPLOY_SHA=${{ github.sha }} \
             -t "$IMAGE" \
-            -t "$IMAGE_LATEST" \
             .
           docker push "$IMAGE"
-          docker push "$IMAGE_LATEST"
           echo "tag=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy-bicep:
