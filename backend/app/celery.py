@@ -50,7 +50,15 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 django.setup()
 
 from app.utils.storage import StorageProvider, get_storage_provider
-from app.models import Invoice, MessageFormat, Organisation, Schedule, ScheduleStatus
+from app.models import (
+    Contact,
+    FailureCategory,
+    Invoice,
+    MessageFormat,
+    Organisation,
+    Schedule,
+    ScheduleStatus,
+)
 from app.utils.billing import record_usage, refund_usage, build_line_items
 from app.utils.failure_classifier import classify_failure
 from app.utils.metered_billing import get_billing_provider
@@ -883,6 +891,25 @@ def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
     _sync_parent_status(schedule)
 
 
+def _propagate_opt_out(schedule: Schedule) -> None:
+    """Mark matching contacts opted out when the carrier reports an opt-out.
+
+    Spam Act compliance: once a recipient has opted out at the carrier level
+    (Welcorp OPTO), every contact record with that number in the org must stop
+    receiving sends — the send paths filter on Contact.opt_out.
+    """
+    if not schedule.phone:
+        return
+    updated = Contact.objects.filter(
+        organisation=schedule.organisation, phone=schedule.phone, opt_out=False,
+    ).update(opt_out=True)
+    if updated:
+        logger.warning(
+            'Carrier opt-out: marked %d contact(s) with phone %s as opted out (org %s)',
+            updated, schedule.phone, schedule.organisation.clerk_org_id,
+        )
+
+
 def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
     """Transition a SENT schedule to FAILED based on a delivery callback."""
     error_code = event_data.get('error_code')
@@ -898,6 +925,8 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
         schedule.error = error_message
         schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
         refund_usage(org, schedule)
+        if failure_category == FailureCategory.OPT_OUT.value:
+            _propagate_opt_out(schedule)
 
     logger.error(
         'Schedule %d delivery failed (%s): %s',
