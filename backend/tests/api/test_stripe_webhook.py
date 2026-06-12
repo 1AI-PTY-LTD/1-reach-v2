@@ -40,6 +40,27 @@ def org_with_invoice(db):
 @pytest.mark.django_db
 class TestStripeWebhookView:
     @patch('app.utils.stripe.get_billing_provider')
+    def test_invalid_signature_rejected_with_no_side_effects(self, mock_get_provider, webhook_client, org_with_invoice):
+        """A signature verification failure returns 400 and processes nothing."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.side_effect = stripe.SignatureVerificationError(
+            'bad signature', 'sig_forged',
+        )
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{"type": "invoice.paid", "data": {"object": {"id": "inv_test_123"}}}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_forged',
+        )
+
+        assert response.status_code == 400
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_OPEN  # untouched
+
+    @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_paid_updates_status(self, mock_get_provider, webhook_client, org_with_invoice):
         org, invoice = org_with_invoice
         mock_provider = Mock()

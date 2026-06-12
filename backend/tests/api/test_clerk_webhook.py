@@ -24,6 +24,62 @@ def mock_webhook_verify(body, headers):
 
 
 @pytest.mark.django_db
+class TestClerkWebhookSignature:
+    """Signature verification outside TEST mode — previously untested.
+
+    The endpoint must reject forged payloads: a signature failure returns 400
+    and produces no side effects.
+    """
+
+    _payload = {
+        'type': 'organization.created',
+        'data': {'id': 'org_forged', 'name': 'Forged Org', 'slug': 'forged'},
+    }
+
+    @override_settings(TEST=False, CLERK_WEBHOOK_SIGNING_SECRET='whsec_dGVzdA==')
+    @patch('svix.Webhook.verify')
+    def test_invalid_signature_rejected_with_no_side_effects(self, mock_verify, api_client):
+        from svix.webhooks import WebhookVerificationError
+        mock_verify.side_effect = WebhookVerificationError('bad signature')
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(self._payload),
+            content_type='application/json',
+            HTTP_SVIX_ID='msg_forged',
+            HTTP_SVIX_TIMESTAMP='1700000000',
+            HTTP_SVIX_SIGNATURE='v1,forged',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Organisation.objects.filter(clerk_org_id='org_forged').exists()
+
+    @override_settings(TEST=False, CLERK_WEBHOOK_SIGNING_SECRET='whsec_dGVzdA==')
+    def test_missing_signature_headers_rejected(self, api_client):
+        """Absent svix headers must fail verification, not be processed."""
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(self._payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Organisation.objects.filter(clerk_org_id='org_forged').exists()
+
+    @override_settings(TEST=False, CLERK_WEBHOOK_SIGNING_SECRET='')
+    def test_missing_signing_secret_returns_500(self, api_client):
+        """An unconfigured secret must fail closed, never skip verification."""
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(self._payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == 500
+        assert not Organisation.objects.filter(clerk_org_id='org_forged').exists()
+
+
+@pytest.mark.django_db
 class TestClerkWebhookDedup:
     """Replay/duplicate suppression on the svix message id."""
 
