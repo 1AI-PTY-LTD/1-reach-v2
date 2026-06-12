@@ -61,6 +61,7 @@ from app.models import (
 )
 from app.utils.billing import record_usage, refund_usage, build_line_items
 from app.utils.failure_classifier import classify_failure
+from app.utils.segments import estimate_sms_segments
 from app.utils.metered_billing import get_billing_provider
 from app.utils.sms import SendResult, get_sms_provider
 
@@ -109,13 +110,14 @@ def _on_task_failure(sender=None, task_id=None, exception=None, traceback=None, 
 # ---------------------------------------------------------------------------
 
 def _estimate_parts(message: str, fmt: str) -> int:
-    """Estimate SMS message parts without calling the provider."""
+    """Estimate message parts without calling the provider.
+
+    SMS segmentation is encoding-aware (GSM-7 vs UCS-2) — see
+    app.utils.segments. MMS is always billed as a single unit.
+    """
     if fmt == MessageFormat.MMS:
         return 1
-    length = len(message or '')
-    if length <= 160:
-        return 1
-    return math.ceil(length / 153)
+    return estimate_sms_segments(message or '')
 
 
 def _compute_backoff_delay(retry_count: int) -> int:

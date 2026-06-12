@@ -19,7 +19,7 @@ import type { SendSmsRequest } from "../../types/sms.types";
 import { useState } from "react";
 import { useApiClient } from "../../lib/ApiClientProvider";
 import { ScheduleDateTimePicker, isTimeInPast, shouldSendImmediately } from '../ScheduleDateTimePicker';
-import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms';
+import { SMS_MAX_LENGTH, estimateSmsSegments } from '../../lib/sms';
 
 
 
@@ -371,8 +371,8 @@ export function ContactMessageModal({
                                     value={field.state.value}
                                     onChange={(e) => handleMessageChange(e, field)}
                                 />
-                                <div className={`text-sm mt-1 text-right ${field.state.value.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-                                    {field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? '0' : field.state.value.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2 message parts
+                                <div className={`text-sm mt-1 text-right ${estimateSmsSegments(field.state.value) > 1 && field.state.value.length > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                                    {field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? 0 : estimateSmsSegments(field.state.value)} message part{field.state.value.length !== 0 && estimateSmsSegments(field.state.value) === 1 ? '' : 's'}
                                 </div>
                             </Field>
                         )}

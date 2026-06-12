@@ -33,7 +33,7 @@ import { FileUpload } from '../../ui/file-upload'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 import { toast } from 'sonner'
-import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms'
+import { SMS_MAX_LENGTH, estimateSmsSegments } from '../../lib/sms'
 
 function flattenValidationErrors(obj: Record<string, unknown>): string[] {
   const messages: string[] = []
@@ -650,13 +650,16 @@ function SendContent() {
                 }
 
                 const messageTypePrefix = uploadedFileUrl ? 'MMS' : 'SMS'
-                const messageParts = uploadedFileUrl
-                  ? '1 of 1'
-                  : `${textToCount.length === 0 ? '0' : textToCount.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2`
+                // Encoding-aware: emoji/unicode force UCS-2 and segment at
+                // 70/67 chars instead of GSM-7's 160/153 — each segment is
+                // billed separately.
+                const parts = uploadedFileUrl ? 1 : estimateSmsSegments(textToCount)
+                const shownParts = textToCount.length === 0 && !uploadedFileUrl ? 0 : parts
+                const messageParts = `${shownParts} message part${shownParts !== 1 ? 's' : ''}`
 
                 return (
-                  <div className={`text-sm mt-4 text-right ${!uploadedFileUrl && textToCount.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-                    {messageTypePrefix} · {textToCount.length} / {SMS_MAX_LENGTH} characters · {messageParts} message parts
+                  <div className={`text-sm mt-4 text-right ${!uploadedFileUrl && parts > 1 && textToCount.length > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                    {messageTypePrefix} · {textToCount.length} / {SMS_MAX_LENGTH} characters · {messageParts}
                   </div>
                 )
               }}

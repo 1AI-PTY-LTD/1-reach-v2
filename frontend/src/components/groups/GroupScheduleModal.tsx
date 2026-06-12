@@ -15,7 +15,7 @@ import type { SendGroupSmsRequest } from '../../types/sms.types';
 import { useApiClient } from '../../lib/ApiClientProvider';
 import { toast } from 'sonner';
 import { ScheduleDateTimePicker, isTimeInPast, shouldSendImmediately } from '../ScheduleDateTimePicker';
-import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms';
+import { SMS_MAX_LENGTH, estimateSmsSegments } from '../../lib/sms';
 
 export default function GroupScheduleModal({
 	groupId,
@@ -406,8 +406,8 @@ export default function GroupScheduleModal({
 											value={field.state.value}
 											onChange={handleMessageChange}
 										/>
-										<div className={`text-sm mt-1 text-right ${field.state.value.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-											{field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? '0' : field.state.value.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2 message parts
+										<div className={`text-sm mt-1 text-right ${estimateSmsSegments(field.state.value) > 1 && field.state.value.length > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+											{field.state.value.length} / {SMS_MAX_LENGTH} characters · {field.state.value.length === 0 ? 0 : estimateSmsSegments(field.state.value)} message part{field.state.value.length !== 0 && estimateSmsSegments(field.state.value) === 1 ? '' : 's'}
 										</div>
 									</Field>
 								);
