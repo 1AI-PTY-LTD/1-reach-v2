@@ -30,6 +30,7 @@ def _get_redis_client():
 class HealthCheckView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = []  # ACA probes poll frequently
 
     def get(self, request):
         checks = {}
@@ -57,6 +58,7 @@ class SmokeCheckView(APIView):
     """Deep health check that verifies DB writes and Redis read/write work."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = []  # deploy smoke tests poll frequently
 
     def get(self, request):
         from app.models import Organisation

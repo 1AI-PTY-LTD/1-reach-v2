@@ -171,6 +171,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
 class ClerkWebhookView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = []  # Svix retries must never be rate limited
 
     def post(self, request):
         if settings.TEST:
@@ -235,6 +236,7 @@ class SMSDeliveryWebhookView(APIView):
     """
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = []  # batch sends produce per-recipient callback bursts
 
     def post(self, request):
         provider = get_sms_provider()

@@ -261,6 +261,7 @@ class StripeWebhookView(APIView):
     """
     authentication_classes = []
     permission_classes = []
+    throttle_classes = []  # Stripe retries must never be rate limited
 
     def post(self, request: Request) -> Response:
         payload = request.body

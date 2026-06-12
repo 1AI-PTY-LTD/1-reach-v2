@@ -226,7 +226,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': os.environ.get('THROTTLE_RATE_ANON', '1000/min'),
+        # Anonymous traffic only reaches AllowAny views; webhooks and health
+        # checks opt out of throttling explicitly (provider retries and ACA
+        # probes must never be rate limited), so this mainly bounds abuse.
+        'anon': os.environ.get('THROTTLE_RATE_ANON', '100/min'),
         'user': os.environ.get('THROTTLE_RATE_USER', '1000/min'),
         'sms': os.environ.get('THROTTLE_RATE_SMS', '100/min'),
         'import': os.environ.get('THROTTLE_RATE_IMPORT', '10/min'),
@@ -345,6 +348,23 @@ CELERY_RESULT_BACKEND = _ensure_redis_ssl(CELERY_RESULT_BACKEND)
 if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
     CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
     CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
+
+
+# Cache — backs DRF throttling. Without a shared backend Django falls back to
+# per-process LocMemCache, so every gunicorn worker and replica counted
+# separately and rate limits were effectively meaningless in production.
+# Reuses the Redis instance behind Celery with its own key prefix.
+if TEST:
+    # Hermetic for unit tests: no counter state leaking between runs.
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': os.environ.get('CACHE_URL', CELERY_BROKER_URL),
+            'KEY_PREFIX': 'reach-cache',
+        }
+    }
 
 
 # SMS Provider
