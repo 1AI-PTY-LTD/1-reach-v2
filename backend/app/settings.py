@@ -389,21 +389,20 @@ if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
     CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
 
 
-# Cache — backs DRF throttling. Without a shared backend Django falls back to
-# per-process LocMemCache, so every gunicorn worker and replica counted
-# separately and rate limits were effectively meaningless in production.
-# Reuses the Redis instance behind Celery with its own key prefix.
-if TEST:
-    # Hermetic for unit tests: no counter state leaking between runs.
-    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
-else:
-    CACHES = {
-        'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-            'LOCATION': os.environ.get('CACHE_URL', CELERY_BROKER_URL),
-            'KEY_PREFIX': 'reach-cache',
-        }
-    }
+# Cache — backs DRF throttling only (no direct cache.* use anywhere; sessions
+# are DB-backed). Intentionally per-process LocMemCache: throttle counters are
+# per worker/replica and reset on restart, so limits are approximate. That is
+# acceptable because throttling here is defense-in-depth, not a quota — the
+# money-sensitive endpoints are gated by billing (credit balance + monthly cap)
+# and tenant scoping, and webhooks/health are throttle-exempt.
+#
+# A shared Redis cache was deliberately NOT used: pointing Django's RedisCache
+# at the rediss:// broker URL fails (redis-py rejects the kombu-style
+# ssl_cert_reqs=CERT_REQUIRED query param), and sharing the broker's Redis DB
+# risks cache.clear() FLUSHDB-ing the Celery queue. If accurate global
+# throttling is ever needed, add a RedisCache with a redis-py-safe URL
+# (ssl_cert_reqs=required) on a dedicated Redis DB index.
+CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
 
 
 # SMS Provider

@@ -101,6 +101,15 @@ Azure Cache for Redis is provisioned outside this repo; two settings matter:
   recovered by the next `dispatch_due_messages` tick.
 - **TEST mode**: `TEST=1` disables webhook signature verification and is
   refused at boot unless `DEBUG=1`. Never set either in prod.
+- **DRF throttling is per-process** (default `LocMemCache`, no shared cache).
+  Limits are therefore approximate — counted per gunicorn worker/replica and
+  reset on restart. This is deliberate: throttling is defense-in-depth, while
+  the real abuse controls are the billing gate (credit balance + monthly cap)
+  and tenant scoping; webhooks and health checks are throttle-exempt. If
+  accurate global throttling is ever needed, add a `RedisCache` with a
+  redis-py-safe URL (`ssl_cert_reqs=required`, not the kombu-style
+  `CERT_REQUIRED`) on a **dedicated Redis DB index** (not the broker's DB, so
+  `cache.clear()` can't `FLUSHDB` the Celery queue).
 
 ## Monitoring
 
