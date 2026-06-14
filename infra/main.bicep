@@ -236,7 +236,11 @@ module api 'modules/container-app.bicep' = {
     ingressEnabled: true
     ingressExternal: true
     targetPort: 8000
-    activeRevisionsMode: 'Multiple' // zero-downtime: smoke-test new revision before traffic shift
+    // Prod only: Multiple-revision mode lets deploy-prod.yml smoke-test the new
+    // revision at 0% traffic before shifting. Dev stays Single (no traffic step
+    // in deploy-dev.yml), so its deploy replaces the active revision and serves
+    // it immediately — keeping dev infra simple.
+    activeRevisionsMode: ENVIRONMENT_NAME == 'prod' ? 'Multiple' : 'Single'
     secrets: secrets
     env: union(sharedEnv, [
       { name: 'CONTAINER_ROLE', value: 'api' }
