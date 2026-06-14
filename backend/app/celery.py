@@ -550,7 +550,12 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
 
 
 def _handle_batch_success(parent: Schedule, children: list[Schedule], result: dict) -> None:
-    """Mark all children as SENT and record billing."""
+    """Mark all children as SENT and record billing.
+
+    Each child is re-fetched under lock and only transitioned PROCESSING→SENT,
+    mirroring _handle_success: a delivery callback that already advanced a child
+    must not be regressed back to SENT, and a child must not be charged twice.
+    """
     now = timezone.now()
     org = parent.organisation
     per_recipient = result.get('results', [])
@@ -558,12 +563,19 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
     for i, child in enumerate(children):
         child_result = per_recipient[i] if i < len(per_recipient) else {}
         with transaction.atomic():
-            child.status = ScheduleStatus.SENT
-            child.sent_time = now
-            child.provider_message_id = child_result.get('message_id')
-            child.error = None
-            child.failure_category = None
-            child.save(update_fields=[
+            locked = Schedule.objects.select_for_update().get(pk=child.pk)
+            if locked.status != ScheduleStatus.PROCESSING:
+                logger.warning(
+                    '_handle_batch_success: child %d already advanced to %s — not overwriting with SENT',
+                    locked.pk, locked.status,
+                )
+                continue
+            locked.status = ScheduleStatus.SENT
+            locked.sent_time = now
+            locked.provider_message_id = child_result.get('message_id')
+            locked.error = None
+            locked.failure_category = None
+            locked.save(update_fields=[
                 'status', 'sent_time', 'provider_message_id',
                 'error', 'failure_category', 'updated_at',
             ])
@@ -571,16 +583,21 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
             if org.billing_mode == org.BILLING_SUBSCRIBED:
                 record_usage(
                     org,
-                    units=child.message_parts,
-                    format=child.format or 'sms',
-                    description=f'{(child.format or "sms").upper()} to {child.phone}',
+                    units=locked.message_parts,
+                    format=locked.format or 'sms',
+                    description=f'{(locked.format or "sms").upper()} to {locked.phone}',
                     user=None,
-                    schedule=child,
+                    schedule=locked,
                 )
 
-    parent.status = ScheduleStatus.SENT
-    parent.sent_time = now
-    parent.save(update_fields=['status', 'sent_time', 'updated_at'])
+    # Lock the parent and only advance it from PROCESSING, so a sibling's
+    # delivery-callback rollup isn't regressed back to SENT.
+    with transaction.atomic():
+        locked_parent = Schedule.objects.select_for_update().get(pk=parent.pk)
+        if locked_parent.status == ScheduleStatus.PROCESSING:
+            locked_parent.status = ScheduleStatus.SENT
+            locked_parent.sent_time = now
+            locked_parent.save(update_fields=['status', 'sent_time', 'updated_at'])
 
     # Media blob cleanup is deferred until delivery callback (DELIVERED/FAILED)
     # so Welcorp has time to fetch the media URL asynchronously.
