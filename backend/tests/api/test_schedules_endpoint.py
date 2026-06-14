@@ -12,6 +12,7 @@ import pytest
 from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
 
@@ -232,12 +233,12 @@ class TestScheduleCreate:
 
         assert response.status_code == status.HTTP_201_CREATED
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('9.90')  # $10 - 1 part × $0.10
+        assert organisation.credit_balance == Decimal('10.00') - settings.SMS_RATE  # $10 - 1 part
         charge = CreditTransaction.objects.get(
             organisation=organisation, schedule_id=response.data['id'],
             transaction_type=CreditTransaction.DEDUCT,
         )
-        assert charge.amount == Decimal('0.10')
+        assert charge.amount == settings.SMS_RATE
 
     def test_create_blocked_when_insufficient_balance(self, authenticated_client, organisation, user):
         """Scheduled sends are billing-gated like immediate sends.
@@ -274,7 +275,7 @@ class TestScheduleCreate:
         assert schedule.message_parts == 2
         assert schedule.status == ScheduleStatus.PENDING
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('9.80')  # charged for 2 parts
+        assert organisation.credit_balance == Decimal('10.00') - 2 * settings.SMS_RATE  # charged for 2 parts
 
     def test_create_subscribed_does_not_charge(self, authenticated_client, organisation, user):
         """Subscribed orgs are charged on successful send, not at creation."""
@@ -358,7 +359,7 @@ class TestScheduleUpdate:
         create = authenticated_client.post('/api/schedules/', {
             'text': 'Short', 'phone': '0412345678', 'scheduled_time': future.isoformat(),
         })
-        assert create.status_code == status.HTTP_201_CREATED  # balance now 9.90
+        assert create.status_code == status.HTTP_201_CREATED  # balance now 10 - 1 part
 
         response = authenticated_client.patch(
             f'/api/schedules/{create.data["id"]}/', {'text': 'x' * 200},  # 2 parts
@@ -368,7 +369,7 @@ class TestScheduleUpdate:
         schedule = Schedule.objects.get(pk=create.data['id'])
         assert schedule.message_parts == 2
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('9.80')  # net charge = 2 parts
+        assert organisation.credit_balance == Decimal('10.00') - 2 * settings.SMS_RATE  # net charge = 2 parts
         types = list(CreditTransaction.objects.filter(
             organisation=organisation, schedule=schedule,
         ).order_by('created_at').values_list('transaction_type', flat=True))
@@ -378,7 +379,7 @@ class TestScheduleUpdate:
 
     def test_update_blocked_when_new_cost_exceeds_balance(self, authenticated_client, organisation, user):
         """Re-pricing is gated: the edit is rolled back if the org cannot afford it."""
-        _fund(organisation, '0.10')
+        _fund(organisation, str(settings.SMS_RATE))  # exactly one part
         future = timezone.now() + timedelta(hours=1)
         create = authenticated_client.post('/api/schedules/', {
             'text': 'Short', 'phone': '0412345678', 'scheduled_time': future.isoformat(),
@@ -386,7 +387,7 @@ class TestScheduleUpdate:
         assert create.status_code == status.HTTP_201_CREATED  # balance now 0.00
 
         response = authenticated_client.patch(
-            f'/api/schedules/{create.data["id"]}/', {'text': 'x' * 200},  # needs 0.20
+            f'/api/schedules/{create.data["id"]}/', {'text': 'x' * 200},  # needs 2 parts
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -454,7 +455,7 @@ class TestScheduleDelete:
         })
         assert create.status_code == status.HTTP_201_CREATED
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('9.90')
+        assert organisation.credit_balance == Decimal('10.00') - settings.SMS_RATE
 
         response = authenticated_client.delete(f'/api/schedules/{create.data["id"]}/')
 

@@ -154,14 +154,14 @@ class TestRecordUsage:
         from app.utils.billing import InsufficientBalanceError
 
         org = OrganisationFactory(
-            credit_balance=Decimal('0.05'),
+            credit_balance=settings.SMS_RATE - Decimal('0.01'),
             billing_mode=Organisation.BILLING_PREPAID,
         )
 
         with pytest.raises(InsufficientBalanceError):
-            record_usage(org, 1, format='sms', description='Test SMS')  # costs 0.10
+            record_usage(org, 1, format='sms', description='Test SMS')  # costs settings.SMS_RATE
 
-        assert get_balance(org) == Decimal('0.05')  # unchanged
+        assert get_balance(org) == settings.SMS_RATE - Decimal('0.01')  # unchanged
         assert not CreditTransaction.objects.filter(organisation=org).exists()
 
     def test_trial_deducts_balance(self):

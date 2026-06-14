@@ -148,7 +148,7 @@ class TestSendSMS:
         locked floor in record_usage must reject the deduction with 402 and
         roll back the created schedule.
         """
-        organisation.credit_balance = Decimal('0.05')  # below one SMS part
+        organisation.credit_balance = settings.SMS_RATE - Decimal('0.01')  # below one SMS part
         organisation.save()
 
         data = {'message': 'Test', 'recipients': [{'phone': '0412345678'}]}
@@ -156,7 +156,7 @@ class TestSendSMS:
 
         assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('0.05')  # untouched
+        assert organisation.credit_balance == settings.SMS_RATE - Decimal('0.01')  # untouched
         assert Schedule.objects.count() == 0  # creation rolled back
         mock_send_message_task.delay.assert_not_called()
 

@@ -686,7 +686,7 @@ class TestGroupScheduleBilling:
         )
         assert create_response.status_code == status.HTTP_201_CREATED
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('9.80')  # 2 members × 1 part
+        assert organisation.credit_balance == Decimal('10.00') - 2 * settings.SMS_RATE  # 2 members × 1 part
 
         parent_id = create_response.data['id']
         response = authenticated_client.patch(
@@ -695,7 +695,7 @@ class TestGroupScheduleBilling:
 
         assert response.status_code == status.HTTP_200_OK
         organisation.refresh_from_db()
-        assert organisation.credit_balance == Decimal('9.60')  # 2 members × 2 parts
+        assert organisation.credit_balance == Decimal('10.00') - 4 * settings.SMS_RATE  # 2 members × 2 parts
         parent = Schedule.objects.get(pk=parent_id)
         assert parent.message_parts == 2
         assert set(Schedule.objects.filter(parent=parent).values_list('message_parts', flat=True)) == {2}
@@ -707,7 +707,7 @@ class TestGroupScheduleBilling:
         organisation.billing_mode = Organisation.BILLING_PREPAID
         organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
-        grant_credits(organisation, Decimal('0.20'), 'Test grant')
+        grant_credits(organisation, 2 * settings.SMS_RATE, 'Test grant')  # exactly 2 members × 1 part
 
         group, _ = create_contact_group_with_members(organisation, num_members=2, user=user)
         create_response = authenticated_client.post(

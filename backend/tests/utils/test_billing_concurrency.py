@@ -14,6 +14,7 @@ import threading
 from decimal import Decimal
 
 import pytest
+from django.conf import settings
 from django.db import connection
 from django.utils import timezone
 
@@ -48,7 +49,7 @@ class TestBillingConcurrency:
         """Four sends race for a balance that covers exactly one of them."""
         org = OrganisationFactory(
             billing_mode=Organisation.BILLING_PREPAID,
-            credit_balance=Decimal('0.10'),  # exactly one SMS part
+            credit_balance=settings.SMS_RATE,  # exactly one SMS part
         )
         outcomes = []
         lock = threading.Lock()
