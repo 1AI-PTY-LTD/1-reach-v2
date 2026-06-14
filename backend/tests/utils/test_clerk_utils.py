@@ -538,6 +538,22 @@ class TestHandleSubscriptionPastDue:
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
         assert org.past_due_source == Organisation.PAST_DUE_SOURCE_CLERK
 
+    def test_does_not_relabel_source_when_already_past_due(self):
+        """A Clerk past_due event must not steal past_due_source from a Stripe
+        invoice that blocked first — otherwise a later subscription.active would
+        clear past_due while the Stripe invoice is still unpaid."""
+        org = OrganisationFactory(
+            clerk_org_id='org_both_pastdue',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE,
+        )
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_payment_failed({'id': 'sub_both', 'payer': {'organization_id': 'org_both_pastdue'}})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        # source stays stripe_invoice, so subscription.active won't clear it
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+
     def test_calls_clerk_api_to_disable_org(self):
         """Clerk SDK organizations.update() is called with billing_suspended=True."""
         OrganisationFactory(clerk_org_id='org_clerk_call')

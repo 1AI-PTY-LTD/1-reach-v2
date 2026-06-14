@@ -314,10 +314,20 @@ def _handle_subscription_past_due(data):
     if _is_stale_billing_event(org, data, 'subscription.pastDue'):
         return
 
+    # Only the obligation that blocks first "owns" past_due_source, and only that
+    # source's paid signal clears it. Don't relabel an org that is already
+    # past_due (mirrors _handle_invoice_payment_failed): otherwise a later
+    # subscription.active could clear past_due while a Stripe invoice that blocked
+    # first is still unpaid. If both are unpaid, the still-unpaid obligation
+    # re-blocks on its next dunning event.
+    was_past_due = org.billing_mode == Organisation.BILLING_PAST_DUE
     org.billing_mode = Organisation.BILLING_PAST_DUE
-    org.past_due_source = Organisation.PAST_DUE_SOURCE_CLERK
+    update_fields = ['billing_mode', 'billing_event_at']
+    if not was_past_due:
+        org.past_due_source = Organisation.PAST_DUE_SOURCE_CLERK
+        update_fields.append('past_due_source')
     org.billing_event_at = _billing_event_timestamp(data) or org.billing_event_at
-    org.save(update_fields=['billing_mode', 'past_due_source', 'billing_event_at'])
+    org.save(update_fields=update_fields)
     logger.warning('subscription.pastDue: org %s set to past_due', org_id)
 
     try:
