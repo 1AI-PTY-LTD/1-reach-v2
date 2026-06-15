@@ -22,6 +22,12 @@ export function Footer() {
             >
               Privacy
             </a>
+            <a
+              href="/terms"
+              className="text-sm text-zinc-500 dark:text-[#a99cc4] transition-colors hover:text-zinc-950 dark:hover:text-white"
+            >
+              Terms
+            </a>
           </div>
         </div>
       </div>

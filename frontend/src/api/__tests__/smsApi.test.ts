@@ -100,5 +100,61 @@ describe('smsApi', () => {
         sendSms(client, { message: 'Hello', recipients: [{ phone: '0412345678', contact_id: 1 }] })
       ).rejects.toThrow()
     })
+
+    it('sendSms surfaces the insufficient-balance message (400 gate)', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/sms/send/', () =>
+          HttpResponse.json(
+            ['Insufficient balance. Purchase more credits to continue sending.'],
+            { status: 400 },
+          )
+        )
+      )
+      await expect(
+        sendSms(client, { message: 'Hello', recipients: [{ phone: '0412345678', contact_id: 1 }] })
+      ).rejects.toThrow(/Insufficient balance/)
+    })
+
+    it('sendSms surfaces the monthly-limit message', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/sms/send/', () =>
+          HttpResponse.json(
+            ['Monthly spending limit reached ($10.00 of $10.00)'],
+            { status: 400 },
+          )
+        )
+      )
+      await expect(
+        sendSms(client, { message: 'Hello', recipients: [{ phone: '0412345678', contact_id: 1 }] })
+      ).rejects.toThrow(/Monthly spending limit/)
+    })
+
+    it('sendSms surfaces the 402 race-path detail', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/sms/send/', () =>
+          HttpResponse.json(
+            { detail: 'Insufficient balance. Purchase more credits to continue sending.' },
+            { status: 402 },
+          )
+        )
+      )
+      await expect(
+        sendSms(client, { message: 'Hello', recipients: [{ phone: '0412345678', contact_id: 1 }] })
+      ).rejects.toThrow(/Insufficient balance/)
+    })
+
+    it('sendSms surfaces the all-recipients-opted-out rejection', async () => {
+      server.use(
+        http.post('http://localhost:8000/api/sms/send/', () =>
+          HttpResponse.json(
+            ['All recipients have opted out of receiving messages.'],
+            { status: 400 },
+          )
+        )
+      )
+      await expect(
+        sendSms(client, { message: 'Hello', recipients: [{ phone: '0412345678', contact_id: 1 }] })
+      ).rejects.toThrow(/opted out/)
+    })
   })
 })

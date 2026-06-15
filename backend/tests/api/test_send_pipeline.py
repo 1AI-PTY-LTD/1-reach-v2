@@ -65,6 +65,7 @@ class TestSendSMSPipeline:
     ):
         """Prepaid org: view reserves credits, task sends, final balance is reduced."""
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
@@ -128,6 +129,7 @@ class TestSendSMSPipeline:
     ):
         """Permanent provider failure → schedule FAILED, trial credits are refunded."""
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 
@@ -201,6 +203,7 @@ class TestGroupSendPipeline:
         from app.celery import dispatch_due_messages
 
         organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
         organisation.save()
         grant_credits(organisation, Decimal('10.00'), 'Test grant')
 

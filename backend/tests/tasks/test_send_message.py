@@ -62,6 +62,96 @@ class TestSendMessageSuccess:
         assert schedule_queued.provider_message_id == 'mock-sms-123'
         assert schedule_queued.error is None
 
+    def test_opted_out_recipient_fails_with_refund_at_send_time(
+        self, schedule_queued, organisation, contact, user
+    ):
+        """A contact who opts out after scheduling is never sent to.
+
+        The schedule fails with category opt_out and the prepaid reservation
+        is refunded; the provider is not called.
+        """
+        from app.utils.billing import record_usage
+
+        organisation.billing_mode = organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        record_usage(organisation, 1, 'sms', 'dispatch', user, schedule_queued)
+        contact.opt_out = True
+        contact.save(update_fields=['opt_out'])
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = send_message(schedule_queued.pk)
+
+        mock_get.return_value.send_sms.assert_not_called()
+        assert result == {'skipped': True, 'reason': 'recipient_opted_out'}
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.FAILED
+        assert schedule_queued.failure_category == 'opt_out'
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')  # refunded
+
+    def test_inactive_org_cancels_and_refunds_instead_of_sending(
+        self, schedule_queued, organisation, user
+    ):
+        """A queued send for a soft-deleted org is cancelled with a refund, not sent."""
+        from app.utils.billing import record_usage
+
+        organisation.billing_mode = organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('10.00')
+        organisation.save()
+        record_usage(organisation, 1, 'sms', 'dispatch', user, schedule_queued)
+        organisation.is_active = False
+        organisation.save(update_fields=['is_active'])  # don't clobber the deducted balance
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = send_message(schedule_queued.pk)
+
+        mock_get.return_value.send_sms.assert_not_called()
+        assert result == {'skipped': True, 'reason': 'org_inactive'}
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.CANCELLED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')  # refunded
+
+    def test_past_due_org_parks_schedule_instead_of_sending(
+        self, schedule_queued, organisation
+    ):
+        """A queued send for a past_due org is parked back to PENDING, not sent."""
+        organisation.billing_mode = organisation.BILLING_PAST_DUE
+        organisation.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = send_message(schedule_queued.pk)
+
+        mock_get.return_value.send_sms.assert_not_called()
+        assert result == {'skipped': True, 'reason': 'org_past_due'}
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.PENDING
+
+    def test_success_does_not_regress_delivered_status(
+        self, schedule_queued, organisation
+    ):
+        """A delivery callback landing mid-send must not be overwritten with SENT.
+
+        Regression test: _handle_success previously saved status=SENT from a
+        stale instance, regressing DELIVERED back to SENT (the schedule then
+        never received another callback and stayed SENT forever).
+        """
+        def _send_sms_and_deliver(**kwargs):
+            # Simulate the delivery callback racing the provider call: the
+            # schedule is advanced to DELIVERED before _handle_success runs.
+            Schedule.objects.filter(pk=schedule_queued.pk).update(
+                status=ScheduleStatus.DELIVERED, delivered_time=timezone.now(),
+            )
+            return SendResult(success=True, message_id='race-123', message_parts=1)
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            mock_get.return_value.send_sms.side_effect = _send_sms_and_deliver
+            send_message(schedule_queued.pk)
+
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.DELIVERED  # not regressed
+
     def test_success_records_usage_for_subscribed_org(
         self, schedule_queued, mock_sms_provider
     ):

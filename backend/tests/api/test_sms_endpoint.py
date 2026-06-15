@@ -99,6 +99,86 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
 
+    def test_send_sms_blocks_opted_out_recipient(
+        self, authenticated_client, organisation, contact,
+        mock_check_sms_limit, mock_send_message_task,
+    ):
+        """Direct sends to opted-out numbers are rejected (Spam Act compliance).
+
+        Regression test: only group sends filtered opt_out; direct sends went
+        straight through.
+        """
+        contact.opt_out = True
+        contact.save(update_fields=['opt_out'])
+
+        data = {'message': 'Test', 'recipients': [{'phone': contact.phone}]}
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'opted out' in str(response.data).lower()
+        assert Schedule.objects.count() == 0
+        mock_send_message_task.delay.assert_not_called()
+
+    def test_send_sms_skips_opted_out_in_multi_recipient(
+        self, authenticated_client, organisation, contact,
+        mock_check_sms_limit, mock_send_batch_message_task,
+    ):
+        """Multi-recipient sends drop opted-out numbers and report the skip."""
+        contact.opt_out = True
+        contact.save(update_fields=['opt_out'])
+
+        data = {
+            'message': 'Test',
+            'recipients': [{'phone': contact.phone}, {'phone': '0499999999'}, {'phone': '0488888888'}],
+        }
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert response.data['total'] == 2
+        assert response.data['skipped_opted_out'] == 1
+        assert not Schedule.objects.filter(phone=contact.phone).exists()
+
+    def test_send_sms_402_when_deduction_would_go_negative(
+        self, authenticated_client, organisation, mock_check_sms_limit,
+        mock_send_message_task,
+    ):
+        """Simulates the gate/deduct race: the gate passed but the balance is gone.
+
+        check_can_send is unlocked, so concurrent sends can all pass it; the
+        locked floor in record_usage must reject the deduction with 402 and
+        roll back the created schedule.
+        """
+        organisation.credit_balance = settings.SMS_RATE - Decimal('0.01')  # below one SMS part
+        organisation.save()
+
+        data = {'message': 'Test', 'recipients': [{'phone': '0412345678'}]}
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == settings.SMS_RATE - Decimal('0.01')  # untouched
+        assert Schedule.objects.count() == 0  # creation rolled back
+        mock_send_message_task.delay.assert_not_called()
+
+    def test_send_sms_gates_on_full_multipart_cost(
+        self, authenticated_client, mock_check_sms_limit,
+        mock_send_message_task, mock_send_batch_message_task,
+    ):
+        """Billing gate counts recipients × message_parts, not just recipients.
+
+        Regression test: the gate previously checked units=len(recipients), so a
+        2-part message to 2 recipients was gated at half its real cost.
+        """
+        data = {
+            'message': 'x' * 200,  # >160 chars → 2 parts
+            'recipients': [{'phone': '0412345678'}, {'phone': '0412345679'}],
+        }
+
+        response = authenticated_client.post('/api/sms/send/', data, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_check_sms_limit.call_args.kwargs['units'] == 4
+
     def test_send_sms_validates_phone_number(
         self, authenticated_client, mock_check_sms_limit, mock_send_message_task
     ):
@@ -204,6 +284,19 @@ class TestSendToGroup:
 
         assert response.status_code == status.HTTP_202_ACCEPTED
         assert response.data['results']['total'] == 2  # Only 2 queued
+
+    def test_send_to_group_gates_on_full_multipart_cost(
+        self, authenticated_client, organisation, user, mock_check_sms_limit,
+        mock_send_batch_message_task,
+    ):
+        """Billing gate counts members × message_parts, not just members."""
+        group, _ = create_contact_group_with_members(organisation, num_members=3, user=user)
+
+        data = {'message': 'x' * 200, 'group_id': group.id}  # 2 parts × 3 members
+        response = authenticated_client.post('/api/sms/send-to-group/', data)
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_check_sms_limit.call_args.kwargs['units'] == 6
 
     def test_send_to_group_validates_group_exists(
         self, authenticated_client, mock_check_sms_limit, mock_send_message_task

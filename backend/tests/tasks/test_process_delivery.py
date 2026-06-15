@@ -76,6 +76,40 @@ class TestProcessDeliveryEventSingleSend:
         assert schedule_sent.error == 'Welcorp delivery failed: INVN'
         assert result == {'schedule_id': schedule_sent.pk, 'status': 'failed'}
 
+    def test_opt_out_failure_marks_contacts_opted_out(self, schedule_sent, contact):
+        """Carrier OPTO must propagate to Contact.opt_out (Spam Act compliance).
+
+        Regression test: opt-outs were previously recorded only as a failure
+        category, so the platform kept sending to opted-out numbers.
+        """
+        assert contact.phone == schedule_sent.phone
+        assert contact.opt_out is False
+
+        process_delivery_event({
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': schedule_sent.phone,
+            'error_code': 'OPTO',
+            'error_message': 'Welcorp delivery failed: OPTO',
+        })
+
+        contact.refresh_from_db()
+        assert contact.opt_out is True
+        schedule_sent.refresh_from_db()
+        assert schedule_sent.failure_category == 'opt_out'
+
+    def test_non_opt_out_failure_leaves_contacts_alone(self, schedule_sent, contact):
+        process_delivery_event({
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': schedule_sent.phone,
+            'error_code': 'INVN',
+            'error_message': 'Welcorp delivery failed: INVN',
+        })
+
+        contact.refresh_from_db()
+        assert contact.opt_out is False
+
     def test_failed_event_calls_refund(self, schedule_sent, organisation):
         grant_credits(organisation, Decimal('10.00'), 'test')
         from app.utils.billing import record_usage

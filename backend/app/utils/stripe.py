@@ -16,10 +16,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
+from django.db import IntegrityError
 from django.db import transaction as db_transaction
 
 
-from app.models import CreditPurchase, Invoice, Organisation, CreditTransaction
+from app.models import CreditPurchase, Invoice, Organisation, WebhookEvent
 from app.utils.billing import grant_credits
 from app.utils.metered_billing import (
     CheckoutResult,
@@ -237,6 +238,7 @@ class StripeMeteredBillingProvider(MeteredBillingProvider):
         )
         data_obj = event.data.object
         return {
+            'id': event.id,
             'type': event.type,
             'data': data_obj.to_dict() if isinstance(data_obj, stripe.StripeObject) else data_obj,
         }
@@ -259,6 +261,7 @@ class StripeWebhookView(APIView):
     """
     authentication_classes = []
     permission_classes = []
+    throttle_classes = []  # Stripe retries must never be rate limited
 
     def post(self, request: Request) -> Response:
         payload = request.body
@@ -272,21 +275,39 @@ class StripeWebhookView(APIView):
             return Response({'error': 'Invalid signature'}, status=400)
 
         event_type = event['type']
+        event_id = event.get('id', '')
         invoice_data = event['data']
         invoice_id = invoice_data.get('id', '')
 
-        if event_type == 'invoice.paid':
-            self._handle_invoice_paid(invoice_id)
-        elif event_type in ('invoice.payment_failed', 'invoice.overdue'):
-            self._handle_invoice_payment_failed(invoice_id)
-        elif event_type == 'invoice.voided':
-            self._handle_invoice_voided(invoice_id)
-        elif event_type == 'checkout.session.completed':
-            self._handle_checkout_completed(invoice_data)
-        elif event_type == 'checkout.session.expired':
-            self._handle_checkout_expired(invoice_data)
-        else:
-            logger.debug('Ignoring Stripe event: %s', event_type)
+        # Dedup on the Stripe event id (stable across Stripe's at-least-once
+        # retries). The marker commits atomically with the handler's side
+        # effects: a failed handler rolls it back so the retry reprocesses,
+        # while a duplicate delivery hits the unique constraint and is skipped.
+        with db_transaction.atomic():
+            if event_id:
+                try:
+                    with db_transaction.atomic():
+                        WebhookEvent.objects.create(
+                            provider=WebhookEvent.PROVIDER_STRIPE,
+                            event_id=event_id,
+                            event_type=event_type,
+                        )
+                except IntegrityError:
+                    logger.info('Stripe event %s already processed — skipping duplicate', event_id)
+                    return Response({'status': 'ok', 'duplicate': True})
+
+            if event_type == 'invoice.paid':
+                self._handle_invoice_paid(invoice_id)
+            elif event_type in ('invoice.payment_failed', 'invoice.overdue'):
+                self._handle_invoice_payment_failed(invoice_id)
+            elif event_type == 'invoice.voided':
+                self._handle_invoice_voided(invoice_id)
+            elif event_type == 'checkout.session.completed':
+                self._handle_checkout_completed(invoice_data)
+            elif event_type == 'checkout.session.expired':
+                self._handle_checkout_expired(invoice_data)
+            else:
+                logger.debug('Ignoring Stripe event: %s', event_type)
 
         return Response({'status': 'ok'})
 
@@ -301,10 +322,16 @@ class StripeWebhookView(APIView):
             )
             org = invoice.organisation
             if org.billing_mode == Organisation.BILLING_PAST_DUE:
-                # Only restore to subscribed if no other uncollectable invoices
-                # remain for this org. This prevents incorrectly restoring when:
-                # - Clerk set past_due (subscription fee unpaid, not a Stripe invoice)
-                # - Multiple invoices failed but only one was paid
+                # A paid metered invoice only clears Stripe-set past_due. If Clerk
+                # set past_due (subscription fee unpaid — no Stripe invoice row of
+                # ours), only subscription.active may restore the org.
+                if org.past_due_source == Organisation.PAST_DUE_SOURCE_CLERK:
+                    logger.info(
+                        'Invoice %s paid for org %s but past_due was set by Clerk — keeping past_due',
+                        invoice_id, org.clerk_org_id,
+                    )
+                    return
+                # Only restore to subscribed if no other uncollectable invoices remain
                 has_other_unpaid = Invoice.objects.filter(
                     organisation=org,
                     status=Invoice.STATUS_UNCOLLECTABLE,
@@ -312,6 +339,7 @@ class StripeWebhookView(APIView):
                 if not has_other_unpaid:
                     Organisation.objects.filter(pk=org.pk).update(
                         billing_mode=Organisation.BILLING_SUBSCRIBED,
+                        past_due_source=None,
                     )
                     logger.info(
                         'Restored org %s to subscribed after invoice %s paid',
@@ -334,12 +362,16 @@ class StripeWebhookView(APIView):
             invoice = Invoice.objects.select_related('organisation').get(
                 provider_invoice_id=invoice_id,
             )
-            Organisation.objects.filter(pk=invoice.organisation.pk).update(
-                billing_mode=Organisation.BILLING_PAST_DUE,
-            )
+            org = invoice.organisation
+            updates = {'billing_mode': Organisation.BILLING_PAST_DUE}
+            # Clerk-set past_due is stickier: don't relabel it, or invoice.paid
+            # would clear it while the subscription fee is still unpaid.
+            if org.billing_mode != Organisation.BILLING_PAST_DUE:
+                updates['past_due_source'] = Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+            Organisation.objects.filter(pk=org.pk).update(**updates)
             logger.warning(
                 'Invoice payment failed for org %s (invoice %s) — set to past_due',
-                invoice.organisation.clerk_org_id, invoice_id,
+                org.clerk_org_id, invoice_id,
             )
         else:
             logger.warning('invoice.payment_failed: no matching invoice for %s', invoice_id)
@@ -378,20 +410,27 @@ class StripeWebhookView(APIView):
                 logger.debug('checkout.session.completed: purchase %s already completed', session_id)
                 return
 
+            # Defense in depth: the granted amount comes from our own
+            # CreditPurchase row, but the session's amount_total must agree —
+            # a mismatch means a tampered/foreign payload or a data bug, and
+            # granting on it would be minting credits.
+            amount_total = session_data.get('amount_total')
+            expected_cents = int(purchase.amount * 100)
+            if amount_total is not None and int(amount_total) != expected_cents:
+                logger.error(
+                    'checkout.session.completed: amount_total %s does not match purchase '
+                    '%s (%s cents) for session %s — NOT granting credits',
+                    amount_total, purchase.pk, expected_cents, session_id,
+                )
+                return
+
             org = purchase.organisation
-            new_balance = grant_credits(
+            grant_tx = grant_credits(
                 org, purchase.amount, f'Credit purchase: ${purchase.amount}',
             )
 
             purchase.status = CreditPurchase.STATUS_COMPLETED
             purchase.completed_at = timezone.now()
-            
-            # Link the grant transaction (the most recent GRANT for this org)
-            grant_tx = CreditTransaction.objects.filter(
-                organisation=org,
-                transaction_type=CreditTransaction.GRANT,
-                balance_after=new_balance,
-            ).order_by('-created_at').first()
             purchase.credit_transaction = grant_tx
             purchase.save()
 

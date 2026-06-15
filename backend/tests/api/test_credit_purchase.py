@@ -132,6 +132,49 @@ class TestCheckoutWebhooks:
         new_balance = get_balance(organisation)
         assert new_balance == initial_balance + Decimal('50.00')
 
+    def test_checkout_completed_grant_links_exact_transaction(self, db, organisation):
+        """The purchase links the GRANT transaction returned by grant_credits.
+
+        Regression test: linking previously guessed the row via balance_after,
+        which is ambiguous when balances repeat.
+        """
+        CreditPurchase.objects.create(
+            organisation=organisation,
+            stripe_checkout_session_id='cs_test_link_tx',
+            amount=Decimal('25.00'),
+        )
+
+        self._post_webhook('checkout.session.completed', {
+            'id': 'cs_test_link_tx',
+            'payment_status': 'paid',
+            'amount_total': 2500,
+            'metadata': {'purchase_type': 'credit_purchase', 'org_id': organisation.clerk_org_id},
+        })
+
+        purchase = CreditPurchase.objects.get(stripe_checkout_session_id='cs_test_link_tx')
+        assert purchase.credit_transaction.transaction_type == 'grant'
+        assert purchase.credit_transaction.amount == Decimal('25.00')
+
+    def test_checkout_completed_rejects_amount_mismatch(self, db, organisation):
+        """A session whose amount_total disagrees with the purchase must not grant credits."""
+        CreditPurchase.objects.create(
+            organisation=organisation,
+            stripe_checkout_session_id='cs_test_tampered',
+            amount=Decimal('10.00'),
+        )
+        initial_balance = get_balance(organisation)
+
+        self._post_webhook('checkout.session.completed', {
+            'id': 'cs_test_tampered',
+            'payment_status': 'paid',
+            'amount_total': 100,  # paid $1.00, purchase says $10.00
+            'metadata': {'purchase_type': 'credit_purchase', 'org_id': organisation.clerk_org_id},
+        })
+
+        purchase = CreditPurchase.objects.get(stripe_checkout_session_id='cs_test_tampered')
+        assert purchase.status == CreditPurchase.STATUS_PENDING  # untouched
+        assert get_balance(organisation) == initial_balance  # nothing granted
+
     def test_checkout_completed_links_stripe_customer(self, db, organisation):
         """checkout.session.completed links Stripe customer ID if org doesn't have one."""
         assert organisation.billing_customer_id is None

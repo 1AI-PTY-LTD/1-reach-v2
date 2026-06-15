@@ -34,6 +34,17 @@ class Organisation(models.Model):
         (BILLING_PAST_DUE, 'Past Due'),
     ]
 
+    # Who put the org into past_due: the Clerk subscription fee or a Stripe
+    # metered invoice. Each source may only be cleared by its own "paid" signal —
+    # an invoice.paid webhook must not un-block an org whose Clerk subscription
+    # fee is still unpaid, and vice versa.
+    PAST_DUE_SOURCE_CLERK = 'clerk'
+    PAST_DUE_SOURCE_STRIPE_INVOICE = 'stripe_invoice'
+    PAST_DUE_SOURCE_CHOICES = [
+        (PAST_DUE_SOURCE_CLERK, 'Clerk subscription'),
+        (PAST_DUE_SOURCE_STRIPE_INVOICE, 'Stripe invoice'),
+    ]
+
     clerk_org_id = models.CharField(max_length=255, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, blank=True)
@@ -42,6 +53,13 @@ class Organisation(models.Model):
     is_active = models.BooleanField(default=True)
     credit_balance = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     billing_mode = models.CharField(max_length=20, choices=BILLING_MODE_CHOICES, default=BILLING_PREPAID)
+    past_due_source = models.CharField(
+        max_length=20, choices=PAST_DUE_SOURCE_CHOICES, null=True, blank=True,
+    )
+    # updated_at of the last applied Clerk billing event. Svix delivers
+    # unordered, so a delayed subscription.updated(active) could otherwise
+    # overwrite a newer past_due state; events older than this are skipped.
+    billing_event_at = models.DateTimeField(null=True, blank=True)
     billing_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
 
     class Meta:
@@ -196,6 +214,11 @@ class Schedule(TenantModel, AuditMixin):
     retry_count = models.PositiveSmallIntegerField(default=0)
     max_retries = models.PositiveSmallIntegerField(default=3)
     next_retry_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    # Committed immediately before each provider HTTP call. Crash recovery uses
+    # it to distinguish "worker died before calling the provider" (safe to
+    # re-send) from "send outcome unknown" (must not blindly re-send — risk of
+    # duplicate SMS delivery). Cleared when the task transitions to PROCESSING.
+    dispatch_attempted_at = models.DateTimeField(blank=True, null=True)
     failure_category = models.CharField(
         max_length=40, choices=FailureCategory.choices, blank=True, null=True
     )
@@ -209,6 +232,10 @@ class Schedule(TenantModel, AuditMixin):
             models.Index(fields=['scheduled_time', 'status']),
             models.Index(fields=['contact', 'status', '-scheduled_time'], name='schedule_contact_status_desc'),
             models.Index(fields=['status', 'scheduled_time'], name='schedule_status_time_idx'),
+            # The schedule list UI: org-scoped, optionally status-filtered,
+            # ordered by newest first. The FK index alone forces a sort.
+            models.Index(fields=['organisation', 'status', '-scheduled_time'],
+                         name='schedule_org_status_desc'),
         ]
 
     def __str__(self):
@@ -250,6 +277,14 @@ class CreditTransaction(TenantModel, AuditMixin):
         related_name='credit_transactions'
     )
     unit_rate = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    # For REFUND rows: the DEDUCT/USAGE charge this refund reverses. The one-to-one
+    # constraint guarantees each charge is refunded at most once at the DB level,
+    # while still allowing a schedule that is re-charged on manual retry to be
+    # refunded again if the retry also fails.
+    refunded_transaction = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='refund',
+    )
 
     class Meta:
         db_table = 'credit_transactions'
@@ -257,6 +292,31 @@ class CreditTransaction(TenantModel, AuditMixin):
 
     def __str__(self):
         return f'{self.transaction_type} ${self.amount} for {self.organisation}'
+
+
+class WebhookEvent(models.Model):
+    """Processed webhook event ids, for replay/duplicate suppression.
+
+    Inserted in the same transaction as the event's side effects: a failed
+    handler rolls the row back (so provider retries reprocess), while a
+    concurrent or replayed delivery hits the unique constraint and is skipped.
+    """
+    PROVIDER_CLERK = 'clerk'
+    PROVIDER_STRIPE = 'stripe'
+
+    provider = models.CharField(max_length=20)
+    event_id = models.CharField(max_length=255)
+    event_type = models.CharField(max_length=100, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'webhook_events'
+        constraints = [
+            models.UniqueConstraint(fields=['provider', 'event_id'], name='uniq_webhook_provider_event'),
+        ]
+
+    def __str__(self):
+        return f'{self.provider}:{self.event_id}'
 
 
 class Invoice(TenantModel, AuditMixin):

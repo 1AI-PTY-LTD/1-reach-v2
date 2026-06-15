@@ -128,7 +128,15 @@ class TestClerkJWTAuthenticationOrgExtraction:
         assert request._request.org_id is None
 
     def test_handles_nonexistent_org(self):
-        """Org ID in JWT but org not in DB sets org to None."""
+        """Org ID in JWT but org not in DB fails fast with a clear message.
+
+        Regression test: this previously proceeded with org_id set but
+        org=None, producing confusing view-specific failures instead of a
+        clear "not synced yet" 401.
+        """
+        import pytest
+        from rest_framework.exceptions import AuthenticationFailed
+
         user = UserFactory(clerk_id='user_test5')
 
         payload = {
@@ -140,10 +148,8 @@ class TestClerkJWTAuthenticationOrgExtraction:
         request = _make_request_with_token()
         with _mock_jwt_decode(payload):
             auth = ClerkJWTAuthentication()
-            auth.authenticate(request)
-
-        assert request._request.org_id == 'org_nonexistent'
-        assert request._request.org is None
+            with pytest.raises(AuthenticationFailed, match='not synced'):
+                auth.authenticate(request)
 
     def test_no_bearer_token_returns_none(self):
         """Request without Bearer token returns None (no auth attempted)."""

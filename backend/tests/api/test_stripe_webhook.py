@@ -40,6 +40,27 @@ def org_with_invoice(db):
 @pytest.mark.django_db
 class TestStripeWebhookView:
     @patch('app.utils.stripe.get_billing_provider')
+    def test_invalid_signature_rejected_with_no_side_effects(self, mock_get_provider, webhook_client, org_with_invoice):
+        """A signature verification failure returns 400 and processes nothing."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.side_effect = stripe.SignatureVerificationError(
+            'bad signature', 'sig_forged',
+        )
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{"type": "invoice.paid", "data": {"object": {"id": "inv_test_123"}}}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_forged',
+        )
+
+        assert response.status_code == 400
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_OPEN  # untouched
+
+    @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_paid_updates_status(self, mock_get_provider, webhook_client, org_with_invoice):
         org, invoice = org_with_invoice
         mock_provider = Mock()
@@ -59,6 +80,35 @@ class TestStripeWebhookView:
         assert response.status_code == 200
         invoice.refresh_from_db()
         assert invoice.status == Invoice.STATUS_PAID
+
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_duplicate_event_id_processed_once(self, mock_get_provider, webhook_client, org_with_invoice):
+        """Stripe retries (same event.id) must not re-run handlers."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'id': 'evt_dedup_1',
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        first = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+        # Flip the invoice back to OPEN to detect any re-processing
+        Invoice.objects.filter(pk=invoice.pk).update(status=Invoice.STATUS_OPEN)
+        second = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.data.get('duplicate') is True
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_OPEN  # duplicate did not re-run
 
     @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_paid_restores_subscribed_from_past_due(self, mock_get_provider, webhook_client, org_with_invoice):
@@ -83,6 +133,92 @@ class TestStripeWebhookView:
         assert response.status_code == 200
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_invoice_paid_does_not_clear_clerk_set_past_due(self, mock_get_provider, webhook_client, org_with_invoice):
+        """A paid metered invoice must not un-block past_due set by Clerk.
+
+        Regression test: the restore logic only checked our Invoice table, so an
+        org blocked for an unpaid Clerk subscription fee was wrongly restored
+        when any unrelated metered invoice was paid.
+        """
+        org, invoice = org_with_invoice
+        Organisation.objects.filter(pk=org.pk).update(
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
+        )
+
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert response.status_code == 200
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_PAID  # invoice itself is settled
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE  # still blocked
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_CLERK
+
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_invoice_payment_failed_records_stripe_source(self, mock_get_provider, webhook_client, org_with_invoice):
+        """invoice.payment_failed marks past_due as Stripe-sourced so only invoice.paid clears it."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'type': 'invoice.payment_failed',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert response.status_code == 200
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_invoice_paid_clears_stripe_set_past_due_and_source(self, mock_get_provider, webhook_client, org_with_invoice):
+        """invoice.paid restores Stripe-sourced past_due and resets the source."""
+        org, invoice = org_with_invoice
+        Organisation.objects.filter(pk=org.pk).update(
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE,
+        )
+
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        response = webhook_client.post(
+            '/api/webhooks/stripe/',
+            data=b'{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert response.status_code == 200
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+        assert org.past_due_source is None
 
     @patch('app.utils.stripe.get_billing_provider')
     def test_invoice_paid_keeps_past_due_when_other_invoices_unpaid(self, mock_get_provider, webhook_client, org_with_invoice):
@@ -244,6 +380,7 @@ class TestStripeWebhookView:
         """Regression: parse_webhook converts StripeObject to plain dict."""
         org, invoice = org_with_invoice
         mock_event = Mock()
+        mock_event.id = 'evt_stripe_obj_1'
         mock_event.type = 'invoice.paid'
         mock_event.data.object = stripe.StripeObject.construct_from(
             {'id': 'inv_test_123'}, key=None,

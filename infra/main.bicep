@@ -172,7 +172,10 @@ var sharedEnv = [
   { name: 'CLERK_AUTHORIZED_PARTIES', value: CLERK_AUTHORIZED_PARTIES }
 
   // Networking
-  { name: 'ALLOWED_HOSTS', value: ALLOWED_HOSTS }
+  // The ACA environment's default domain is appended as a wildcard suffix so
+  // revision-specific FQDNs (used by the zero-downtime smoke test) pass
+  // Django's host validation.
+  { name: 'ALLOWED_HOSTS', value: '${ALLOWED_HOSTS},.${acaEnv.outputs.defaultDomain}' }
   { name: 'CORS_ALLOWED_ORIGINS', value: CORS_ALLOWED_ORIGINS }
 
   // Storage
@@ -233,6 +236,11 @@ module api 'modules/container-app.bicep' = {
     ingressEnabled: true
     ingressExternal: true
     targetPort: 8000
+    // Prod only: Multiple-revision mode lets deploy-prod.yml smoke-test the new
+    // revision at 0% traffic before shifting. Dev stays Single (no traffic step
+    // in deploy-dev.yml), so its deploy replaces the active revision and serves
+    // it immediately — keeping dev infra simple.
+    activeRevisionsMode: ENVIRONMENT_NAME == 'prod' ? 'Multiple' : 'Single'
     secrets: secrets
     env: union(sharedEnv, [
       { name: 'CONTAINER_ROLE', value: 'api' }
@@ -270,6 +278,10 @@ module worker 'modules/container-app.bicep' = {
       { name: 'DB_POOL_MIN_SIZE', value: '1' }
       { name: 'DB_POOL_MAX_SIZE', value: '4' }
     ])
+    // NOTE: without a scale rule, a no-ingress app stays at minReplicas, so
+    // WORKER_MAX_REPLICAS currently has no effect. Deliberately left without
+    // a rule to keep replica count (and cost) fixed; add a CPU or Redis
+    // queue-length KEDA rule here if send volume ever needs elastic workers.
   }
 }
 

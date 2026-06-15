@@ -10,7 +10,7 @@ import json
 
 from clerk_backend_api import Clerk
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.db.models import Count, OuterRef, Subquery, Sum
 from django.db.models.functions import TruncMonth
@@ -40,11 +40,29 @@ from app.utils.sms import get_sms_provider
 logger = logging.getLogger(__name__)
 
 
+def _allowed_alphanumeric_senders(org) -> list:
+    """Parse the org's allowed sender-ID list, tolerating malformed config.
+
+    The Config value is free-form text editable via the configs API — a bad
+    value must read as "no senders allowed", not crash sends with a 500.
+    """
+    config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
+    if not config:
+        return []
+    try:
+        allowed = json.loads(config.value)
+    except (TypeError, ValueError):
+        logger.warning(
+            'allowed_alphanumeric_senders config for org %s is not valid JSON — treating as empty',
+            org.clerk_org_id,
+        )
+        return []
+    return allowed if isinstance(allowed, list) else []
+
+
 def _validate_alphanumeric_sender(org, alphanumeric_sender):
     """Validate that the alphanumeric sender is in the org's allowed list."""
-    config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
-    allowed = json.loads(config.value) if config else []
-    if alphanumeric_sender not in allowed:
+    if alphanumeric_sender not in _allowed_alphanumeric_senders(org):
         raise ValidationError('Alphanumeric sender not permitted for this organisation.')
 
 
@@ -171,6 +189,7 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
 class ClerkWebhookView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = []  # Svix retries must never be rate limited
 
     def post(self, request):
         if settings.TEST:
@@ -199,11 +218,30 @@ class ClerkWebhookView(APIView):
         logger.info('Clerk webhook: type=%s data_keys=%s', event_type, list(data.keys()))
 
         handler = clerk.WEBHOOK_HANDLERS.get(event_type)
-        if handler:
-            handler(data)
-            logger.info('Processed Clerk webhook event: %s', event_type)
-        else:
+        if not handler:
             logger.warning('Unhandled Clerk webhook event: %s', event_type)
+            return Response({'status': 'ok'})
+
+        # Dedup on the svix message id (stable across Svix's at-least-once
+        # retries). The marker row commits atomically with the handler's side
+        # effects: a failed handler rolls it back so the retry reprocesses,
+        # while a duplicate delivery hits the unique constraint and is skipped.
+        svix_id = request.headers.get('svix-id', '')
+        with transaction.atomic():
+            if svix_id:
+                try:
+                    with transaction.atomic():
+                        WebhookEvent.objects.create(
+                            provider=WebhookEvent.PROVIDER_CLERK,
+                            event_id=svix_id,
+                            event_type=event_type or '',
+                        )
+                except IntegrityError:
+                    logger.info('Clerk webhook %s already processed — skipping duplicate', svix_id)
+                    return Response({'status': 'ok', 'duplicate': True})
+
+            handler(data)
+        logger.info('Processed Clerk webhook event: %s', event_type)
 
         return Response({'status': 'ok'})
 
@@ -216,6 +254,7 @@ class SMSDeliveryWebhookView(APIView):
     """
     authentication_classes = []
     permission_classes = [AllowAny]
+    throttle_classes = []  # batch sends produce per-recipient callback bursts
 
     def post(self, request):
         provider = get_sms_provider()
@@ -261,9 +300,25 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         serializer = ScheduleSerializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
+    # Hard ceiling on rows per import: a 5 MB CSV can hold ~250k rows, which
+    # would tie up a gunicorn worker and the DB for minutes. 10k keeps a
+    # single request comfortably bounded; larger lists import in batches.
+    IMPORT_MAX_ROWS = 10_000
+
     @action(detail=False, methods=['post'], url_path='import', throttle_classes=[ImportThrottle])
     def import_contacts(self, request):
-        """POST /api/contacts/import/ — bulk import contacts from a CSV file."""
+        """POST /api/contacts/import/ — bulk import contacts from a CSV file.
+
+        Expected CSV format (matches the guidance shown in the upload UI):
+          - UTF-8 encoded, comma-separated, with a header row
+          - Required column: ``phone`` — Australian mobile, ``04XXXXXXXX`` or
+            ``+614XXXXXXXX`` (spaces tolerated, normalised to ``04…``)
+          - Optional columns: ``first_name``, ``last_name`` (each truncated
+            to 100 characters); other columns are ignored
+          - Limits: 5 MB file size, 10,000 data rows per import
+          - Rows with invalid phones or numbers that already exist in the org
+            are skipped and reported back in ``error_records`` (HTTP 207)
+        """
         org = getattr(request, 'org', None)
         if not org:
             return Response({'detail': 'Organisation required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -293,7 +348,13 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
         error_records = []
         to_create = []
 
-        for row in reader:
+        for row_number, row in enumerate(reader, start=1):
+            if row_number > self.IMPORT_MAX_ROWS:
+                return Response(
+                    {'detail': f'CSV has too many rows — at most {self.IMPORT_MAX_ROWS:,} '
+                               'contacts can be imported per file. Split the file and retry.'},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                )
             first_name = (row.get('first_name') or '').strip()[:100]
             last_name = (row.get('last_name') or '').strip()[:100]
             phone_raw = row.get('phone', '')
@@ -361,14 +422,8 @@ class ContactGroupViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelView
             member_count=Count('contactgroupmember'),
         ).order_by('name')
 
-    def perform_create(self, serializer):
-        super().perform_create(serializer)
-        member_ids = serializer.validated_data.get('member_ids', [])
-        if member_ids:
-            group = serializer.instance
-            contacts = Contact.objects.filter(id__in=member_ids, organisation=group.organisation)
-            members = [ContactGroupMember(contact=c, group=group) for c in contacts]
-            ContactGroupMember.objects.bulk_create(members, ignore_conflicts=True)
+    # Member creation from member_ids lives in ContactGroupSerializer.create
+    # (atomic with the group row) — no view-level duplication.
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -439,23 +494,104 @@ class ScheduleViewSet(TenantScopedMixin, viewsets.ModelViewSet):
     filterset_class = ScheduleFilter
     http_method_names = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']
 
+    def perform_create(self, serializer):
+        """Gate scheduled sends on billing and reserve prepaid credits up front.
+
+        Mirrors group-schedule creation: prepaid orgs are charged at creation so
+        the balance reflects committed sends; subscribed orgs are charged by the
+        Celery task on successful send. message_parts is always computed
+        server-side from the text — never trusted from the client.
+        """
+        org = getattr(self.request, 'org', None)
+        if not org:
+            raise ValidationError('Organisation required.')
+
+        fmt = serializer.validated_data.get('format') or MessageFormat.SMS
+        text = serializer.validated_data.get('text') or ''
+        message_parts = _estimate_parts(text, fmt)
+
+        # Spam Act: never schedule sends to recipients who have opted out
+        # (also re-checked at send time, in case they opt out later).
+        phone = serializer.validated_data.get('phone') or ''
+        if phone and Contact.objects.filter(
+            organisation=org, phone=phone, opt_out=True,
+        ).exists():
+            raise ValidationError('Recipient has opted out of receiving messages.')
+
+        can_send, error = check_can_send(org, units=message_parts, format=fmt)
+        if not can_send:
+            raise ValidationError(error)
+
+        serializer.validated_data['message_parts'] = message_parts
+        with transaction.atomic():
+            super().perform_create(serializer)
+            if org.billing_mode == org.BILLING_PREPAID:
+                schedule = serializer.instance
+                record_usage(
+                    org, message_parts, format=fmt,
+                    description=f'{fmt.upper()} to {schedule.phone} (scheduled)',
+                    user=self.request.user, schedule=schedule,
+                )
+
+    def perform_update(self, serializer):
+        """Re-price a pending schedule when its text or format changes.
+
+        The prepaid reservation made at creation is swapped (refund + re-charge)
+        so the org is charged for exactly what will be sent, and the new cost is
+        re-gated against balance and the monthly limit.
+        """
+        org = getattr(self.request, 'org', None)
+        if not org:
+            raise ValidationError('Organisation required.')
+
+        schedule = serializer.instance
+        fmt = serializer.validated_data.get('format', schedule.format) or MessageFormat.SMS
+        text = serializer.validated_data.get('text', schedule.text) or ''
+        new_parts = _estimate_parts(text, fmt)
+
+        if new_parts == schedule.message_parts and fmt == (schedule.format or MessageFormat.SMS):
+            super().perform_update(serializer)
+            return
+
+        serializer.validated_data['message_parts'] = new_parts
+        with transaction.atomic():
+            if org.billing_mode == org.BILLING_PREPAID:
+                refund_usage(org, schedule, description='Refund: schedule re-priced')
+            can_send, error = check_can_send(org, units=new_parts, format=fmt)
+            if not can_send:
+                raise ValidationError(error)
+            super().perform_update(serializer)
+            if org.billing_mode == org.BILLING_PREPAID:
+                record_usage(
+                    org, new_parts, format=fmt,
+                    description=f'{fmt.upper()} to {schedule.phone} (re-priced)',
+                    user=self.request.user, schedule=schedule,
+                )
+
     def perform_destroy(self, instance):
         """Soft delete by setting status=CANCELLED (v1 used DELETED, v2 uses CANCELLED)."""
         # Only allow deleting PENDING schedules
         if instance.status != ScheduleStatus.PENDING:
             raise ValidationError(f'Cannot delete schedule - only {ScheduleStatus.PENDING} schedules can be deleted')
 
-        instance.status = ScheduleStatus.CANCELLED
-        instance.updated_by = self.request.user
-        instance.save(update_fields=['status', 'updated_by'])
+        with transaction.atomic():
+            instance.status = ScheduleStatus.CANCELLED
+            instance.updated_by = self.request.user
+            instance.save(update_fields=['status', 'updated_by'])
+            # Release the prepaid reservation (no-op when nothing was charged)
+            org = getattr(self.request, 'org', None)
+            if org:
+                refund_usage(org, instance, description='Refund: schedule cancelled')
 
     @action(detail=True, methods=['get'], url_path='recipients')
     def recipients(self, request, pk=None):
         """GET /api/schedules/{id}/recipients/ — list child schedules for a batch parent."""
         parent = self.get_object()
+        # select both FKs the serializer nests (contact_detail, group_detail) —
+        # group sends set group on every child, so missing it is one query per row
         children = Schedule.objects.filter(
             parent=parent,
-        ).select_related('contact').order_by('id')
+        ).select_related('contact', 'group').order_by('id')
         serializer = ScheduleSerializer(children, many=True)
         return Response(serializer.data)
 
@@ -693,6 +829,11 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
             else:
                 update_fields['template'] = None
 
+        # Recompute message_parts when the effective text changes — the part count
+        # drives billing and what the provider actually sends.
+        new_text = update_fields.get('text', parent.text) or ''
+        new_parts = _estimate_parts(new_text, MessageFormat.SMS)
+
         # Update parent and propagate relevant fields to pending children
         with transaction.atomic():
             for field, value in update_fields.items():
@@ -709,6 +850,32 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                     parent=parent, status=ScheduleStatus.PENDING,
                 ).update(**child_fields)
 
+            if org and new_parts != parent.message_parts:
+                # Swap the prepaid reservation and re-gate at the new cost.
+                # All children are PENDING here (guarded above).
+                children_qs = Schedule.objects.filter(parent=parent)
+                if org.billing_mode == org.BILLING_PREPAID:
+                    for child in children_qs:
+                        refund_usage(org, child, description='Refund: schedule re-priced')
+
+                can_send, error = check_can_send(org, units=children_qs.count() * new_parts, format='sms')
+                if not can_send:
+                    transaction.set_rollback(True)
+                    return Response({'detail': error}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
+                parent.message_parts = new_parts
+                parent.save(update_fields=['message_parts'])
+                children_qs.update(message_parts=new_parts)
+
+                if org.billing_mode == org.BILLING_PREPAID:
+                    group_name = parent.group.name if parent.group else ''
+                    for child in children_qs:
+                        record_usage(
+                            org, new_parts, format='sms',
+                            description=f"SMS to group '{group_name}' (re-priced)",
+                            user=request.user, schedule=child,
+                        )
+
         parent.refresh_from_db()
         resp = ScheduleSerializer(parent).data
         children = Schedule.objects.filter(parent=parent).select_related('contact')
@@ -718,6 +885,28 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
     def partial_update(self, request, pk=None):
         """PATCH /api/group-schedules/{id}/ - same as update."""
         return self.update(request, pk)
+
+    def _cancel_and_refund(self, request, parent):
+        """Cancel parent + pending children atomically and release prepaid reservations.
+
+        Shared by the cancel action and destroy — both must refund the credits
+        reserved per child at creation (refund_usage is a no-op for children
+        that were never charged, e.g. subscribed orgs).
+        """
+        org = getattr(request, 'org', None)
+        with transaction.atomic():
+            pending_children = list(
+                Schedule.objects.filter(parent=parent, status=ScheduleStatus.PENDING)
+            )
+            Schedule.objects.filter(
+                parent=parent, status=ScheduleStatus.PENDING,
+            ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
+            parent.status = ScheduleStatus.CANCELLED
+            parent.updated_by = request.user
+            parent.save()
+
+            for child in pending_children:
+                refund_usage(org, child, description='Refund: schedule cancelled')
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -732,15 +921,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cancel the parent and all pending children atomically
-        with transaction.atomic():
-            Schedule.objects.filter(
-                parent=parent, status=ScheduleStatus.PENDING,
-            ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
-            parent.status = ScheduleStatus.CANCELLED
-            parent.updated_by = request.user
-            parent.save()
-
+        self._cancel_and_refund(request, parent)
         return Response({'message': 'Group schedule cancelled.'})
 
     def destroy(self, request, pk=None):
@@ -754,22 +935,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cancel the parent and all pending children atomically, then refund credits
-        org = getattr(request, 'org', None)
-        with transaction.atomic():
-            pending_children = list(
-                Schedule.objects.filter(parent=parent, status=ScheduleStatus.PENDING)
-            )
-            Schedule.objects.filter(
-                parent=parent, status=ScheduleStatus.PENDING,
-            ).update(status=ScheduleStatus.CANCELLED, updated_by=request.user)
-            parent.status = ScheduleStatus.CANCELLED
-            parent.updated_by = request.user
-            parent.save()
-
-            for child in pending_children:
-                refund_usage(org, child)
-
+        self._cancel_and_refund(request, parent)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -862,6 +1028,24 @@ class SMSViewSet(viewsets.ViewSet):
             raise NotFound('Contact not found.')
         return contact
 
+    @staticmethod
+    def _drop_opted_out(org, recipients):
+        """Remove recipients whose number has opted out (Spam Act compliance).
+
+        Returns (remaining_recipients, skipped_count); raises 400 when nobody
+        is left to send to.
+        """
+        phones = [r['phone'] for r in recipients]
+        opted_out = set(Contact.objects.filter(
+            organisation=org, opt_out=True, phone__in=phones,
+        ).values_list('phone', flat=True))
+        if not opted_out:
+            return recipients, 0
+        remaining = [r for r in recipients if r['phone'] not in opted_out]
+        if not remaining:
+            raise ValidationError('All recipients have opted out of receiving messages.')
+        return remaining, len(recipients) - len(remaining)
+
     def _dispatch_single(self, org, recipient, message, request, *,
                          format_type, message_parts, media_url=None, subject=None,
                          alphanumeric_sender=None):
@@ -949,11 +1133,13 @@ class SMSViewSet(viewsets.ViewSet):
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
 
-        can_send, error = check_can_send(org, units=len(recipients), format='sms')
+        recipients, skipped_opt_out = self._drop_opted_out(org, recipients)
+
+        # Gate on the full cost: each recipient is charged message_parts units
+        message_parts = _estimate_parts(data['message'], 'sms')
+        can_send, error = check_can_send(org, units=len(recipients) * message_parts, format='sms')
         if not can_send:
             raise ValidationError(error)
-
-        message_parts = _estimate_parts(data['message'], 'sms')
 
         if len(recipients) == 1:
             return self._dispatch_single(
@@ -977,6 +1163,7 @@ class SMSViewSet(viewsets.ViewSet):
             'message': f'SMS queued for {len(recipients)} recipients',
             'parent_schedule_id': parent.pk,
             'total': len(recipients),
+            'skipped_opted_out': skipped_opt_out,
         }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='send-to-group', throttle_classes=[SMSThrottle])
@@ -1003,11 +1190,12 @@ class SMSViewSet(viewsets.ViewSet):
             raise ValidationError('No eligible contacts found in group.')
 
         member_count = len(contacts)
-        can_send, error = check_can_send(org, units=member_count, format='sms')
+        # Gate on the full cost: each member is charged message_parts units
+        message_parts = _estimate_parts(data['message'], 'sms')
+        can_send, error = check_can_send(org, units=member_count * message_parts, format='sms')
         if not can_send:
             raise ValidationError(error)
 
-        message_parts = _estimate_parts(data['message'], 'sms')
         members = [{'phone': c.phone, 'contact': c} for c in contacts]
         parent = self._dispatch_batch(
             org, members, data['message'], request,
@@ -1045,6 +1233,8 @@ class SMSViewSet(viewsets.ViewSet):
         if alphanumeric_sender:
             _validate_alphanumeric_sender(org, alphanumeric_sender)
 
+        recipients, skipped_opt_out = self._drop_opted_out(org, recipients)
+
         can_send, error = check_can_send(org, units=len(recipients), format='mms')
         if not can_send:
             raise ValidationError(error)
@@ -1076,6 +1266,7 @@ class SMSViewSet(viewsets.ViewSet):
             'message': f'MMS queued for {len(recipients)} recipients',
             'parent_schedule_id': parent.pk,
             'total': len(recipients),
+            'skipped_opted_out': skipped_opt_out,
         }, status=status.HTTP_202_ACCEPTED)
 
     @action(detail=False, methods=['post'], url_path='upload-file')
@@ -1111,9 +1302,7 @@ class SMSViewSet(viewsets.ViewSet):
     def alphanumeric_senders(self, request):
         """GET /api/sms/alphanumeric-senders/ — list allowed alphanumeric senders for the org."""
         org = self._get_org(request)
-        config = Config.objects.filter(organisation=org, name='allowed_alphanumeric_senders').first()
-        senders = json.loads(config.value) if config else []
-        return Response({'alphanumeric_senders': senders})
+        return Response({'alphanumeric_senders': _allowed_alphanumeric_senders(org)})
 
 
 class BillingViewSet(TenantScopedMixin, viewsets.GenericViewSet):

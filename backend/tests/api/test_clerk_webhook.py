@@ -24,6 +24,123 @@ def mock_webhook_verify(body, headers):
 
 
 @pytest.mark.django_db
+class TestClerkWebhookSignature:
+    """Signature verification outside TEST mode — previously untested.
+
+    The endpoint must reject forged payloads: a signature failure returns 400
+    and produces no side effects.
+    """
+
+    _payload = {
+        'type': 'organization.created',
+        'data': {'id': 'org_forged', 'name': 'Forged Org', 'slug': 'forged'},
+    }
+
+    @override_settings(TEST=False, CLERK_WEBHOOK_SIGNING_SECRET='whsec_dGVzdA==')
+    @patch('svix.Webhook.verify')
+    def test_invalid_signature_rejected_with_no_side_effects(self, mock_verify, api_client):
+        from svix.webhooks import WebhookVerificationError
+        mock_verify.side_effect = WebhookVerificationError('bad signature')
+
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(self._payload),
+            content_type='application/json',
+            HTTP_SVIX_ID='msg_forged',
+            HTTP_SVIX_TIMESTAMP='1700000000',
+            HTTP_SVIX_SIGNATURE='v1,forged',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Organisation.objects.filter(clerk_org_id='org_forged').exists()
+
+    @override_settings(TEST=False, CLERK_WEBHOOK_SIGNING_SECRET='whsec_dGVzdA==')
+    def test_missing_signature_headers_rejected(self, api_client):
+        """Absent svix headers must fail verification, not be processed."""
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(self._payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Organisation.objects.filter(clerk_org_id='org_forged').exists()
+
+    @override_settings(TEST=False, CLERK_WEBHOOK_SIGNING_SECRET='')
+    def test_missing_signing_secret_returns_500(self, api_client):
+        """An unconfigured secret must fail closed, never skip verification."""
+        response = api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(self._payload),
+            content_type='application/json',
+        )
+
+        assert response.status_code == 500
+        assert not Organisation.objects.filter(clerk_org_id='org_forged').exists()
+
+
+@pytest.mark.django_db
+class TestClerkWebhookDedup:
+    """Replay/duplicate suppression on the svix message id."""
+
+    def _post(self, api_client, payload, svix_id):
+        return api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            HTTP_SVIX_ID=svix_id,
+        )
+
+    @patch('svix.Webhook.verify')
+    def test_duplicate_delivery_processed_once(self, mock_verify, api_client):
+        """Svix retries (same svix-id) must not re-run side effects like credit grants."""
+        mock_verify.side_effect = mock_webhook_verify
+        payload = {
+            'type': 'organization.created',
+            'data': {'id': 'org_dedup_1', 'name': 'Dedup Org', 'slug': 'dedup-org'},
+        }
+
+        first = self._post(api_client, payload, 'msg_dedup_1')
+        second = self._post(api_client, payload, 'msg_dedup_1')
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_200_OK
+        assert second.data.get('duplicate') is True
+        org = Organisation.objects.get(clerk_org_id='org_dedup_1')
+        # Free signup credits granted exactly once
+        grant = org.credittransaction_set.get(transaction_type='grant')
+        assert org.credit_balance == grant.amount
+
+    @patch('svix.Webhook.verify')
+    def test_failed_handler_rolls_back_dedup_so_retry_reprocesses(self, mock_verify, api_client):
+        """A 422 (deferred) delivery must remain retryable — the dedup row rolls back."""
+        mock_verify.side_effect = mock_webhook_verify
+        # membership for an unknown user → handler raises WebhookProcessingError (422)
+        payload = {
+            'type': 'organizationMembership.created',
+            'data': {
+                'public_user_data': {'user_id': 'user_not_synced_yet'},
+                'organization': {'id': 'org_dedup_2', 'name': 'Org', 'slug': 'org'},
+                'role': 'member',
+            },
+        }
+
+        first = self._post(api_client, payload, 'msg_dedup_2')
+        assert first.status_code == 422
+
+        # User arrives, Svix redelivers the same message id — must be processed
+        UserFactory(clerk_id='user_not_synced_yet')
+        retry = self._post(api_client, payload, 'msg_dedup_2')
+
+        assert retry.status_code == status.HTTP_200_OK
+        assert retry.data.get('duplicate') is None
+        assert OrganisationMembership.objects.filter(
+            user__clerk_id='user_not_synced_yet',
+            organisation__clerk_org_id='org_dedup_2',
+        ).exists()
+
+
+@pytest.mark.django_db
 class TestClerkWebhook:
     """Tests for POST /api/webhooks/clerk/ endpoint."""
 

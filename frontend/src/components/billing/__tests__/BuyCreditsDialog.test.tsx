@@ -119,6 +119,24 @@ describe('BuyCreditsDialog', () => {
     })
   })
 
+  it('refuses to navigate to a non-stripe checkout url', async () => {
+    server.use(
+      http.post('http://localhost:8000/api/billing/buy-credits/', () =>
+        HttpResponse.json({ checkout_url: 'https://evil.example.com/pay' }, { status: 200 })
+      )
+    )
+
+    const user = userEvent.setup()
+    renderWithProviders(<BuyCreditsDialog open={true} onClose={onClose} />)
+
+    await user.click(screen.getByText('$25'))
+    await user.click(screen.getByRole('button', { name: /Purchase \$25/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/unexpected checkout URL/i)).toBeInTheDocument()
+    })
+  })
+
   it('does not render when closed', () => {
     renderWithProviders(<BuyCreditsDialog open={false} onClose={onClose} />)
     expect(screen.queryByText('Buy Credits')).not.toBeInTheDocument()

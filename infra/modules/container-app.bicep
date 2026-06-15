@@ -16,8 +16,17 @@ param ingressExternal bool = false
 param targetPort int = 8000
 param secrets array = []
 param env array = []
+// NOTE: worker/beat run no HTTP server and ACA supports only HTTP/TCP probes
+// (no exec probes), so they intentionally have no healthProbePath. A crashed
+// process exits and ACA restarts the container; "alive but hung" is bounded
+// by Celery task time limits and surfaced via Sentry.
 param healthProbePath string = ''
 param customDomains array = []
+// 'Multiple' enables zero-downtime deploys for ingress apps: a new revision
+// starts at 0% traffic, the deploy workflow smoke-tests its revision FQDN,
+// then shifts traffic and deactivates the old revision. Worker/beat stay
+// 'Single' (no ingress; their safety is acks_late + crash recovery).
+param activeRevisionsMode string = 'Single'
 
 resource app 'Microsoft.App/containerApps@2025-01-01' = {
   name: appName
@@ -31,7 +40,7 @@ resource app 'Microsoft.App/containerApps@2025-01-01' = {
   properties: {
     managedEnvironmentId: environmentId
     configuration: {
-      activeRevisionsMode: 'Single'
+      activeRevisionsMode: activeRevisionsMode
       registries: [
         {
           server: acrLoginServer

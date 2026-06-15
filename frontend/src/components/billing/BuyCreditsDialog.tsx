@@ -3,6 +3,7 @@ import { Dialog, DialogBody, DialogTitle } from '../../ui/dialog'
 import { Button } from '../../ui/button'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import { buyCredits } from '../../api/billingApi'
+import { isTrustedStripeUrl } from '../../utils/trustedUrls'
 
 const PRESETS = [10, 25, 50, 100, 500, 1000]
 
@@ -40,6 +41,10 @@ export function BuyCreditsDialog({
     setError(null)
     try {
       const result = await buyCredits(client, amount)
+      // Never navigate a billing flow to an unexpected host
+      if (!isTrustedStripeUrl(result.checkout_url)) {
+        throw new Error('Received an unexpected checkout URL — please contact support.')
+      }
       window.location.href = result.checkout_url
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start checkout')

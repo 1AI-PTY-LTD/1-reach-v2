@@ -18,8 +18,11 @@ from datetime import datetime
 from decimal import Decimal
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.db import transaction as db_transaction
-from django.db.models import F, Sum
+from django.db.models import Case, F, Sum, When
+
+from rest_framework.exceptions import APIException
 
 from app.models import CreditTransaction, Config
 from app.utils.metered_billing import InvoiceLineItem
@@ -29,20 +32,34 @@ logger = logging.getLogger(__name__)
 ADELAIDE_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
 
 
+class InsufficientBalanceError(APIException):
+    """Raised when a prepaid deduction would take the balance below zero.
+
+    An APIException so view-layer callers surface it as HTTP 402 automatically;
+    the deduction transaction is rolled back by the surrounding atomic block.
+    """
+    status_code = 402
+    default_detail = 'Insufficient balance. Purchase more credits to continue sending.'
+
+
 def _month_start() -> datetime:
     now = datetime.now(ADELAIDE_TZ)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def grant_credits(org, amount: Decimal, description: str) -> Decimal:
-    """Add dollar credit to org balance. Always succeeds. Returns the new balance."""
+def grant_credits(org, amount: Decimal, description: str) -> CreditTransaction:
+    """Add dollar credit to org balance. Always succeeds.
+
+    Returns the GRANT transaction (its balance_after holds the new balance),
+    so callers can link it directly instead of guessing the row afterwards.
+    """
     with db_transaction.atomic():
         org.__class__.objects.filter(pk=org.pk).update(
             credit_balance=F('credit_balance') + amount
         )
         org.refresh_from_db(fields=['credit_balance'])
 
-        CreditTransaction.objects.create(
+        tx = CreditTransaction.objects.create(
             organisation=org,
             transaction_type=CreditTransaction.GRANT,
             amount=amount,
@@ -57,7 +74,7 @@ def grant_credits(org, amount: Decimal, description: str) -> Decimal:
         'Granted $%s to org %s. New balance: $%s',
         amount, org.clerk_org_id, org.credit_balance,
     )
-    return org.credit_balance
+    return tx
 
 
 def get_balance(org) -> Decimal:
@@ -83,34 +100,49 @@ def get_rate(format: str, org=None) -> Decimal:
     return Decimal(str(rate))
 
 
+def _net_spend(qs) -> Decimal:
+    """Sum charges (deduct/usage) minus refunds over a CreditTransaction queryset.
+
+    Refunded sends must not keep consuming the monthly cap — a failed message
+    that was refunded costs the org nothing, so it frees its share of the limit.
+    """
+    result = qs.filter(
+        transaction_type__in=[
+            CreditTransaction.DEDUCT, CreditTransaction.USAGE, CreditTransaction.REFUND,
+        ],
+    ).aggregate(
+        total=Sum(
+            Case(
+                When(transaction_type=CreditTransaction.REFUND, then=-F('amount')),
+                default=F('amount'),
+            )
+        )
+    )['total']
+    return result or Decimal('0.00')
+
+
 def get_monthly_usage(org, format: str) -> Decimal:
     """
-    Sum CreditTransaction dollar amounts for a given format (eg SMS) this calendar month (Adelaide TZ).
-    Covers both type=deduct and type=usage rows (not grants or refunds).
+    Net CreditTransaction dollar amounts for a given format (eg SMS) this calendar
+    month (Adelaide TZ): deduct/usage charges minus refunds.
     """
-    result = CreditTransaction.objects.filter(
+    return _net_spend(CreditTransaction.objects.filter(
         organisation=org,
         format=format,
-        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
         created_at__gte=_month_start(),
-    ).aggregate(total=Sum('amount'))['total']
-
-    return result or Decimal('0.00')
+    ))
 
 
 def get_total_monthly_spend(org) -> Decimal:
     """
-    Sum ALL CreditTransaction dollar amounts this month across all formats.
-    Covers only per-message usage charges (type=deduct or type=usage).
+    Net CreditTransaction dollar amounts this month across all formats:
+    per-message charges (type=deduct or type=usage) minus refunds.
     The flat Clerk Billing subscription fee is managed entirely by Clerk and is NOT included.
     """
-    result = CreditTransaction.objects.filter(
+    return _net_spend(CreditTransaction.objects.filter(
         organisation=org,
-        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
         created_at__gte=_month_start(),
-    ).aggregate(total=Sum('amount'))['total']
-
-    return result or Decimal('0.00')
+    ))
 
 
 def get_monthly_limit_info(org) -> dict:
@@ -174,6 +206,11 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
     trial mode:      SELECT FOR UPDATE → deduct credit_balance → INSERT type=deduct
     subscribed mode: INSERT type=usage, balance unchanged (tracked for Clerk Billing reporting)
 
+    Raises InsufficientBalanceError (HTTP 402 via DRF) if the deduction would
+    take a prepaid balance below zero. check_can_send() is an unlocked
+    pre-check, so concurrent sends near zero balance can all pass it — this
+    locked floor is what actually prevents negative balances.
+
     user: the User who initiated the send (request.user); None for system/webhook actions.
     """
     rate = get_rate(format, org)
@@ -183,6 +220,8 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
         with db_transaction.atomic():
             locked_org = org.__class__.objects.select_for_update().get(pk=org.pk)
             new_balance = locked_org.credit_balance - cost
+            if new_balance < 0:
+                raise InsufficientBalanceError()
             org.__class__.objects.filter(pk=org.pk).update(
                 credit_balance=F('credit_balance') - cost
             )
@@ -218,48 +257,51 @@ def record_usage(org, units: int, format: str, description: str, user=None, sche
     )
 
 
-def refund_usage(org, schedule) -> None:
-    """Reverse the credit charge for a failed or undelivered send.
+def refund_usage(org, schedule, description: str | None = None) -> None:
+    """Reverse the credit charge for a failed, cancelled, or undelivered send.
 
-    Idempotent: if a REFUND transaction already exists for this schedule,
-    this function is a no-op.
+    Idempotent per charge: each DEDUCT/USAGE transaction is refunded at most once
+    (REFUND rows link to the charge they reverse via refunded_transaction, enforced
+    by a one-to-one constraint). A schedule that is charged again on manual retry
+    can therefore be refunded again if the retry also fails permanently.
 
-    trial mode:      SELECT FOR UPDATE → credit_balance += amount → INSERT type=refund
-    subscribed mode: INSERT type=refund only (balance unchanged, corrects usage reporting)
+    trial mode:      SELECT FOR UPDATE org → credit_balance += amount → INSERT type=refund
+    subscribed mode: SELECT FOR UPDATE org → INSERT type=refund only (balance unchanged)
     """
-    if CreditTransaction.objects.filter(
-        organisation=org,
-        schedule=schedule,
-        transaction_type=CreditTransaction.REFUND,
-    ).exists():
-        logger.debug('refund_usage: refund already exists for schedule %d, skipping', schedule.pk)
-        return
-
-    # Find the original charge for this schedule
-    original_tx = CreditTransaction.objects.filter(
-        organisation=org,
-        schedule=schedule,
-        transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
-    ).order_by('-created_at').first()
-
-    if not original_tx:
-        logger.warning(
-            'refund_usage: no original charge found for schedule %d — nothing to refund',
-            schedule.pk,
-        )
-        return
-
-    amount = original_tx.amount
-    original_rate = original_tx.unit_rate
-    failure_category = getattr(schedule, 'failure_category', None) or 'unknown'
-    description = f'Refund: send failed ({failure_category})'
-
-    if org.billing_mode == org.BILLING_PREPAID:
+    try:
         with db_transaction.atomic():
-            org.__class__.objects.filter(pk=org.pk).update(
-                credit_balance=F('credit_balance') + amount
-            )
-            new_balance = org.__class__.objects.values_list('credit_balance', flat=True).get(pk=org.pk)
+            # Serialize concurrent refund attempts for the same org (a delivery
+            # callback and the reconciliation poll can both fail the same schedule
+            # at once). The second caller blocks here until the first commits,
+            # then re-reads and finds the charge already refunded.
+            org.__class__.objects.select_for_update().get(pk=org.pk)
+
+            # Find the most recent charge for this schedule that has not been refunded yet
+            original_tx = CreditTransaction.objects.filter(
+                organisation=org,
+                schedule=schedule,
+                transaction_type__in=[CreditTransaction.DEDUCT, CreditTransaction.USAGE],
+                refund__isnull=True,
+            ).order_by('-created_at').first()
+
+            if not original_tx:
+                logger.debug(
+                    'refund_usage: no unrefunded charge for schedule %d — nothing to refund',
+                    schedule.pk,
+                )
+                return
+
+            amount = original_tx.amount
+            original_rate = original_tx.unit_rate
+            failure_category = getattr(schedule, 'failure_category', None) or 'unknown'
+            if description is None:
+                description = f'Refund: send failed ({failure_category})'
+
+            if org.billing_mode == org.BILLING_PREPAID:
+                org.__class__.objects.filter(pk=org.pk).update(
+                    credit_balance=F('credit_balance') + amount
+                )
+            new_balance = get_balance(org)
             CreditTransaction.objects.create(
                 organisation=org,
                 transaction_type=CreditTransaction.REFUND,
@@ -270,20 +312,18 @@ def refund_usage(org, schedule) -> None:
                 schedule=schedule,
                 created_by=None,
                 unit_rate=original_rate,
+                refunded_transaction=original_tx,
             )
-    else:
-        current_balance = get_balance(org)
-        CreditTransaction.objects.create(
-            organisation=org,
-            transaction_type=CreditTransaction.REFUND,
-            amount=amount,
-            balance_after=current_balance,
-            description=description,
-            format=getattr(schedule, 'format', None),
-            schedule=schedule,
-            created_by=None,
-            unit_rate=original_rate,
+    except IntegrityError:
+        # Backstop only: callers that already hold the org lock in an outer
+        # transaction cannot race here, but if a refund for the same charge
+        # slips through anyway the one-to-one constraint on refunded_transaction
+        # rejects it and the atomic block rolls back the balance update.
+        logger.warning(
+            'refund_usage: charge for schedule %d was refunded concurrently, skipping',
+            schedule.pk,
         )
+        return
 
     logger.info(
         'Refunded $%s to org %s for failed schedule %d (%s)',

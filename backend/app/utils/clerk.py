@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime
+from datetime import timezone as dt_timezone
 
 from django.conf import settings
 from clerk_backend_api import Clerk
@@ -61,7 +63,7 @@ def _handle_organisation_created(data):
     )
 
     if created:
-        free_amount = getattr(settings, 'FREE_CREDIT_AMOUNT', 10)
+        free_amount = settings.FREE_CREDIT_AMOUNT
         grant_credits(
             org,
             amount=free_amount,
@@ -116,7 +118,7 @@ def _handle_membership_created(data):
     )
     if created:
         logger.warning('Organisation %s created by membership handler (out-of-order webhook)', org_id)
-        free_amount = getattr(settings, 'FREE_CREDIT_AMOUNT', 10)
+        free_amount = settings.FREE_CREDIT_AMOUNT
         grant_credits(org, amount=free_amount, description='Free trial credits on signup')
         logger.info('Granted $%s free credits to new org %s', free_amount, org_id)
 
@@ -168,6 +170,45 @@ def _handle_membership_deleted(data):
 # See: https://github.com/clerk/clerk-sdk-python/blob/main/src/clerk_backend_api/models/commercesubscription.py
 # ---------------------------------------------------------------------------
 
+def _billing_event_timestamp(data):
+    """Extract the subscription payload's updated_at as an aware datetime.
+
+    Clerk sends epoch milliseconds; ISO strings are handled defensively.
+    Returns None when the payload carries no usable timestamp.
+    """
+    raw = data.get('updated_at') or data.get('created_at')
+    if raw in (None, ''):
+        return None
+    try:
+        return datetime.fromtimestamp(int(raw) / 1000, tz=dt_timezone.utc)
+    except (TypeError, ValueError, OSError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_stale_billing_event(org, data, event_label):
+    """True when this event is older than the last applied billing event.
+
+    Svix delivers unordered: a delayed subscription.updated(active) must not
+    overwrite a newer past_due state. Events without a timestamp apply as
+    before (no ordering information).
+    """
+    ts = _billing_event_timestamp(data)
+    if ts is None or org.billing_event_at is None:
+        return False
+    if ts < org.billing_event_at:
+        logger.warning(
+            '%s: stale event for org %s (event %s < last applied %s) — skipping',
+            event_label, org.clerk_org_id, ts.isoformat(), org.billing_event_at.isoformat(),
+        )
+        return True
+    return False
+
+
 def _extract_billing_org_id(data, event_label='billing'):
     """Extract the organisation Clerk ID from a billing webhook payload.
 
@@ -187,11 +228,28 @@ def _extract_billing_org_id(data, event_label='billing'):
 def _handle_subscription_active(data):
     """Transition org to subscribed mode when a Clerk Billing subscription becomes active."""
     org_id = _extract_billing_org_id(data, 'subscription.active')
-    updated = Organisation.objects.filter(clerk_org_id=org_id).update(
-        billing_mode=Organisation.BILLING_SUBSCRIBED
-    )
-    if not updated:
+    org = Organisation.objects.filter(clerk_org_id=org_id).first()
+    if not org:
         raise WebhookProcessingError(f'subscription.active: org {org_id} not found')
+
+    if _is_stale_billing_event(org, data, 'subscription.active'):
+        return
+
+    # A Clerk subscription becoming active only clears Clerk-set past_due.
+    # If a Stripe metered invoice is still unpaid, the org stays blocked until
+    # invoice.paid clears it.
+    if (org.billing_mode == Organisation.BILLING_PAST_DUE
+            and org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE):
+        logger.warning(
+            'subscription.active: org %s stays past_due — Stripe invoice still unpaid', org_id,
+        )
+        return
+
+    Organisation.objects.filter(pk=org.pk).update(
+        billing_mode=Organisation.BILLING_SUBSCRIBED,
+        past_due_source=None,
+        billing_event_at=_billing_event_timestamp(data) or org.billing_event_at,
+    )
 
     logger.info('Org %s transitioned to subscribed billing mode', org_id)
     try:
@@ -231,11 +289,18 @@ def _handle_subscription_active(data):
 def _handle_subscription_canceled(data):
     """Revert org to prepaid mode when a Clerk Billing subscription is cancelled or ended."""
     org_id = _extract_billing_org_id(data, 'subscription.canceled')
-    updated = Organisation.objects.filter(clerk_org_id=org_id).update(
-        billing_mode=Organisation.BILLING_PREPAID
-    )
-    if not updated:
+    org = Organisation.objects.filter(clerk_org_id=org_id).first()
+    if not org:
         raise WebhookProcessingError(f'subscription.canceled: org {org_id} not found')
+
+    if _is_stale_billing_event(org, data, 'subscription.canceled'):
+        return
+
+    Organisation.objects.filter(pk=org.pk).update(
+        billing_mode=Organisation.BILLING_PREPAID,
+        past_due_source=None,
+        billing_event_at=_billing_event_timestamp(data) or org.billing_event_at,
+    )
     logger.info('Org %s reverted to prepaid billing mode (subscription cancelled)', org_id)
 
 
@@ -246,8 +311,23 @@ def _handle_subscription_past_due(data):
     if not org:
         raise WebhookProcessingError(f'subscription.pastDue: org {org_id} not found')
 
+    if _is_stale_billing_event(org, data, 'subscription.pastDue'):
+        return
+
+    # Only the obligation that blocks first "owns" past_due_source, and only that
+    # source's paid signal clears it. Don't relabel an org that is already
+    # past_due (mirrors _handle_invoice_payment_failed): otherwise a later
+    # subscription.active could clear past_due while a Stripe invoice that blocked
+    # first is still unpaid. If both are unpaid, the still-unpaid obligation
+    # re-blocks on its next dunning event.
+    was_past_due = org.billing_mode == Organisation.BILLING_PAST_DUE
     org.billing_mode = Organisation.BILLING_PAST_DUE
-    org.save(update_fields=['billing_mode'])
+    update_fields = ['billing_mode', 'billing_event_at']
+    if not was_past_due:
+        org.past_due_source = Organisation.PAST_DUE_SOURCE_CLERK
+        update_fields.append('past_due_source')
+    org.billing_event_at = _billing_event_timestamp(data) or org.billing_event_at
+    org.save(update_fields=update_fields)
     logger.warning('subscription.pastDue: org %s set to past_due', org_id)
 
     try:

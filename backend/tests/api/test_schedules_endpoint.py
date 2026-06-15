@@ -10,15 +10,23 @@ Tests:
 
 import pytest
 from datetime import timedelta
+from decimal import Decimal
+
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
 
-from app.models import Schedule, ScheduleStatus
+from app.models import CreditTransaction, Schedule, ScheduleStatus
 from tests.factories import (
     ContactFactory,
     OrganisationFactory,
     ScheduleFactory,
 )
+
+
+def _fund(organisation, amount='10.00'):
+    organisation.credit_balance = Decimal(amount)
+    organisation.save(update_fields=['credit_balance'])
 
 
 @pytest.mark.django_db
@@ -163,6 +171,7 @@ class TestScheduleCreate:
 
     def test_create_schedule(self, authenticated_client, organisation, user):
         """Creating schedule succeeds."""
+        _fund(organisation)
         contact = ContactFactory(organisation=organisation, created_by=user)
         future = timezone.now() + timedelta(hours=1)
 
@@ -176,6 +185,109 @@ class TestScheduleCreate:
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data['text'] == 'Test message'
+
+    def test_create_schedule_links_contact_via_contact_id(self, authenticated_client, organisation, user):
+        """The contact_id payload key (what the frontend sends) links the contact.
+
+        Regression test: contact_id was silently ignored (the serializer only
+        knew 'contact'), so scheduled messages lost their contact link and
+        never appeared in the contact's schedule list.
+        """
+        _fund(organisation)
+        contact = ContactFactory(organisation=organisation, created_by=user)
+        future = timezone.now() + timedelta(hours=1)
+
+        response = authenticated_client.post('/api/schedules/', {
+            'contact_id': contact.id,
+            'phone': contact.phone,
+            'text': 'Linked',
+            'scheduled_time': future.isoformat(),
+        })
+
+        assert response.status_code == status.HTTP_201_CREATED
+        schedule = Schedule.objects.get(pk=response.data['id'])
+        assert schedule.contact_id == contact.id
+
+    def test_create_schedule_rejects_other_orgs_contact(self, authenticated_client, organisation, user):
+        """Relation fields are org-scoped — no linking (or reading back) foreign contacts."""
+        _fund(organisation)
+        other_contact = ContactFactory()  # belongs to a different org
+        future = timezone.now() + timedelta(hours=1)
+
+        for field in ('contact', 'contact_id'):
+            response = authenticated_client.post('/api/schedules/', {
+                field: other_contact.id,
+                'phone': '0412345678',
+                'text': 'IDOR attempt',
+                'scheduled_time': future.isoformat(),
+            })
+            assert response.status_code == status.HTTP_400_BAD_REQUEST, field
+
+    def test_create_prepaid_reserves_credits(self, authenticated_client, organisation, user):
+        """Prepaid orgs are charged at creation, like group schedules and immediate sends."""
+        _fund(organisation)
+        future = timezone.now() + timedelta(hours=1)
+
+        data = {'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat()}
+        response = authenticated_client.post('/api/schedules/', data)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00') - settings.SMS_RATE  # $10 - 1 part
+        charge = CreditTransaction.objects.get(
+            organisation=organisation, schedule_id=response.data['id'],
+            transaction_type=CreditTransaction.DEDUCT,
+        )
+        assert charge.amount == settings.SMS_RATE
+
+    def test_create_blocked_when_insufficient_balance(self, authenticated_client, organisation, user):
+        """Scheduled sends are billing-gated like immediate sends.
+
+        Regression test: POST /api/schedules/ previously bypassed billing
+        entirely, so prepaid orgs could schedule sends for free.
+        """
+        _fund(organisation, '0.00')
+        future = timezone.now() + timedelta(hours=1)
+        data = {'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat()}
+
+        response = authenticated_client.post('/api/schedules/', data)  # balance is $0
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'balance' in str(response.data).lower()
+        assert Schedule.objects.count() == 0
+
+    def test_create_ignores_client_message_parts_and_status(self, authenticated_client, organisation, user):
+        """message_parts and status are server-controlled (billing depends on them)."""
+        _fund(organisation)
+        future = timezone.now() + timedelta(hours=1)
+
+        data = {
+            'text': 'x' * 200,  # 2 parts
+            'phone': '0412345678',
+            'scheduled_time': future.isoformat(),
+            'message_parts': 1,        # must be ignored
+            'status': 'delivered',     # must be ignored
+        }
+        response = authenticated_client.post('/api/schedules/', data)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        schedule = Schedule.objects.get(pk=response.data['id'])
+        assert schedule.message_parts == 2
+        assert schedule.status == ScheduleStatus.PENDING
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00') - 2 * settings.SMS_RATE  # charged for 2 parts
+
+    def test_create_subscribed_does_not_charge(self, authenticated_client, organisation, user):
+        """Subscribed orgs are charged on successful send, not at creation."""
+        organisation.billing_mode = organisation.BILLING_SUBSCRIBED
+        organisation.save(update_fields=['billing_mode'])
+        future = timezone.now() + timedelta(hours=1)
+
+        data = {'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat()}
+        response = authenticated_client.post('/api/schedules/', data)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert not CreditTransaction.objects.filter(organisation=organisation).exists()
 
     def test_create_validates_scheduled_time_future(self, authenticated_client, user):
         """Scheduled time must be in future."""
@@ -240,6 +352,51 @@ class TestScheduleUpdate:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['text'] == 'Updated text'
 
+    def test_update_to_longer_text_reprices_reservation(self, authenticated_client, organisation, user):
+        """Editing a pending schedule's text swaps the prepaid reservation to the new cost."""
+        _fund(organisation)
+        future = timezone.now() + timedelta(hours=1)
+        create = authenticated_client.post('/api/schedules/', {
+            'text': 'Short', 'phone': '0412345678', 'scheduled_time': future.isoformat(),
+        })
+        assert create.status_code == status.HTTP_201_CREATED  # balance now 10 - 1 part
+
+        response = authenticated_client.patch(
+            f'/api/schedules/{create.data["id"]}/', {'text': 'x' * 200},  # 2 parts
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        schedule = Schedule.objects.get(pk=create.data['id'])
+        assert schedule.message_parts == 2
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00') - 2 * settings.SMS_RATE  # net charge = 2 parts
+        types = list(CreditTransaction.objects.filter(
+            organisation=organisation, schedule=schedule,
+        ).order_by('created_at').values_list('transaction_type', flat=True))
+        assert types == [
+            CreditTransaction.DEDUCT, CreditTransaction.REFUND, CreditTransaction.DEDUCT,
+        ]
+
+    def test_update_blocked_when_new_cost_exceeds_balance(self, authenticated_client, organisation, user):
+        """Re-pricing is gated: the edit is rolled back if the org cannot afford it."""
+        _fund(organisation, str(settings.SMS_RATE))  # exactly one part
+        future = timezone.now() + timedelta(hours=1)
+        create = authenticated_client.post('/api/schedules/', {
+            'text': 'Short', 'phone': '0412345678', 'scheduled_time': future.isoformat(),
+        })
+        assert create.status_code == status.HTTP_201_CREATED  # balance now 0.00
+
+        response = authenticated_client.patch(
+            f'/api/schedules/{create.data["id"]}/', {'text': 'x' * 200},  # needs 2 parts
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        schedule = Schedule.objects.get(pk=create.data['id'])
+        assert schedule.text == 'Short'  # rollback
+        assert schedule.message_parts == 1
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('0.00')  # original reservation intact
+
     def test_cannot_update_sent_schedule(self, authenticated_client, organisation, user):
         """Cannot update sent schedule."""
         schedule = ScheduleFactory(
@@ -288,6 +445,27 @@ class TestScheduleDelete:
         assert response.status_code == status.HTTP_204_NO_CONTENT
         schedule.refresh_from_db()
         assert schedule.status == ScheduleStatus.CANCELLED
+
+    def test_delete_refunds_prepaid_reservation(self, authenticated_client, organisation, user):
+        """Cancelling a pending scheduled send releases the credits reserved at creation."""
+        _fund(organisation)
+        future = timezone.now() + timedelta(hours=1)
+        create = authenticated_client.post('/api/schedules/', {
+            'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat(),
+        })
+        assert create.status_code == status.HTTP_201_CREATED
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00') - settings.SMS_RATE
+
+        response = authenticated_client.delete(f'/api/schedules/{create.data["id"]}/')
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
+        assert CreditTransaction.objects.filter(
+            organisation=organisation, schedule_id=create.data['id'],
+            transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
 
     def test_cannot_delete_sent_schedule(self, authenticated_client, organisation, user):
         """Cannot delete sent schedule."""

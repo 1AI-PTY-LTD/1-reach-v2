@@ -9,6 +9,8 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TermsRouteImport } from './routes/terms'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppLayoutRouteImport } from './routes/app/_layout'
 import { Route as AppLayoutUsersRouteImport } from './routes/app/_layout.users'
@@ -30,6 +32,16 @@ import { Route as AppLayoutScheduleMsgIdRouteImport } from './routes/app/_layout
 import { Route as AppLayoutGroupsGroupIdRouteImport } from './routes/app/_layout.groups.$groupId'
 import { Route as AppLayoutContactsContactIdRouteImport } from './routes/app/_layout.contacts.$contactId'
 
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -135,6 +147,8 @@ const AppLayoutContactsContactIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/app': typeof AppLayoutRouteWithChildren
   '/app/billing': typeof AppLayoutBillingRoute
   '/app/contacts': typeof AppLayoutContactsRouteWithChildren
@@ -157,6 +171,8 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/app': typeof AppLayoutRouteWithChildren
   '/app/billing': typeof AppLayoutBillingRoute
   '/app/groups': typeof AppLayoutGroupsRouteWithChildren
@@ -175,6 +191,8 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
+  '/terms': typeof TermsRoute
   '/app/_layout': typeof AppLayoutRouteWithChildren
   '/app/_layout/billing': typeof AppLayoutBillingRoute
   '/app/_layout/contacts': typeof AppLayoutContactsRouteWithChildren
@@ -199,6 +217,8 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/privacy'
+    | '/terms'
     | '/app'
     | '/app/billing'
     | '/app/contacts'
@@ -221,6 +241,8 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/privacy'
+    | '/terms'
     | '/app'
     | '/app/billing'
     | '/app/groups'
@@ -238,6 +260,8 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/privacy'
+    | '/terms'
     | '/app/_layout'
     | '/app/_layout/billing'
     | '/app/_layout/contacts'
@@ -261,11 +285,27 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PrivacyRoute: typeof PrivacyRoute
+  TermsRoute: typeof TermsRoute
   AppLayoutRoute: typeof AppLayoutRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -514,6 +554,8 @@ const AppLayoutRouteWithChildren = AppLayoutRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PrivacyRoute: PrivacyRoute,
+  TermsRoute: TermsRoute,
   AppLayoutRoute: AppLayoutRouteWithChildren,
 }
 export const routeTree = rootRouteImport
