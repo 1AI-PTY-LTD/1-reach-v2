@@ -9,10 +9,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  # az CLI 2.86.0 (May 2026) renamed postgres flexible-server sub-resource args:
-  # the parent server is now --server-name (was --name) on firewall-rule and
-  # backup, and the backup name is --name (was --backup-name). Applied below.
-  # --rule-name is kept on firewall-rule (still an accepted alias for the rule).
+  # az CLI 2.86.0 (May 2026) renamed postgres flexible-server sub-resource args.
+  # On firewall-rule and backup, the parent server is now --server-name (was
+  # --name), and the sub-resource's own name is --name (was --rule-name /
+  # --backup-name; both were removed, not just aliased). Server-level commands
+  # (show, replica, delete) still use --name for the server. Applied below.
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -52,7 +53,7 @@ jobs:
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --server-name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
-            --rule-name github-runner \
+            --name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
 
@@ -121,7 +122,7 @@ jobs:
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --server-name "$REPLICA_NAME" \
-            --rule-name github-runner \
+            --name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
           REPLICA_HOST=$(az postgres flexible-server show \
@@ -195,7 +196,7 @@ jobs:
           az postgres flexible-server firewall-rule delete \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --server-name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
-            --rule-name github-runner --yes \
+            --name github-runner --yes \
             || { echo "::error::Failed to remove the github-runner firewall rule — REMOVE IT MANUALLY in the Azure portal."; exit 1; }
 
       - name: Log in to ACR
