@@ -16,14 +16,21 @@ connection.ensure_connection()
 done
 
 # --- Select command based on role ---
-# CONTAINER_ROLE is set as an env var on each ACA container app (via Bicep).
-# Can also be passed as the first argument (e.g. CMD ["worker"] in docker-compose).
-# If the first argument is not a known role, treat it as an arbitrary command (e.g. pytest).
-# Arguments take precedence over CONTAINER_ROLE: docker-compose sets CONTAINER_ROLE=api on
-# the backend service, so without this ordering `docker compose run backend ... pytest`
-# would be hijacked into starting another API server (which never exits, leaving orphaned
-# containers behind) and the requested command would never run.
-ROLE="${1:-${CONTAINER_ROLE:-api}}"
+# Role can come from the first argument (e.g. docker-compose `command: ["worker"]`)
+# or the CONTAINER_ROLE env var (set on each ACA container app via Bicep).
+#
+# Precedence is deliberate. The image's default CMD is ["api"], and all three ACA
+# container apps (api/worker/beat) inherit it — they are distinguished ONLY by
+# CONTAINER_ROLE. So when the first arg names a known role, CONTAINER_ROLE wins
+# (otherwise the default "api" arg would override CONTAINER_ROLE=worker/beat and
+# every app would start gunicorn). A first arg that is NOT a role is treated as an
+# arbitrary command (pytest, manage.py, sh, ...) and run as-is, so
+# `docker compose run backend ... pytest` is never hijacked into starting a server.
+case "${1:-}" in
+  api|worker|beat) ROLE="${CONTAINER_ROLE:-$1}" ;;
+  '')              ROLE="${CONTAINER_ROLE:-api}" ;;
+  *)               ROLE="__command__" ;;
+esac
 
 case "$ROLE" in
   api)
