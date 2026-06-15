@@ -9,9 +9,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  # TODO (az CLI 2.86.0, May 2026): update deprecated postgres flexible-server args:
-  #   firewall-rule: --name (server) → --server-name, --rule-name (rule) → --name
-  #   backup create: --name (server) → --server-name, --backup-name → --name
+  # az CLI 2.86.0 (May 2026) renamed postgres flexible-server sub-resource args:
+  # the parent server is now --server-name (was --name) on firewall-rule and
+  # backup, and the backup name is --name (was --backup-name). Applied below.
+  # --rule-name is kept on firewall-rule (still an accepted alias for the rule).
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
@@ -50,7 +51,7 @@ jobs:
         run: |
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
+            --server-name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --rule-name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
@@ -119,7 +120,7 @@ jobs:
           echo "Adding runner IP to replica firewall..."
           az postgres flexible-server firewall-rule create \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name "$REPLICA_NAME" \
+            --server-name "$REPLICA_NAME" \
             --rule-name github-runner \
             --start-ip-address ${{ steps.ip.outputs.ip }} \
             --end-ip-address ${{ steps.ip.outputs.ip }}
@@ -151,8 +152,8 @@ jobs:
           echo "Creating production backup: $BACKUP_NAME"
           az postgres flexible-server backup create \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
-            --backup-name "$BACKUP_NAME"
+            --server-name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
+            --name "$BACKUP_NAME"
 
       - name: Run migration on production DB
         if: steps.check.outputs.pending == 'true'
@@ -185,7 +186,7 @@ jobs:
           # but a failed deletion of an existing rule must fail the job.
           EXISTS=$(az postgres flexible-server firewall-rule list \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
+            --server-name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --query "[?name=='github-runner'] | length(@)" -o tsv 2>/dev/null || echo 0)
           if [ "$EXISTS" = "0" ]; then
             echo "No github-runner firewall rule present — nothing to remove."
@@ -193,7 +194,7 @@ jobs:
           fi
           az postgres flexible-server firewall-rule delete \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
+            --server-name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
             --rule-name github-runner --yes \
             || { echo "::error::Failed to remove the github-runner firewall rule — REMOVE IT MANUALLY in the Azure portal."; exit 1; }
 
