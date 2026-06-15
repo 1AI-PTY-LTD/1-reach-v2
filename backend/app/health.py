@@ -2,6 +2,7 @@ import logging
 import ssl
 import uuid
 
+import certifi
 import redis
 from django.conf import settings
 from django.db import DatabaseError, connection, transaction
@@ -16,20 +17,24 @@ DEPLOY_SHA = 'dev'
 
 
 def _get_redis_client():
-    """Create a Redis client from the Celery broker URL, handling Azure TLS."""
+    """Create a Redis client from the Celery broker URL, handling Azure TLS.
+
+    TLS params are passed as kwargs (redis-py rejects ssl.CERT_* constant
+    names in query params), with certificates verified like everywhere else.
+    """
     url = settings.CELERY_BROKER_URL
     kwargs = {}
     if url.startswith('rediss://'):
-        # Strip ssl_cert_reqs from URL — redis-py rejects the string
-        # "CERT_NONE" from query params, so pass the constant as a kwarg.
-        url = url.split('?')[0] if 'ssl_cert_reqs' in url else url
-        kwargs['ssl_cert_reqs'] = ssl.CERT_NONE
+        url = url.split('?')[0]
+        kwargs['ssl_cert_reqs'] = ssl.CERT_REQUIRED
+        kwargs['ssl_ca_certs'] = certifi.where()
     return redis.from_url(url, socket_connect_timeout=10, socket_timeout=10, **kwargs)
 
 
 class HealthCheckView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = []  # ACA probes poll frequently
 
     def get(self, request):
         checks = {}
@@ -57,6 +62,7 @@ class SmokeCheckView(APIView):
     """Deep health check that verifies DB writes and Redis read/write work."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = []  # deploy smoke tests poll frequently
 
     def get(self, request):
         from app.models import Organisation

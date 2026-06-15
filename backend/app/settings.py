@@ -14,7 +14,11 @@ import json
 import logging
 import os
 import ssl as _ssl
+from urllib.parse import quote as _urlquote
+
+import certifi
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from decimal import Decimal as _Decimal
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
@@ -30,10 +34,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        'DJANGO_SECRET_KEY must be set — refusing to start without a secret key.'
+    )
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', '0').lower() in ('1', 'true')
 TEST = os.environ.get('TEST', '0').lower() in ('1', 'true')
+
+# TEST mode disables Clerk webhook signature verification (for CI/E2E seeding)
+# and exposes test-only endpoints. Forged webhooks could grant credits and flip
+# billing modes, so refuse to boot if it ever reaches a non-DEBUG environment.
+if TEST and not DEBUG:
+    raise ImproperlyConfigured(
+        'TEST=1 disables webhook signature verification and must never be set '
+        'in production. Unset TEST or (for local/CI use only) also set DEBUG=1.'
+    )
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
@@ -156,20 +173,64 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# STATICFILES_STORAGE was removed in Django 5.1 and silently ignored — the
+# STORAGES dict is the only supported form, so whitenoise's compressed
+# manifest storage (hashed filenames + far-future caching) actually applies.
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+}
 
-# Security headers (env-driven so local dev is unaffected — defaults are safe for dev)
-SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'False') == 'True'
-CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'False') == 'True'
-SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0'))
+# Security headers — env-overridable; defaults are secure outside DEBUG and
+# relaxed for local dev.
+SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'False' if DEBUG else 'True') == 'True'
+CSRF_COOKIE_SECURE = os.environ.get('CSRF_COOKIE_SECURE', 'False' if DEBUG else 'True') == 'True'
+SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0' if DEBUG else '31536000'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 X_FRAME_OPTIONS = 'DENY'
 SECURE_CONTENT_TYPE_NOSNIFF = True
-# NOTE: SECURE_SSL_REDIRECT intentionally omitted — must stay False on Azure App Service
-# (Azure terminates TLS at the load balancer; setting True causes infinite redirect loops)
+SECURE_REFERRER_POLICY = 'same-origin'
+
+# Deployment-checklist items that are deliberate decisions, not gaps
+# (CI runs `manage.py check --deploy --fail-level WARNING`):
+SILENCED_SYSTEM_CHECKS = [
+    'security.W008',        # SECURE_SSL_REDIRECT: TLS redirect handled by ACA ingress
+    'security.W021',        # SECURE_HSTS_PRELOAD: not submitting to the preload list
+    'drf_spectacular.W001', # schema generation can't introspect ClerkJWTAuthentication
+    'drf_spectacular.W002', # plain APIViews (webhooks/health) have no serializer
+]
+
+# Azure Container Apps ingress terminates TLS and forwards requests over HTTP
+# with X-Forwarded-Proto set. Without this, request.is_secure() is always
+# False behind the ingress, breaking secure-cookie handling and the CSRF
+# origin check on the Django admin. (The ingress overwrites any client-sent
+# value, so the header is trustworthy in deployed environments.)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# NOTE: SECURE_SSL_REDIRECT intentionally omitted — TLS terminates at the ACA
+# ingress; enabling it causes infinite redirect loops.
+
+# Origins trusted for CSRF (Django 4+ checks the Origin header on POSTs —
+# needed for the admin at e.g. https://api.1reach.net behind the ingress).
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if o.strip()
+]
+
+# Request body limits — deliberate values rather than accidental defaults, so
+# oversized payloads are rejected early instead of consuming worker memory.
+# File uploads (CSV import, MMS media) are size-checked by their handlers;
+# these bound non-file request bodies and the in-memory upload threshold.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(2 * 1024 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(5 * 1024 * 1024)))
 
 
 # Django REST Framework
 REST_FRAMEWORK = {
+    # DRF's default renderers include the browsable HTML API explorer, which
+    # would serve forms and endpoint listings to any browser in production.
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        *(['rest_framework.renderers.BrowsableAPIRenderer'] if DEBUG else []),
+    ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'app.authentication.ClerkJWTAuthentication',
     ],
@@ -188,7 +249,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': os.environ.get('THROTTLE_RATE_ANON', '1000/min'),
+        # Anonymous traffic only reaches AllowAny views; webhooks and health
+        # checks opt out of throttling explicitly (provider retries and ACA
+        # probes must never be rate limited), so this mainly bounds abuse.
+        'anon': os.environ.get('THROTTLE_RATE_ANON', '100/min'),
         'user': os.environ.get('THROTTLE_RATE_USER', '1000/min'),
         'sms': os.environ.get('THROTTLE_RATE_SMS', '100/min'),
         'import': os.environ.get('THROTTLE_RATE_IMPORT', '10/min'),
@@ -246,6 +310,12 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 30,
     'socket_timeout': 30,
     'socket_keepalive': True,
+    # Redis re-delivers unacknowledged tasks after this many seconds. Retries are
+    # scheduled with apply_async(countdown=...) and sit unacked in a worker until
+    # their ETA: max backoff is MESSAGE_RETRY_MAX_DELAY (3600s) plus +25% jitter
+    # = up to 4500s, which exceeds the 3600s default and guarantees duplicate
+    # delivery of max-backoff retries. 5400s clears the worst case with margin.
+    'visibility_timeout': 5400,
 }
 CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
     'socket_connect_timeout': 30,
@@ -253,6 +323,22 @@ CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
     'socket_keepalive': True,
 }
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+# Task execution guards — the worker runs only a few concurrency slots, so a
+# hung task (e.g. a stuck provider connection) must not pin one forever.
+# Long-running beat tasks (invoicing, reconciliation, blob cleanup) override
+# these per-task in app/celery.py.
+CELERY_TASK_TIME_LIMIT = int(os.environ.get('CELERY_TASK_TIME_LIMIT', '300'))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get('CELERY_TASK_SOFT_TIME_LIMIT', '240'))
+# Recycle prefork children before slow memory leaks can OOM the replica (KiB).
+CELERY_WORKER_MAX_MEMORY_PER_CHILD = int(os.environ.get('CELERY_WORKER_MAX_MEMORY_PER_CHILD', '262144'))
+# Emit task lifecycle events so monitoring (Sentry cron checks, celery
+# inspect/events tooling) can observe failures and stalls.
+CELERY_WORKER_SEND_TASK_EVENTS = True
+CELERY_TASK_SEND_SENT_EVENT = True
+# All tasks are fire-and-forget (nothing calls .get()); storing their return
+# values just accumulates result keys in Redis until expiry.
+CELERY_TASK_IGNORE_RESULT = True
 
 # Message retry policy
 MESSAGE_MAX_RETRIES = int(os.environ.get('MESSAGE_MAX_RETRIES', '3'))
@@ -282,19 +368,41 @@ CELERY_BEAT_SCHEDULE = {
 }
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
-# Redis SSL — required for Azure Cache for Redis (rediss:// URLs)
+# Redis SSL — required for Azure Cache for Redis (rediss:// URLs).
+# Certificates are verified against certifi's CA bundle: Azure Cache presents
+# publicly-trusted certs, and CERT_NONE would let the client handshake with
+# anything answering on the hostname (silent DNS misdirection, key harvesting).
 def _ensure_redis_ssl(url):
     if url and url.startswith('rediss://') and 'ssl_cert_reqs' not in url:
         sep = '&' if '?' in url else '?'
-        return url + sep + 'ssl_cert_reqs=CERT_NONE'
+        return (
+            url + sep
+            + 'ssl_cert_reqs=CERT_REQUIRED&ssl_ca_certs=' + _urlquote(certifi.where(), safe='')
+        )
     return url
 
 CELERY_BROKER_URL = _ensure_redis_ssl(CELERY_BROKER_URL)
 CELERY_RESULT_BACKEND = _ensure_redis_ssl(CELERY_RESULT_BACKEND)
 
 if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
-    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
-    CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_NONE}
+    CELERY_BROKER_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
+    CELERY_REDIS_BACKEND_USE_SSL = {'ssl_cert_reqs': _ssl.CERT_REQUIRED, 'ssl_ca_certs': certifi.where()}
+
+
+# Cache — backs DRF throttling only (no direct cache.* use anywhere; sessions
+# are DB-backed). Intentionally per-process LocMemCache: throttle counters are
+# per worker/replica and reset on restart, so limits are approximate. That is
+# acceptable because throttling here is defense-in-depth, not a quota — the
+# money-sensitive endpoints are gated by billing (credit balance + monthly cap)
+# and tenant scoping, and webhooks/health are throttle-exempt.
+#
+# A shared Redis cache was deliberately NOT used: pointing Django's RedisCache
+# at the rediss:// broker URL fails (redis-py rejects the kombu-style
+# ssl_cert_reqs=CERT_REQUIRED query param), and sharing the broker's Redis DB
+# risks cache.clear() FLUSHDB-ing the Celery queue. If accurate global
+# throttling is ever needed, add a RedisCache with a redis-py-safe URL
+# (ssl_cert_reqs=required) on a dedicated Redis DB index.
+CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
 
 
 # SMS Provider

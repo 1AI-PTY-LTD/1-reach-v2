@@ -68,6 +68,27 @@ class TestContactGroupCreate:
         group = ContactGroup.objects.get(id=response.data['id'])
         assert group.organisation == organisation
 
+    def test_create_group_with_members(self, authenticated_client, organisation, user):
+        """Creating a group with member_ids adds the org's contacts as members.
+
+        Regression test: this path read request.organisation (which never
+        existed — the middleware sets request.org) and crashed with a 500.
+        """
+        own = ContactFactory(organisation=organisation, created_by=user)
+        other_org_contact = ContactFactory()  # different org — must be ignored
+
+        response = authenticated_client.post('/api/groups/', {
+            'name': 'With Members',
+            'member_ids': [own.id, other_org_contact.id],
+        }, format='json')
+
+        assert response.status_code == status.HTTP_201_CREATED
+        group = ContactGroup.objects.get(id=response.data['id'])
+        member_contact_ids = set(
+            ContactGroupMember.objects.filter(group=group).values_list('contact_id', flat=True)
+        )
+        assert member_contact_ids == {own.id}  # cross-org contact excluded
+
     def test_create_validates_name(self, authenticated_client):
         """Name is required."""
         data = {'description': 'Test'}

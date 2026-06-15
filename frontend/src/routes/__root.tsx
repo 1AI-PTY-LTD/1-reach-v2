@@ -1,4 +1,4 @@
-import { createRootRouteWithContext, Outlet } from '@tanstack/react-router'
+import { createRootRouteWithContext, Outlet, useRouterState } from '@tanstack/react-router'
 import { SignedIn, SignedOut } from '@clerk/clerk-react'
 import * as Sentry from '@sentry/react'
 import type { QueryClient } from '@tanstack/react-query'
@@ -33,8 +33,14 @@ export const Route = createRootRouteWithContext<{
   },
 })
 
+// Legal pages must be reachable by signed-out visitors (the SignedOut branch
+// otherwise renders the landing page for every route).
+const PUBLIC_ROUTES = ['/privacy', '/terms']
+
 function Root() {
-  if (E2E_TEST_MODE) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname })
+
+  if (E2E_TEST_MODE || PUBLIC_ROUTES.includes(pathname)) {
     return (
       <div className="md:max-h-screen overflow-hidden">
         <Outlet />

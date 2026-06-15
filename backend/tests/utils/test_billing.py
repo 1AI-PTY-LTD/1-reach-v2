@@ -35,8 +35,9 @@ from tests.factories import ConfigFactory, OrganisationFactory, UserFactory
 class TestGrantCredits:
     def test_adds_to_balance(self):
         org = OrganisationFactory(credit_balance=Decimal('0.00'))
-        new_balance = grant_credits(org, Decimal('10.00'), 'Free trial')
-        assert new_balance == Decimal('10.00')
+        tx = grant_credits(org, Decimal('10.00'), 'Free trial')
+        assert tx.balance_after == Decimal('10.00')
+        assert get_balance(org) == Decimal('10.00')
 
     def test_creates_transaction(self):
         from app.models import CreditTransaction
@@ -51,8 +52,8 @@ class TestGrantCredits:
 
     def test_accumulates(self):
         org = OrganisationFactory(credit_balance=Decimal('5.00'))
-        new_balance = grant_credits(org, Decimal('3.00'), 'Top-up')
-        assert new_balance == Decimal('8.00')
+        tx = grant_credits(org, Decimal('3.00'), 'Top-up')
+        assert tx.balance_after == Decimal('8.00')
 
 
 @pytest.mark.django_db
@@ -144,6 +145,25 @@ class TestCheckCanSend:
 
 @pytest.mark.django_db
 class TestRecordUsage:
+    def test_trial_deduction_below_zero_raises_and_rolls_back(self):
+        """The locked balance floor is what prevents negative balances.
+
+        check_can_send() is an unlocked pre-check, so concurrent sends can all
+        pass it — record_usage must refuse the deduction itself.
+        """
+        from app.utils.billing import InsufficientBalanceError
+
+        org = OrganisationFactory(
+            credit_balance=settings.SMS_RATE - Decimal('0.01'),
+            billing_mode=Organisation.BILLING_PREPAID,
+        )
+
+        with pytest.raises(InsufficientBalanceError):
+            record_usage(org, 1, format='sms', description='Test SMS')  # costs settings.SMS_RATE
+
+        assert get_balance(org) == settings.SMS_RATE - Decimal('0.01')  # unchanged
+        assert not CreditTransaction.objects.filter(organisation=org).exists()
+
     def test_trial_deducts_balance(self):
         org = OrganisationFactory(
             credit_balance=Decimal('1.00'),
@@ -251,6 +271,31 @@ class TestGetTotalMonthlySpend:
         org = OrganisationFactory()
         assert get_total_monthly_spend(org) == Decimal('0.00')
 
+    def test_refunds_reduce_monthly_spend(self):
+        """Refunded sends free their share of the monthly cap.
+
+        Regression test: monthly spend previously summed only charges, so a
+        failed-and-refunded send consumed the limit forever.
+        """
+        from django.utils import timezone as tz
+
+        org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = Schedule.objects.create(
+            organisation=org, phone='0412345678', text='Test',
+            scheduled_time=tz.now(), status=ScheduleStatus.FAILED,
+            format=MessageFormat.SMS, message_parts=1,
+            failure_category='invalid_number', created_by=user, updated_by=user,
+        )
+        record_usage(org, 1, 'sms', 'send one', user, schedule)
+        record_usage(org, 1, 'sms', 'send two', user)
+
+        assert get_total_monthly_spend(org) == 2 * settings.SMS_RATE
+        refund_usage(org, schedule)
+
+        assert get_total_monthly_spend(org) == settings.SMS_RATE
+        assert get_monthly_usage(org, 'sms') == settings.SMS_RATE
+
 
 
 @pytest.mark.django_db
@@ -336,6 +381,47 @@ class TestRefundUsage:
             schedule=schedule,
             transaction_type=CreditTransaction.REFUND,
         ).count() == 1
+
+    def test_refund_links_the_charge_it_reverses(self):
+        org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+        record_usage(org, 1, 'sms', 'test send', user, schedule)
+        charge = CreditTransaction.objects.get(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.DEDUCT
+        )
+
+        refund_usage(org, schedule)
+
+        refund_tx = CreditTransaction.objects.get(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND
+        )
+        assert refund_tx.refunded_transaction_id == charge.pk
+
+    def test_refund_after_retry_recharge_refunds_again(self):
+        """A schedule re-charged on manual retry is refunded again on a second failure.
+
+        Regression test: the old schedule-level idempotency check made any second
+        refund a no-op, silently keeping the retry charge.
+        """
+        org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))
+        user = UserFactory()
+        schedule = self._make_schedule(org, user)
+
+        record_usage(org, 1, 'sms', 'initial send', user, schedule)
+        refund_usage(org, schedule)
+        record_usage(org, 1, 'sms', 'retry send', user, schedule)
+        refund_usage(org, schedule)
+
+        assert get_balance(org) == Decimal('10.00')  # fully restored
+        assert CreditTransaction.objects.filter(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND,
+        ).count() == 2
+        # Each refund links a distinct charge
+        linked = CreditTransaction.objects.filter(
+            organisation=org, schedule=schedule, transaction_type=CreditTransaction.REFUND,
+        ).values_list('refunded_transaction_id', flat=True)
+        assert len(set(linked)) == 2
 
     def test_refund_with_no_original_charge_is_noop(self):
         org = OrganisationFactory(billing_mode='prepaid', credit_balance=Decimal('10.00'))

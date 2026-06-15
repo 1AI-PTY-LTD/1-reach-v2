@@ -33,7 +33,7 @@ import { FileUpload } from '../../ui/file-upload'
 import { useApiClient } from '../../lib/ApiClientProvider'
 import RouteErrorComponent from '../../components/shared/RouteErrorComponent'
 import { toast } from 'sonner'
-import { SMS_MAX_LENGTH, SMS_SEGMENT_LIMIT } from '../../lib/sms'
+import { SMS_MAX_LENGTH, estimateSmsSegments } from '../../lib/sms'
 
 function flattenValidationErrors(obj: Record<string, unknown>): string[] {
   const messages: string[] = []
@@ -327,9 +327,10 @@ function SendContent() {
           contact_id: r.contactId ?? null,
         }))
 
+        let response
         if (uploadedFileUrl) {
           // MMS: single batch API call for all recipients
-          await sendMms(client, {
+          response = await sendMms(client, {
             message: messageText,
             recipients: mappedRecipients,
             media_url: uploadedFileUrl,
@@ -338,18 +339,29 @@ function SendContent() {
           })
         } else {
           // SMS: single batch API call for all recipients
-          await sendSms(client, {
+          response = await sendSms(client, {
             message: messageText,
             recipients: mappedRecipients,
             ...(selectedGroupId && { group_id: selectedGroupId }),
             ...(selectedSender && { alphanumeric_sender: selectedSender }),
           })
         }
+        // Multi-recipient sends report how many were actually queued and how
+        // many were dropped because the recipient has opted out.
+        const queued = response.total ?? total
+        const skipped = response.skipped_opted_out ?? 0
         resetForm()
         setLastActionWasSchedule(false)
-        setSummaryCounts({ total, success: total, error: 0, errors: [] })
+        setSummaryCounts({
+          total,
+          success: queued,
+          error: skipped,
+          errors: skipped > 0
+            ? [`${skipped} recipient${skipped !== 1 ? 's' : ''} skipped — opted out of receiving messages`]
+            : [],
+        })
         setSummaryOpen(true)
-        toast.success(`${total} message${total !== 1 ? 's' : ''} queued`)
+        toast.success(`${queued} message${queued !== 1 ? 's' : ''} queued${skipped ? `, ${skipped} skipped (opted out)` : ''}`)
       } catch (error) {
         const errorMsg = extractErrorMessage(error)
         toast.error(errorMsg)
@@ -638,13 +650,16 @@ function SendContent() {
                 }
 
                 const messageTypePrefix = uploadedFileUrl ? 'MMS' : 'SMS'
-                const messageParts = uploadedFileUrl
-                  ? '1 of 1'
-                  : `${textToCount.length === 0 ? '0' : textToCount.length > SMS_SEGMENT_LIMIT ? '2' : '1'} of 2`
+                // Encoding-aware: emoji/unicode force UCS-2 and segment at
+                // 70/67 chars instead of GSM-7's 160/153 — each segment is
+                // billed separately.
+                const parts = uploadedFileUrl ? 1 : estimateSmsSegments(textToCount)
+                const shownParts = textToCount.length === 0 && !uploadedFileUrl ? 0 : parts
+                const messageParts = `${shownParts} message part${shownParts !== 1 ? 's' : ''}`
 
                 return (
-                  <div className={`text-sm mt-4 text-right ${!uploadedFileUrl && textToCount.length > SMS_SEGMENT_LIMIT ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
-                    {messageTypePrefix} · {textToCount.length} / {SMS_MAX_LENGTH} characters · {messageParts} message parts
+                  <div className={`text-sm mt-4 text-right ${!uploadedFileUrl && parts > 1 && textToCount.length > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-zinc-500 dark:text-zinc-400'}`}>
+                    {messageTypePrefix} · {textToCount.length} / {SMS_MAX_LENGTH} characters · {messageParts}
                   </div>
                 )
               }}

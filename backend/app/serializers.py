@@ -123,20 +123,26 @@ class ContactGroupSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        """Create ContactGroup and optionally add members."""
+        """Create ContactGroup and optionally add members, atomically."""
+        from django.db import transaction
+
+        from app.models import Contact, ContactGroupMember
+
         member_ids = validated_data.pop('member_ids', [])
-        group = ContactGroup.objects.create(**validated_data)
 
-        # Add members if provided
-        if member_ids:
-            from app.models import Contact, ContactGroupMember
-            request = self.context.get('request')
-            org = request.organisation if request else None
+        with transaction.atomic():
+            group = ContactGroup.objects.create(**validated_data)
 
-            for contact_id in member_ids:
-                contact = Contact.objects.filter(id=contact_id, organisation=org).first()
-                if contact:
-                    ContactGroupMember.objects.create(group=group, contact=contact)
+            if member_ids:
+                # The view sets request.org (request.organisation never existed,
+                # so member_ids previously crashed with an AttributeError).
+                request = self.context.get('request')
+                org = getattr(request, 'org', None) if request else None
+                contacts = Contact.objects.filter(id__in=member_ids, organisation=org)
+                ContactGroupMember.objects.bulk_create(
+                    [ContactGroupMember(group=group, contact=c) for c in contacts],
+                    ignore_conflicts=True,
+                )
 
         return group
 
@@ -177,12 +183,37 @@ class ScheduleSerializer(serializers.ModelSerializer):
     contact_detail = ContactSerializer(source='contact', read_only=True)
     group_detail = ContactGroupSerializer(source='group', read_only=True)
     recipient_count = serializers.IntegerField(read_only=True, default=0)
+    # Write aliases matching the frontend payloads. Before these existed the
+    # frontend's contact_id/template_id keys were silently ignored, so
+    # scheduled messages lost their contact/template links (and never showed
+    # up in the contact's schedule list).
+    contact_id = serializers.PrimaryKeyRelatedField(
+        source='contact', queryset=Contact.objects.all(),
+        required=False, allow_null=True, write_only=True,
+    )
+    template_id = serializers.PrimaryKeyRelatedField(
+        source='template', queryset=Template.objects.all(),
+        required=False, allow_null=True, write_only=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Scope every writable relation to the requesting org. The default
+        # ModelSerializer querysets span all orgs, which would let a caller
+        # link (and read back via *_detail) another org's contact/template.
+        request = self.context.get('request')
+        org = getattr(request, 'org', None) if request else None
+        if org is not None:
+            for name in ('contact', 'contact_id', 'template', 'template_id', 'group'):
+                field = self.fields.get(name)
+                if field is not None and getattr(field, 'queryset', None) is not None:
+                    field.queryset = field.queryset.filter(organisation=org)
 
     class Meta:
         model = Schedule
         fields = [
-            'id', 'name', 'template', 'text', 'message_parts',
-            'contact', 'contact_detail', 'phone',
+            'id', 'name', 'template', 'template_id', 'text', 'message_parts',
+            'contact', 'contact_id', 'contact_detail', 'phone',
             'group', 'group_detail', 'parent', 'recipient_count',
             'scheduled_time', 'sent_time',
             'status', 'error',
@@ -192,6 +223,10 @@ class ScheduleSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
+            # Server-controlled: message_parts is computed from the text (it drives
+            # billing), status only changes via dedicated endpoints/tasks, and
+            # parent links are only created internally for batch sends.
+            'message_parts', 'status', 'parent',
             'sent_time', 'provider_message_id', 'retry_count',
             'next_retry_at', 'failure_category', 'delivered_time',
             'created_at', 'updated_at',

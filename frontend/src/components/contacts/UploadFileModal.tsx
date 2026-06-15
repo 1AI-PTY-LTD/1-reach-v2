@@ -22,7 +22,6 @@ export default function UploadFileModal({
     const client = useApiClient();
 
     function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
-        console.log("mhau", e.target.files);
         const file = e.target.files?.[0];
 
         if (file) {
@@ -46,9 +45,10 @@ export default function UploadFileModal({
                 });
                 setUploadResult(result);
 
-                // Invalidate contacts query to refresh the table
-                if (result.status === 'success') {
-                    Logger.info('Invalidating contacts query after successful upload', {
+                // Refresh the table — partial imports (status 207) still
+                // created the valid rows.
+                if (result.status === 'success' || result.status === 'partial') {
+                    Logger.info('Invalidating contacts query after upload', {
                         component: 'UploadFileModal',
                     });
                     queryClient.invalidateQueries({ queryKey: ['contacts'] });
@@ -95,6 +95,16 @@ export default function UploadFileModal({
                         <Heading className="text-center mb-4">
                             Select file to upload
                         </Heading>
+                        <div className="mb-4 rounded-md bg-gray-50 dark:bg-zinc-800/60 p-3 text-xs text-gray-600 dark:text-gray-400">
+                            <p className="font-semibold mb-1">CSV format</p>
+                            <ul className="list-disc pl-4 space-y-0.5">
+                                <li>UTF-8 CSV with a header row</li>
+                                <li><span className="font-mono">phone</span> column required — Australian mobile (<span className="font-mono">04XXXXXXXX</span> or <span className="font-mono">+614XXXXXXXX</span>)</li>
+                                <li><span className="font-mono">first_name</span> and <span className="font-mono">last_name</span> columns optional; other columns are ignored</li>
+                                <li>Limits: 5&nbsp;MB and 10,000 rows per file</li>
+                                <li>Invalid or duplicate numbers are skipped and reported after upload</li>
+                            </ul>
+                        </div>
                         <div className="flex items-center gap-2">
                             <input
                                 className="hidden"

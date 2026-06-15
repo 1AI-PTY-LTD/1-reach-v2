@@ -348,6 +348,28 @@ class TestContactImportCSV:
         # Verify contacts created
         assert Contact.objects.filter(organisation=organisation).count() == 2
 
+    def test_import_csv_rejects_too_many_rows(self, authenticated_client, organisation):
+        """Imports beyond the row ceiling are rejected with 413 and import nothing extra.
+
+        Regression test: a 5 MB CSV can hold ~250k rows — unbounded iteration
+        tied up a worker and the DB for minutes.
+        """
+        from unittest.mock import patch as mock_patch
+
+        from app.views import ContactViewSet
+
+        rows = '\n'.join(f'04{i:08d},Bulk' for i in range(5))
+        csv_content = f'phone,first_name\n{rows}'.encode()
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        with mock_patch.object(ContactViewSet, 'IMPORT_MAX_ROWS', 3):
+            response = authenticated_client.post(
+                '/api/contacts/import/', {'file': csv_file}, format='multipart',
+            )
+
+        assert response.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+        assert 'too many rows' in str(response.data).lower()
+
     def test_import_csv_skips_invalid_rows(self, authenticated_client, organisation):
         """CSV import skips invalid rows and reports errors."""
         csv_content = b'phone,first_name\n0412345678,Valid\ninvalid-phone,Invalid\n0487654321,Valid2'

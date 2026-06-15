@@ -52,7 +52,7 @@ describe('ContactMessageModal', () => {
 
   it('shows message parts as 0 for empty text', () => {
     renderWithProviders(<ContactMessageModal {...defaultProps} />)
-    expect(screen.getByText(/0 of 2 message parts/)).toBeInTheDocument()
+    expect(screen.getByText(/0 message parts/)).toBeInTheDocument()
   })
 
   it('shows message parts as 1 for short text', async () => {
@@ -60,7 +60,7 @@ describe('ContactMessageModal', () => {
     renderWithProviders(<ContactMessageModal {...defaultProps} />)
 
     await user.type(screen.getByPlaceholderText(/Enter your message/), 'Hello')
-    expect(screen.getByText(/1 of 2 message parts/)).toBeInTheDocument()
+    expect(screen.getByText(/1 message part/)).toBeInTheDocument()
   })
 
   it('shows Create button in create mode', () => {

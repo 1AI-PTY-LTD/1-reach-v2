@@ -536,6 +536,23 @@ class TestHandleSubscriptionPastDue:
             handle_billing_payment_failed({'id': 'sub_1', 'payer': {'organization_id': 'org_pastdue'}})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_CLERK
+
+    def test_does_not_relabel_source_when_already_past_due(self):
+        """A Clerk past_due event must not steal past_due_source from a Stripe
+        invoice that blocked first — otherwise a later subscription.active would
+        clear past_due while the Stripe invoice is still unpaid."""
+        org = OrganisationFactory(
+            clerk_org_id='org_both_pastdue',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE,
+        )
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_payment_failed({'id': 'sub_both', 'payer': {'organization_id': 'org_both_pastdue'}})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        # source stays stripe_invoice, so subscription.active won't clear it
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
 
     def test_calls_clerk_api_to_disable_org(self):
         """Clerk SDK organizations.update() is called with billing_suspended=True."""
@@ -641,11 +658,78 @@ class TestHandleSubscriptionActiveClears:
         org = OrganisationFactory(
             clerk_org_id='org_unsuspend',
             billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
         )
         with patch('app.utils.clerk.Clerk'):
             handle_billing_subscription_created({'payer': {'organization_id': 'org_unsuspend'}})
         org.refresh_from_db()
         assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+        assert org.past_due_source is None
+
+    def test_stale_active_event_does_not_overwrite_newer_past_due(self):
+        """Out-of-order delivery: a delayed 'active' must not un-block a newer past_due.
+
+        Svix delivers unordered. The org's billing_event_at records the last
+        applied payload updated_at; older events are skipped.
+        """
+        from datetime import datetime, timezone as dt_timezone
+
+        org = OrganisationFactory(
+            clerk_org_id='org_ooo',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
+            billing_event_at=datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc),
+        )
+        stale_ms = int(datetime(2026, 6, 10, 11, 0, tzinfo=dt_timezone.utc).timestamp() * 1000)
+
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_created({
+                'payer': {'organization_id': 'org_ooo'},
+                'updated_at': stale_ms,
+            })
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE  # not overwritten
+
+    def test_newer_active_event_applies_and_records_timestamp(self):
+        """A genuinely newer event applies and advances billing_event_at."""
+        from datetime import datetime, timezone as dt_timezone
+
+        org = OrganisationFactory(
+            clerk_org_id='org_newer',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
+            billing_event_at=datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc),
+        )
+        newer = datetime(2026, 6, 10, 13, 0, tzinfo=dt_timezone.utc)
+
+        with patch('app.utils.clerk.Clerk'):
+            handle_billing_subscription_created({
+                'payer': {'organization_id': 'org_newer'},
+                'updated_at': int(newer.timestamp() * 1000),
+            })
+
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_SUBSCRIBED
+        assert org.billing_event_at == newer
+
+    def test_does_not_clear_stripe_invoice_past_due(self):
+        """subscription.active must not un-block past_due caused by an unpaid Stripe invoice.
+
+        Only invoice.paid may clear Stripe-sourced past_due — otherwise a plan
+        change in Clerk would unblock an org that still owes a metered invoice.
+        """
+        org = OrganisationFactory(
+            clerk_org_id='org_stripe_block',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE,
+        )
+        with patch('app.utils.clerk.Clerk') as MockClerk:
+            handle_billing_subscription_created({'payer': {'organization_id': 'org_stripe_block'}})
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+        MockClerk.return_value.organizations.update.assert_not_called()
 
     def test_calls_clerk_api_to_clear_suspension(self):
         """Clerk SDK organizations.update() is called with billing_suspended=False."""

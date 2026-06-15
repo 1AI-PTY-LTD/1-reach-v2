@@ -50,9 +50,18 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 django.setup()
 
 from app.utils.storage import StorageProvider, get_storage_provider
-from app.models import Invoice, MessageFormat, Organisation, Schedule, ScheduleStatus
+from app.models import (
+    Contact,
+    FailureCategory,
+    Invoice,
+    MessageFormat,
+    Organisation,
+    Schedule,
+    ScheduleStatus,
+)
 from app.utils.billing import record_usage, refund_usage, build_line_items
 from app.utils.failure_classifier import classify_failure
+from app.utils.segments import estimate_sms_segments
 from app.utils.metered_billing import get_billing_provider
 from app.utils.sms import SendResult, get_sms_provider
 
@@ -101,13 +110,14 @@ def _on_task_failure(sender=None, task_id=None, exception=None, traceback=None, 
 # ---------------------------------------------------------------------------
 
 def _estimate_parts(message: str, fmt: str) -> int:
-    """Estimate SMS message parts without calling the provider."""
+    """Estimate message parts without calling the provider.
+
+    SMS segmentation is encoding-aware (GSM-7 vs UCS-2) — see
+    app.utils.segments. MMS is always billed as a single unit.
+    """
     if fmt == MessageFormat.MMS:
         return 1
-    length = len(message or '')
-    if length <= 160:
-        return 1
-    return math.ceil(length / 153)
+    return estimate_sms_segments(message or '')
 
 
 def _compute_backoff_delay(retry_count: int) -> int:
@@ -161,12 +171,24 @@ def _dispatch_to_provider(provider, schedule: Schedule) -> SendResult:
 def _handle_success(schedule: Schedule, result: SendResult) -> None:
     org = schedule.organisation
     with transaction.atomic():
-        schedule.status = ScheduleStatus.SENT
-        schedule.sent_time = timezone.now()
-        schedule.provider_message_id = result.message_id
-        schedule.error = None
-        schedule.failure_category = None
-        schedule.save(update_fields=[
+        # Re-fetch under lock: a delivery callback can race us (it matches
+        # PROCESSING schedules via a provider_message_id left over from a
+        # previous attempt) and must not be regressed from DELIVERED/FAILED
+        # back to SENT by this stale instance.
+        locked = Schedule.objects.select_for_update().get(pk=schedule.pk)
+        if locked.status != ScheduleStatus.PROCESSING:
+            logger.warning(
+                '_handle_success: schedule %d already advanced to %s — not overwriting with SENT',
+                locked.pk, locked.status,
+            )
+            return
+
+        locked.status = ScheduleStatus.SENT
+        locked.sent_time = timezone.now()
+        locked.provider_message_id = result.message_id
+        locked.error = None
+        locked.failure_category = None
+        locked.save(update_fields=[
             'status', 'sent_time', 'provider_message_id',
             'error', 'failure_category', 'updated_at',
         ])
@@ -176,16 +198,16 @@ def _handle_success(schedule: Schedule, result: SendResult) -> None:
         if org.billing_mode == org.BILLING_SUBSCRIBED:
             record_usage(
                 org,
-                units=schedule.message_parts,
-                format=schedule.format or 'sms',
-                description=f'{(schedule.format or "sms").upper()} to {schedule.phone}',
+                units=locked.message_parts,
+                format=locked.format or 'sms',
+                description=f'{(locked.format or "sms").upper()} to {locked.phone}',
                 user=None,
-                schedule=schedule,
+                schedule=locked,
             )
 
     # Media blob cleanup is deferred until delivery callback (DELIVERED/FAILED)
     # so Welcorp has time to fetch the media URL asynchronously.
-    _sync_parent_status(schedule)
+    _sync_parent_status(locked)
 
 
 def _schedule_retry(schedule: Schedule, result: SendResult, failure_category: str) -> None:
@@ -230,38 +252,121 @@ def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_cat
 
 
 def _sync_parent_status(schedule: Schedule) -> None:
-    """Update parent group schedule status based on children's statuses."""
+    """Update parent group schedule status based on children's statuses.
+
+    Locks the parent row so two children completing concurrently can't both
+    compute the rollup from a stale snapshot and leave the parent wrong.
+    """
     parent = schedule.parent
     if not parent:
         return
 
-    terminal = {ScheduleStatus.SENT, ScheduleStatus.DELIVERED, ScheduleStatus.FAILED, ScheduleStatus.CANCELLED}
-    children_statuses = set(
-        Schedule.objects.filter(parent=parent).values_list('status', flat=True)
-    )
+    with transaction.atomic():
+        parent = Schedule.objects.select_for_update().get(pk=parent.pk)
 
-    if not children_statuses:
-        return
+        terminal = {ScheduleStatus.SENT, ScheduleStatus.DELIVERED, ScheduleStatus.FAILED, ScheduleStatus.CANCELLED}
+        children_statuses = set(
+            Schedule.objects.filter(parent=parent).values_list('status', flat=True)
+        )
 
-    all_terminal = children_statuses.issubset(terminal)
+        if not children_statuses:
+            return
 
-    if all_terminal:
-        if children_statuses <= {ScheduleStatus.CANCELLED}:
-            new_status = ScheduleStatus.CANCELLED
-        elif ScheduleStatus.FAILED in children_statuses:
-            new_status = ScheduleStatus.FAILED
-        elif children_statuses <= {ScheduleStatus.DELIVERED}:
-            new_status = ScheduleStatus.DELIVERED
-        elif children_statuses <= {ScheduleStatus.DELIVERED, ScheduleStatus.CANCELLED}:
-            new_status = ScheduleStatus.DELIVERED
+        all_terminal = children_statuses.issubset(terminal)
+
+        if all_terminal:
+            if children_statuses <= {ScheduleStatus.CANCELLED}:
+                new_status = ScheduleStatus.CANCELLED
+            elif ScheduleStatus.FAILED in children_statuses:
+                new_status = ScheduleStatus.FAILED
+            elif children_statuses <= {ScheduleStatus.DELIVERED}:
+                new_status = ScheduleStatus.DELIVERED
+            elif children_statuses <= {ScheduleStatus.DELIVERED, ScheduleStatus.CANCELLED}:
+                new_status = ScheduleStatus.DELIVERED
+            else:
+                new_status = ScheduleStatus.SENT
         else:
-            new_status = ScheduleStatus.SENT
-    else:
-        new_status = ScheduleStatus.PROCESSING
+            new_status = ScheduleStatus.PROCESSING
 
-    if parent.status != new_status:
-        parent.status = new_status
-        parent.save(update_fields=['status', 'updated_at'])
+        if parent.status != new_status:
+            parent.status = new_status
+            parent.save(update_fields=['status', 'updated_at'])
+
+
+def _block_if_org_ineligible(schedule: Schedule) -> dict | None:
+    """Re-check org eligibility at send time (billing gates ran at enqueue time).
+
+    An org can be soft-deleted or fall past_due while schedules sit in the
+    queue. Inactive org → cancel the schedule (and any pending children) with a
+    refund. Past-due org → park everything back in PENDING; dispatch_due_messages
+    skips past_due orgs, so sending resumes automatically once billing recovers.
+
+    Returns a task-result dict when the send is blocked, else None.
+    """
+    org = schedule.organisation
+    active_child_statuses = [
+        ScheduleStatus.PENDING, ScheduleStatus.QUEUED,
+        ScheduleStatus.RETRYING, ScheduleStatus.PROCESSING,
+    ]
+
+    if not org.is_active:
+        with transaction.atomic():
+            children = list(Schedule.objects.select_for_update().filter(
+                parent=schedule, status__in=active_child_statuses,
+            ))
+            for s in [schedule, *children]:
+                s.status = ScheduleStatus.CANCELLED
+                s.save(update_fields=['status', 'updated_at'])
+                refund_usage(org, s, description='Refund: organisation deactivated')
+        logger.warning(
+            'send blocked: org %s is inactive — cancelled schedule %d (+%d children)',
+            org.clerk_org_id, schedule.pk, len(children),
+        )
+        return {'skipped': True, 'reason': 'org_inactive'}
+
+    if org.billing_mode == Organisation.BILLING_PAST_DUE:
+        with transaction.atomic():
+            Schedule.objects.filter(pk=schedule.pk).update(status=ScheduleStatus.PENDING)
+            Schedule.objects.filter(
+                parent=schedule, status__in=active_child_statuses,
+            ).update(status=ScheduleStatus.PENDING)
+        logger.warning(
+            'send blocked: org %s is past_due — parked schedule %d as PENDING',
+            org.clerk_org_id, schedule.pk,
+        )
+        return {'skipped': True, 'reason': 'org_past_due'}
+
+    return None
+
+
+def _fail_if_opted_out(schedule: Schedule) -> bool:
+    """Fail the send when the recipient has opted out, instead of sending.
+
+    Checked at send time because contacts can opt out (or a carrier OPTO can
+    arrive) after a message was scheduled. Returns True when the send was
+    blocked; the schedule is FAILED with category opt_out and any prepaid
+    charge refunded.
+    """
+    if not schedule.phone:
+        return False
+    opted_out = Contact.objects.filter(
+        organisation=schedule.organisation, phone=schedule.phone, opt_out=True,
+    ).exists()
+    if not opted_out:
+        return False
+
+    with transaction.atomic():
+        schedule.status = ScheduleStatus.FAILED
+        schedule.failure_category = FailureCategory.OPT_OUT.value
+        schedule.error = 'Recipient has opted out of receiving messages.'
+        schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+        refund_usage(schedule.organisation, schedule)
+    logger.warning(
+        'send blocked: recipient %s opted out — failed schedule %d without sending',
+        schedule.phone, schedule.pk,
+    )
+    _sync_parent_status(schedule)
+    return True
 
 
 def _handle_failure(schedule: Schedule, result: SendResult) -> None:
@@ -308,7 +413,8 @@ def send_message(self, schedule_id: int) -> dict:
                 status__in=[ScheduleStatus.QUEUED, ScheduleStatus.RETRYING],
             )
             schedule.status = ScheduleStatus.PROCESSING
-            schedule.save(update_fields=['status', 'updated_at'])
+            schedule.dispatch_attempted_at = None
+            schedule.save(update_fields=['status', 'dispatch_attempted_at', 'updated_at'])
     except Schedule.DoesNotExist:
         logger.warning(
             'send_message: schedule %d not found or wrong status — skipping',
@@ -321,6 +427,18 @@ def send_message(self, schedule_id: int) -> dict:
             schedule_id,
         )
         return {'skipped': True, 'reason': 'concurrent_lock'}
+
+    blocked = _block_if_org_ineligible(schedule)
+    if blocked:
+        return blocked
+
+    if _fail_if_opted_out(schedule):
+        return {'skipped': True, 'reason': 'recipient_opted_out'}
+
+    # Committed before the provider HTTP call so crash recovery can tell
+    # "worker died before calling the provider" (safe to re-send) from
+    # "worker died with the send outcome unknown" (must NOT blindly re-send).
+    Schedule.objects.filter(pk=schedule.pk).update(dispatch_attempted_at=timezone.now())
 
     # Call provider outside the lock to avoid holding it during network I/O
     provider = get_sms_provider()
@@ -359,7 +477,8 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
                 status__in=[ScheduleStatus.QUEUED, ScheduleStatus.RETRYING],
             )
             parent.status = ScheduleStatus.PROCESSING
-            parent.save(update_fields=['status', 'updated_at'])
+            parent.dispatch_attempted_at = None
+            parent.save(update_fields=['status', 'dispatch_attempted_at', 'updated_at'])
     except Schedule.DoesNotExist:
         logger.warning(
             'send_batch_message: parent %d not found or wrong status — skipping',
@@ -372,6 +491,10 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
             parent_schedule_id,
         )
         return {'skipped': True, 'reason': 'concurrent_lock'}
+
+    blocked = _block_if_org_ineligible(parent)
+    if blocked:
+        return blocked
 
     # Load children that need sending (PENDING from scheduled creates, QUEUED/RETRYING from dispatch)
     children = list(
@@ -386,9 +509,22 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
         logger.info('send_batch_message: parent %d has no pending children', parent_schedule_id)
         return {'parent_id': parent_schedule_id, 'no_children': True}
 
+    # Recipients who opted out since scheduling are failed (with refund), not sent
+    children = [c for c in children if not _fail_if_opted_out(c)]
+    if not children:
+        logger.warning(
+            'send_batch_message: all recipients of parent %d opted out — nothing sent',
+            parent_schedule_id,
+        )
+        return {'parent_id': parent_schedule_id, 'skipped': True, 'reason': 'all_recipients_opted_out'}
+
     # Mark children as PROCESSING
     child_pks = [c.pk for c in children]
     Schedule.objects.filter(pk__in=child_pks).update(status=ScheduleStatus.PROCESSING)
+
+    # Committed before the provider HTTP call — see send_message. The marker
+    # lives on the parent; the children share the single bulk call's fate.
+    Schedule.objects.filter(pk=parent.pk).update(dispatch_attempted_at=timezone.now())
 
     # Build recipients and call provider
     provider = get_sms_provider()
@@ -414,7 +550,12 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
 
 
 def _handle_batch_success(parent: Schedule, children: list[Schedule], result: dict) -> None:
-    """Mark all children as SENT and record billing."""
+    """Mark all children as SENT and record billing.
+
+    Each child is re-fetched under lock and only transitioned PROCESSING→SENT,
+    mirroring _handle_success: a delivery callback that already advanced a child
+    must not be regressed back to SENT, and a child must not be charged twice.
+    """
     now = timezone.now()
     org = parent.organisation
     per_recipient = result.get('results', [])
@@ -422,12 +563,19 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
     for i, child in enumerate(children):
         child_result = per_recipient[i] if i < len(per_recipient) else {}
         with transaction.atomic():
-            child.status = ScheduleStatus.SENT
-            child.sent_time = now
-            child.provider_message_id = child_result.get('message_id')
-            child.error = None
-            child.failure_category = None
-            child.save(update_fields=[
+            locked = Schedule.objects.select_for_update().get(pk=child.pk)
+            if locked.status != ScheduleStatus.PROCESSING:
+                logger.warning(
+                    '_handle_batch_success: child %d already advanced to %s — not overwriting with SENT',
+                    locked.pk, locked.status,
+                )
+                continue
+            locked.status = ScheduleStatus.SENT
+            locked.sent_time = now
+            locked.provider_message_id = child_result.get('message_id')
+            locked.error = None
+            locked.failure_category = None
+            locked.save(update_fields=[
                 'status', 'sent_time', 'provider_message_id',
                 'error', 'failure_category', 'updated_at',
             ])
@@ -435,16 +583,21 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
             if org.billing_mode == org.BILLING_SUBSCRIBED:
                 record_usage(
                     org,
-                    units=child.message_parts,
-                    format=child.format or 'sms',
-                    description=f'{(child.format or "sms").upper()} to {child.phone}',
+                    units=locked.message_parts,
+                    format=locked.format or 'sms',
+                    description=f'{(locked.format or "sms").upper()} to {locked.phone}',
                     user=None,
-                    schedule=child,
+                    schedule=locked,
                 )
 
-    parent.status = ScheduleStatus.SENT
-    parent.sent_time = now
-    parent.save(update_fields=['status', 'sent_time', 'updated_at'])
+    # Lock the parent and only advance it from PROCESSING, so a sibling's
+    # delivery-callback rollup isn't regressed back to SENT.
+    with transaction.atomic():
+        locked_parent = Schedule.objects.select_for_update().get(pk=parent.pk)
+        if locked_parent.status == ScheduleStatus.PROCESSING:
+            locked_parent.status = ScheduleStatus.SENT
+            locked_parent.sent_time = now
+            locked_parent.save(update_fields=['status', 'sent_time', 'updated_at'])
 
     # Media blob cleanup is deferred until delivery callback (DELIVERED/FAILED)
     # so Welcorp has time to fetch the media URL asynchronously.
@@ -515,6 +668,63 @@ def _handle_batch_failure(parent: Schedule, children: list[Schedule], result: di
         )
 
 
+_UNKNOWN_OUTCOME_ERROR = (
+    'Send outcome unknown: the worker was interrupted after contacting the '
+    'provider. Not retried automatically to avoid duplicate delivery — '
+    'retry manually if the message did not arrive.'
+)
+
+
+def _fail_unknown_outcome(individual_pks: list, parent_pks: list) -> int:
+    """Fail stale PROCESSING schedules whose provider call may have gone out.
+
+    Marks them FAILED with a clear explanation, refunds the prepaid charge,
+    and syncs batch parents. Returns the number of schedules failed.
+    """
+    failed = 0
+    for pk in individual_pks:
+        with transaction.atomic():
+            schedule = Schedule.objects.select_for_update().filter(
+                pk=pk, status=ScheduleStatus.PROCESSING,
+            ).first()
+            if not schedule:
+                continue
+            schedule.status = ScheduleStatus.FAILED
+            schedule.failure_category = 'unknown'
+            schedule.error = _UNKNOWN_OUTCOME_ERROR
+            schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+            refund_usage(schedule.organisation, schedule)
+            failed += 1
+        logger.error('dispatch_due_messages: schedule %d failed with unknown send outcome', pk)
+
+    for pk in parent_pks:
+        with transaction.atomic():
+            parent = Schedule.objects.select_for_update().filter(
+                pk=pk, status=ScheduleStatus.PROCESSING,
+            ).first()
+            if not parent:
+                continue
+            children = list(Schedule.objects.select_for_update().filter(
+                parent=parent,
+                status__in=[ScheduleStatus.PENDING, ScheduleStatus.QUEUED,
+                            ScheduleStatus.RETRYING, ScheduleStatus.PROCESSING],
+            ))
+            for child in children:
+                child.status = ScheduleStatus.FAILED
+                child.failure_category = 'unknown'
+                child.error = _UNKNOWN_OUTCOME_ERROR
+                child.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+                refund_usage(child.organisation, child)
+            parent.status = ScheduleStatus.FAILED
+            parent.failure_category = 'unknown'
+            parent.error = _UNKNOWN_OUTCOME_ERROR
+            parent.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
+            failed += 1 + len(children)
+        logger.error('dispatch_due_messages: batch parent %d failed with unknown send outcome', pk)
+
+    return failed
+
+
 # ---------------------------------------------------------------------------
 # Beat task: dispatch due PENDING schedules
 # ---------------------------------------------------------------------------
@@ -549,20 +759,32 @@ def dispatch_due_messages() -> dict:
         .filter(Exists(has_children))
         .values_list('pk', flat=True)
     )
-    all_stale_queued = stale_queued_individual_pks + stale_queued_parent_pks
+    # Orphaned children: QUEUED but their parent already reached a terminal
+    # state, so no batch task will ever pick them up (e.g. recovery reset a
+    # child after the parent's bulk send finished without it). A child row is a
+    # complete sendable message — dispatch it individually. Children whose
+    # parent is still active are left for the parent's batch task.
+    terminal = [ScheduleStatus.SENT, ScheduleStatus.DELIVERED,
+                ScheduleStatus.FAILED, ScheduleStatus.CANCELLED]
+    stale_queued_orphan_pks = list(
+        stale_queued_qs.filter(parent__isnull=False, parent__status__in=terminal)
+        .values_list('pk', flat=True)
+    )
+    all_stale_queued = stale_queued_individual_pks + stale_queued_parent_pks + stale_queued_orphan_pks
     recovered_queued = len(all_stale_queued)
     if all_stale_queued:
         Schedule.objects.filter(pk__in=all_stale_queued).update(updated_at=now)
-        for pk in stale_queued_individual_pks:
+        for pk in stale_queued_individual_pks + stale_queued_orphan_pks:
             send_message.delay(pk)
         for pk in stale_queued_parent_pks:
             send_batch_message.delay(pk)
         logger.warning(
             'dispatch_due_messages: re-dispatched %d stale QUEUED schedules '
-            '(%d individual, %d batch parents)',
+            '(%d individual, %d batch parents, %d orphaned children)',
             len(all_stale_queued),
             len(stale_queued_individual_pks),
             len(stale_queued_parent_pks),
+            len(stale_queued_orphan_pks),
         )
 
     # --- Recover stale PROCESSING schedules (worker crashed mid-task) --------------------
@@ -578,18 +800,42 @@ def dispatch_due_messages() -> dict:
     stale_qs = Schedule.objects.filter(
         status=ScheduleStatus.PROCESSING, updated_at__lte=stale_cutoff,
     )
+
+    # --- Unknown-outcome schedules: the worker died AFTER the provider call was
+    # started (dispatch_attempted_at committed pre-call). The SMS may or may not
+    # have gone out — blindly re-sending risks duplicate delivery to the
+    # recipient, so fail them with a refund and leave manual retry to the user.
+    unknown_individual_pks = list(
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=False)
+        .exclude(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    unknown_parent_pks = list(
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=False)
+        .filter(Exists(has_children))
+        .values_list('pk', flat=True)
+    )
+    failed_unknown = 0
+    if unknown_individual_pks or unknown_parent_pks:
+        failed_unknown = _fail_unknown_outcome(unknown_individual_pks, unknown_parent_pks)
+
+    # --- Safe-to-resend schedules: the worker died BEFORE calling the provider
+    # (no dispatch_attempted_at). Re-queue and re-dispatch.
     stale_individual_pks = list(
-        stale_qs.filter(parent__isnull=True)
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=True)
         .exclude(Exists(has_children))
         .values_list('pk', flat=True)
     )
     stale_parent_pks = list(
-        stale_qs.filter(parent__isnull=True)
+        stale_qs.filter(parent__isnull=True, dispatch_attempted_at__isnull=True)
         .filter(Exists(has_children))
         .values_list('pk', flat=True)
     )
+    # Children carry no marker of their own (the parent's bulk call decides
+    # their fate); only reset children whose parent wasn't just failed above.
     stale_child_pks = list(
         stale_qs.filter(parent__isnull=False)
+        .exclude(parent_id__in=unknown_parent_pks)
         .values_list('pk', flat=True)
     )
 
@@ -610,17 +856,27 @@ def dispatch_due_messages() -> dict:
         #   2. Batch parents (parent=None, has children) — dispatched via send_batch_message
         # Children (parent set) are NOT dispatched directly — handled by parent's batch task.
         due = list(
-            Schedule.objects.select_for_update(skip_locked=True)
+            Schedule.objects.select_for_update(skip_locked=True, of=('self',))
             .filter(
                 Q(status=ScheduleStatus.PENDING, scheduled_time__lte=now) |
                 Q(status=ScheduleStatus.RETRYING, next_retry_at__lte=now),
             )
             .exclude(parent__isnull=False)  # exclude children
+            # Deleted orgs never dispatch; past_due orgs are held in PENDING and
+            # resume automatically once billing recovers (send tasks also
+            # re-check, for messages already queued when the org was blocked).
+            .filter(organisation__is_active=True)
+            .exclude(organisation__billing_mode=Organisation.BILLING_PAST_DUE)
             .values_list('pk', flat=True)[:batch_size]
         )
 
         if not due:
-            return {'dispatched': 0, 'recovered_queued': recovered_queued, 'recovered_processing': recovered_processing}
+            return {
+                'dispatched': 0,
+                'recovered_queued': recovered_queued,
+                'recovered_processing': recovered_processing,
+                'failed_unknown': failed_unknown,
+            }
 
         Schedule.objects.filter(pk__in=due).update(
             status=ScheduleStatus.QUEUED,
@@ -640,7 +896,12 @@ def dispatch_due_messages() -> dict:
             send_message.delay(schedule_id)
 
     logger.info('dispatch_due_messages: dispatched %d schedules', len(due))
-    return {'dispatched': len(due), 'recovered_queued': recovered_queued, 'recovered_processing': recovered_processing}
+    return {
+        'dispatched': len(due),
+        'recovered_queued': recovered_queued,
+        'recovered_processing': recovered_processing,
+        'failed_unknown': failed_unknown,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -648,13 +909,18 @@ def dispatch_due_messages() -> dict:
 # ---------------------------------------------------------------------------
 
 def _find_schedule(provider_message_id: str, recipient_phone: str | None) -> Schedule | None:
-    """Find a schedule matching a delivery callback event.
+    """Find and lock a schedule matching a delivery callback event.
 
     For batch sends, children share the same provider_message_id (Welcorp job_id)
     so we additionally match on phone number. For single sends, provider_message_id
     alone is sufficient.
+
+    Locks the row (select_for_update) — must be called inside a transaction.
+    A concurrent event for the same schedule (duplicate callback, or callback +
+    reconciliation poll) blocks here and, once the first commits a terminal
+    status, no longer matches the status filter.
     """
-    qs = Schedule.objects.filter(
+    qs = Schedule.objects.select_for_update().filter(
         provider_message_id=provider_message_id,
         status__in=[ScheduleStatus.SENT, ScheduleStatus.PROCESSING],
     )
@@ -670,7 +936,12 @@ def _find_schedule(provider_message_id: str, recipient_phone: str | None) -> Sch
 
 
 def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
-    """Transition a SENT schedule to DELIVERED."""
+    """Transition a SENT schedule to DELIVERED.
+
+    Media blob cleanup happens in process_delivery_event after the transaction
+    commits — Azure I/O must not run while holding the row lock, and a cleanup
+    failure must not roll back the delivery status.
+    """
     timestamp = event_data.get('timestamp')
     if timestamp:
         try:
@@ -685,8 +956,26 @@ def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
     schedule.save(update_fields=['status', 'delivered_time', 'updated_at'])
 
     logger.info('Schedule %d delivered at %s', schedule.pk, delivered_time)
-    _cleanup_media_blob(schedule)
     _sync_parent_status(schedule)
+
+
+def _propagate_opt_out(schedule: Schedule) -> None:
+    """Mark matching contacts opted out when the carrier reports an opt-out.
+
+    Spam Act compliance: once a recipient has opted out at the carrier level
+    (Welcorp OPTO), every contact record with that number in the org must stop
+    receiving sends — the send paths filter on Contact.opt_out.
+    """
+    if not schedule.phone:
+        return
+    updated = Contact.objects.filter(
+        organisation=schedule.organisation, phone=schedule.phone, opt_out=False,
+    ).update(opt_out=True)
+    if updated:
+        logger.warning(
+            'Carrier opt-out: marked %d contact(s) with phone %s as opted out (org %s)',
+            updated, schedule.phone, schedule.organisation.clerk_org_id,
+        )
 
 
 def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
@@ -704,6 +993,8 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
         schedule.error = error_message
         schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
         refund_usage(org, schedule)
+        if failure_category == FailureCategory.OPT_OUT.value:
+            _propagate_opt_out(schedule)
 
     logger.error(
         'Schedule %d delivery failed (%s): %s',
@@ -713,14 +1004,22 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
     _sync_parent_status(schedule)
 
 
-@shared_task(name='app.celery.process_delivery_event', queue='messages', acks_late=True)
+@shared_task(
+    name='app.celery.process_delivery_event',
+    queue='messages',
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def process_delivery_event(event_data: dict) -> dict:
     """Process a delivery status callback from the SMS provider.
 
-    Looks up the schedule by provider_message_id (and phone for batch sends),
-    then transitions it to DELIVERED or FAILED.
+    Looks up and row-locks the schedule by provider_message_id (and phone for
+    batch sends), then transitions it to DELIVERED or FAILED in one transaction.
 
-    Idempotent: only processes schedules in SENT status.
+    Idempotent and race-safe: only SENT/PROCESSING schedules match, the row
+    lock serializes concurrent events for the same schedule (duplicate callback
+    POSTs, or a callback racing the reconciliation poll), and the loser re-reads
+    a terminal status and skips — so the refund can never be issued twice.
     """
     provider_message_id = event_data.get('provider_message_id')
     recipient_phone = event_data.get('recipient_phone')
@@ -730,21 +1029,28 @@ def process_delivery_event(event_data: dict) -> dict:
         logger.error('process_delivery_event: missing provider_message_id')
         return {'skipped': True, 'reason': 'missing provider_message_id'}
 
-    schedule = _find_schedule(provider_message_id, recipient_phone)
-    if not schedule:
-        logger.info(
-            'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
-            provider_message_id, recipient_phone,
-        )
-        return {'skipped': True, 'reason': 'schedule_not_found'}
-
-    if delivery_status == 'delivered':
-        _handle_delivery_success(schedule, event_data)
-    elif delivery_status == 'failed':
-        _handle_delivery_failure(schedule, event_data)
-    else:
+    if delivery_status not in ('delivered', 'failed'):
         logger.warning('process_delivery_event: unknown status %r', delivery_status)
         return {'skipped': True, 'reason': f'unknown_status:{delivery_status}'}
+
+    with transaction.atomic():
+        schedule = _find_schedule(provider_message_id, recipient_phone)
+        if not schedule:
+            logger.info(
+                'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
+                provider_message_id, recipient_phone,
+            )
+            return {'skipped': True, 'reason': 'schedule_not_found'}
+
+        if delivery_status == 'delivered':
+            _handle_delivery_success(schedule, event_data)
+        else:
+            _handle_delivery_failure(schedule, event_data)
+
+    # Post-commit, non-critical: blob cleanup does Azure I/O and must not hold
+    # the row lock or roll back the status change on failure.
+    if delivery_status == 'delivered':
+        _cleanup_media_blob(schedule)
 
     return {'schedule_id': schedule.pk, 'status': delivery_status}
 
@@ -753,7 +1059,9 @@ def process_delivery_event(event_data: dict) -> dict:
 # Reconciliation
 # ---------------------------------------------------------------------------
 
-@shared_task(name='app.celery.reconcile_stale_sent')
+# Polls up to 50 provider jobs at up to 30s each — needs more than the
+# global 300s task time limit.
+@shared_task(name='app.celery.reconcile_stale_sent', time_limit=1800, soft_time_limit=1740)
 def reconcile_stale_sent() -> dict:
     """Poll provider for delivery status of schedules stuck in SENT.
 
@@ -803,7 +1111,8 @@ def reconcile_stale_sent() -> dict:
 # Media blob cleanup
 # ---------------------------------------------------------------------------
 
-@shared_task(name='app.celery.cleanup_stale_media_blobs')
+# Iterates blobs with per-blob Azure I/O — may exceed the global time limit.
+@shared_task(name='app.celery.cleanup_stale_media_blobs', time_limit=3600, soft_time_limit=3540)
 def cleanup_stale_media_blobs() -> dict:
     """Delete media blobs for failed schedules older than 7 days.
 
@@ -864,7 +1173,8 @@ def link_billing_customer(self, org_pk: int) -> None:
         raise self.retry(countdown=60 * (2 ** self.request.retries))
 
 
-@shared_task(name='app.celery.generate_monthly_invoices')
+# One Stripe invoice (several API calls) per subscribed org — monthly, slow.
+@shared_task(name='app.celery.generate_monthly_invoices', time_limit=3600, soft_time_limit=3540)
 def generate_monthly_invoices() -> dict:
     """Generate and send invoices for all subscribed orgs for the previous month.
 

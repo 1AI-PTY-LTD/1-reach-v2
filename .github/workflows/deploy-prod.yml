@@ -14,6 +14,9 @@ jobs:
   #   backup create: --name (server) → --server-name, --backup-name → --name
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC azure/login
+      contents: read
     environment: prod
     outputs:
       image_tag: ${{ steps.image.outputs.tag }}
@@ -32,7 +35,12 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          # OIDC workload-identity federation: GitHub mints a short-lived token
+          # per run that Entra only accepts for this repo+environment, so no
+          # long-lived service-principal secret is stored in GitHub.
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Get runner IP
         id: ip
@@ -162,17 +170,32 @@ jobs:
       - name: Delete replica
         if: steps.check.outputs.pending == 'true' && steps.tier.outputs.supports_replica == 'true' && always()
         run: |
+          # A leftover replica keeps billing and widens the attack surface —
+          # fail the job loudly if deletion does not go through.
           az postgres flexible-server delete \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
-            --name "${{ steps.replica.outputs.name }}" --yes 2>/dev/null || true
+            --name "${{ steps.replica.outputs.name }}" --yes \
+            || { echo "::error::Failed to delete replica ${{ steps.replica.outputs.name }} — delete it manually."; exit 1; }
 
       - name: Remove runner IP from firewall
         if: always()
         run: |
+          # The runner's public IP must not stay whitelisted on the production
+          # database. Tolerate "rule never created" (an early step failed),
+          # but a failed deletion of an existing rule must fail the job.
+          EXISTS=$(az postgres flexible-server firewall-rule list \
+            --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
+            --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
+            --query "[?name=='github-runner'] | length(@)" -o tsv 2>/dev/null || echo 0)
+          if [ "$EXISTS" = "0" ]; then
+            echo "No github-runner firewall rule present — nothing to remove."
+            exit 0
+          fi
           az postgres flexible-server firewall-rule delete \
             --resource-group ${{ vars.AZURE_POSTGRES_RESOURCE_GROUP }} \
             --name ${{ vars.AZURE_POSTGRES_SERVER_NAME }} \
-            --rule-name github-runner --yes 2>/dev/null || true
+            --rule-name github-runner --yes \
+            || { echo "::error::Failed to remove the github-runner firewall rule — REMOVE IT MANUALLY in the Azure portal."; exit 1; }
 
       - name: Log in to ACR
         run: az acr login --name ${{ vars.ACR_LOGIN_SERVER }}
@@ -181,20 +204,23 @@ jobs:
         id: image
         working-directory: backend
         run: |
+          # SHA tags only — production images stay immutable. A :latest tag in
+          # prod ACR is an ambiguity hazard (anything resolving it can silently
+          # repoint) and the Bicep deploy only ever uses the SHA tag.
           IMAGE="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:${{ github.sha }}"
-          IMAGE_LATEST="${{ vars.ACR_LOGIN_SERVER }}/1reach-backend:latest"
           docker build \
             --build-arg DEPLOY_SHA=${{ github.sha }} \
             -t "$IMAGE" \
-            -t "$IMAGE_LATEST" \
             .
           docker push "$IMAGE"
-          docker push "$IMAGE_LATEST"
           echo "tag=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy-bicep:
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC azure/login
+      contents: read
     environment: prod
     steps:
       - uses: actions/checkout@v4
@@ -202,7 +228,12 @@ jobs:
       - name: Azure login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          # OIDC workload-identity federation: GitHub mints a short-lived token
+          # per run that Entra only accepts for this repo+environment, so no
+          # long-lived service-principal secret is stored in GitHub.
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy infrastructure + app via Bicep
         run: |
@@ -269,24 +300,77 @@ jobs:
   verify-health:
     needs: deploy-bicep
     runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write   # required for OIDC azure/login
+      contents: read
     steps:
-      - name: Wait for new instance (smoke test + version check)
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Smoke test new revision, then shift traffic (zero downtime)
         run: |
-          URL="${{ vars.VITE_API_BASE_URL_PROD }}/api/health/smoke/"
+          # The API runs in multiple-revision mode: the Bicep deploy created a
+          # new revision at 0% traffic. Smoke-test it on its revision-specific
+          # FQDN; only when it reports healthy with the expected SHA does
+          # traffic move. On failure the old revision keeps serving 100%.
+          APP="onereach-api-${{ vars.ENVIRONMENT_NAME }}"
+          RG="${{ vars.RESOURCE_GROUP }}"
           EXPECTED_SHA="${{ github.sha }}"
-          echo "Polling $URL until version=$EXPECTED_SHA..."
+
+          NEW_REV=$(az containerapp revision list -n "$APP" -g "$RG" \
+            --query "sort_by([], &properties.createdTime)[-1].name" -o tsv)
+          REV_FQDN=$(az containerapp revision show -n "$APP" -g "$RG" --revision "$NEW_REV" \
+            --query properties.fqdn -o tsv)
+          URL="https://$REV_FQDN/api/health/smoke/"
+          echo "Newest revision: $NEW_REV — polling $URL until version=$EXPECTED_SHA..."
+
+          HEALTHY=0
           for i in $(seq 1 30); do
             RESP=$(curl -s -w "\n%{http_code}" --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
             STATUS=$(echo "$RESP" | tail -1)
             BODY=$(echo "$RESP" | sed '$d')
             echo "Attempt $i/30: HTTP $STATUS — $BODY"
             if [ "$STATUS" = "200" ] && echo "$BODY" | grep -q "$EXPECTED_SHA"; then
-              echo "New instance confirmed — smoke test passed."
-              exit 0
+              HEALTHY=1
+              break
             fi
             sleep 10
           done
-          echo "New instance did not become healthy within 5 minutes."
+
+          if [ "$HEALTHY" != "1" ]; then
+            echo "::error::Revision $NEW_REV failed the smoke test — traffic stays on the previous revision. Deactivating the bad revision."
+            az containerapp revision deactivate -n "$APP" -g "$RG" --revision "$NEW_REV" || true
+            exit 1
+          fi
+
+          echo "Smoke test passed — shifting 100% traffic to $NEW_REV"
+          az containerapp ingress traffic set -n "$APP" -g "$RG" --revision-weight "$NEW_REV=100"
+
+          for REV in $(az containerapp revision list -n "$APP" -g "$RG" \
+              --query "[?properties.active && name!='$NEW_REV'].name" -o tsv); do
+            echo "Deactivating old revision $REV"
+            az containerapp revision deactivate -n "$APP" -g "$RG" --revision "$REV"
+          done
+
+      - name: Verify the public endpoint serves the new version
+        run: |
+          URL="${{ vars.VITE_API_BASE_URL_PROD }}/api/health/smoke/"
+          EXPECTED_SHA="${{ github.sha }}"
+          for i in $(seq 1 12); do
+            BODY=$(curl -s --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
+            echo "Attempt $i/12: $BODY"
+            if echo "$BODY" | grep -q "$EXPECTED_SHA"; then
+              echo "Public endpoint is serving the new version."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Public endpoint did not switch to the new version within 1 minute."
           exit 1
 
       - name: Create Sentry release

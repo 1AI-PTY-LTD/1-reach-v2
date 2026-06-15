@@ -31,6 +31,8 @@ export type SendSmsResponse = {
   schedule_id?: number
   parent_schedule_id?: number
   total?: number
+  /** Recipients dropped because their number has opted out (multi-recipient sends). */
+  skipped_opted_out?: number
 }
 
 export type SendGroupSmsResponse = {
