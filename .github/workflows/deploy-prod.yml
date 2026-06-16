@@ -375,6 +375,40 @@ jobs:
           echo "::error::Public endpoint did not switch to the new version within 1 minute."
           exit 1
 
+      - name: Verify Celery worker + beat are processing
+        # The worker writes a dispatch heartbeat to the shared Azure Redis each
+        # beat tick; the api revision reads it. Stale/missing => worker/beat down
+        # or running the wrong process (the gunicorn-instead-of-celery incident).
+        run: |
+          URL="${{ vars.VITE_API_BASE_URL_PROD }}/api/health/worker/"
+          for i in $(seq 1 18); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
+            echo "Worker health attempt $i/18: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Worker/beat not processing in prod (heartbeat stale/missing)."
+          curl -s "$URL" || true
+          exit 1
+
+      - name: Verify debug/test surfaces are disabled
+        # Swagger is DEBUG-gated; 404 proves DEBUG=False, which by the boot guard
+        # (TEST=1 refuses to boot unless DEBUG=1) also proves TEST=False.
+        run: |
+          BASE="${{ vars.VITE_API_BASE_URL_PROD }}"
+          SCHEMA=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/schema/" 2>/dev/null) || true
+          echo "GET /api/schema/ -> $SCHEMA (expect 404)"
+          if [ "$SCHEMA" = "200" ]; then
+            echo "::error::/api/schema/ reachable in prod — DEBUG appears enabled; TEST endpoints may be live."
+            exit 1
+          fi
+          TS=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/billing/test-set-balance/" 2>/dev/null) || true
+          echo "PATCH /api/billing/test-set-balance/ (unauth) -> $TS (expect 401/403, never 200)"
+          if [ "$TS" = "200" ]; then
+            echo "::error::test-set-balance returned 200 unauthenticated in prod."
+            exit 1
+          fi
+
       - name: Create Sentry release
         if: env.SENTRY_AUTH_TOKEN != ''
         uses: getsentry/action-release@v3

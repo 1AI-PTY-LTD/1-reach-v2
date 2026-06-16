@@ -11,8 +11,11 @@ Tests:
 """
 
 import io
+from unittest.mock import patch
+
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError
 from rest_framework import status
 
 from app.models import Contact
@@ -424,3 +427,132 @@ class TestContactImportCSV:
         # Should be flagged as duplicate — no new contact created
         assert response.data['error_count'] == 1
         assert Contact.objects.filter(organisation=organisation).count() == 1
+
+
+@pytest.mark.django_db
+class TestContactImportCSVEdgeCases:
+    """Duplicate-detection, normalisation, and failure-surfacing edges for CSV import."""
+
+    def test_dup_detection_is_org_scoped(self, authenticated_client, organisation):
+        """A phone that exists in ANOTHER org is not a duplicate — it imports cleanly.
+
+        Duplicate detection seeds existing_phones from this org only, so a
+        cross-org collision must not be flagged.
+        """
+        other_org = OrganisationFactory()
+        # Same phone, different org — must not block this org's import.
+        ContactFactory(organisation=other_org, phone='0412345678')
+
+        csv_content = b'phone,first_name\n0412345678,Mine'
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        response = authenticated_client.post(
+            '/api/contacts/import/', {'file': csv_file}, format='multipart',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['success_count'] == 1
+        assert response.data['error_count'] == 0
+        # Created in this org; the other org's contact is untouched.
+        assert Contact.objects.filter(organisation=organisation, phone='0412345678').count() == 1
+        assert Contact.objects.filter(organisation=other_org, phone='0412345678').count() == 1
+
+    def test_cross_org_phone_collision_is_importable(self, authenticated_client, organisation):
+        """The (organisation, phone) unique constraint is per-org, so the same number
+        can be imported even though it already exists under a different org."""
+        other_org = OrganisationFactory()
+        ContactFactory(organisation=other_org, phone='0487654321')
+
+        csv_content = b'phone,first_name,last_name\n0487654321,Jane,Smith'
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        response = authenticated_client.post(
+            '/api/contacts/import/', {'file': csv_file}, format='multipart',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['success_count'] == 1
+        created = Contact.objects.get(organisation=organisation, phone='0487654321')
+        assert created.first_name == 'Jane'
+
+    def test_in_file_duplicate_is_deduplicated(self, authenticated_client, organisation):
+        """The same number appearing twice in one file: first imported, second flagged."""
+        csv_content = b'phone,first_name\n0412345678,First\n0412345678,Second'
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        response = authenticated_client.post(
+            '/api/contacts/import/', {'file': csv_file}, format='multipart',
+        )
+
+        assert response.status_code == 207  # mixed: one success, one error
+        assert response.data['success_count'] == 1
+        assert response.data['error_count'] == 1
+        # Only one row persisted despite two file rows for the same number.
+        assert Contact.objects.filter(organisation=organisation, phone='0412345678').count() == 1
+
+    def test_in_file_duplicate_across_phone_formats_is_deduplicated(
+        self, authenticated_client, organisation,
+    ):
+        """Two rows for the same number in different formats (+61 vs 04) dedupe to one.
+
+        Normalisation runs BEFORE the in-file dedup set is consulted, so
+        '+61412345678' and '0412345678' collapse to a single contact.
+        """
+        csv_content = b'phone,first_name\n+61 412 345 678,A\n0412345678,B'
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        response = authenticated_client.post(
+            '/api/contacts/import/', {'file': csv_file}, format='multipart',
+        )
+
+        assert response.status_code == 207
+        assert response.data['success_count'] == 1
+        assert response.data['error_count'] == 1
+        assert Contact.objects.filter(organisation=organisation, phone='0412345678').count() == 1
+
+    def test_plus61_and_spaced_numbers_are_normalised(self, authenticated_client, organisation):
+        """`+61` prefixes and embedded spaces are normalised to the canonical 04XXXXXXXX."""
+        csv_content = (
+            b'phone,first_name\n'
+            b'+61412000111,PlusPrefix\n'
+            b'04 1200 0222,Spaced\n'
+            b'+61 412 000 333,PlusSpaced'
+        )
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        response = authenticated_client.post(
+            '/api/contacts/import/', {'file': csv_file}, format='multipart',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['success_count'] == 3
+        assert response.data['error_count'] == 0
+        phones = set(
+            Contact.objects.filter(organisation=organisation).values_list('phone', flat=True)
+        )
+        assert phones == {'0412000111', '0412000222', '0412000333'}
+
+    def test_bulk_create_race_falls_back_per_row_not_500(self, authenticated_client, organisation):
+        """A race that makes bulk_create raise IntegrityError must not 500.
+
+        Simulates a concurrent insert landing between the existing_phones snapshot
+        and bulk_create (the snapshot says "new", the DB says "taken"). The view
+        catches the IntegrityError and falls back to per-row inserts: valid rows are
+        imported and any row that still collides goes into error_records — never an
+        unhandled 500.
+        """
+        csv_content = b'phone,first_name\n0412345678,Racey'
+        csv_file = SimpleUploadedFile('contacts.csv', csv_content, content_type='text/csv')
+
+        with patch.object(
+            Contact.objects, 'bulk_create',
+            side_effect=IntegrityError('duplicate key value violates unique constraint'),
+        ):
+            response = authenticated_client.post(
+                '/api/contacts/import/', {'file': csv_file}, format='multipart',
+            )
+
+        # Graceful per-row fallback: not a 500, and the valid row is actually imported.
+        assert response.status_code != status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.status_code == status.HTTP_200_OK
+        assert Contact.objects.filter(organisation=organisation, phone='0412345678').exists()

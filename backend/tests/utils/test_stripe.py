@@ -139,3 +139,81 @@ class TestStripeMeteredBillingProvider:
 
         with pytest.raises(stripe.SignatureVerificationError):
             self.provider.parse_webhook(b'payload', 'bad_sig')
+
+    # --- create_checkout_session (was untested) ---
+
+    @patch('app.utils.stripe.stripe.checkout.Session.create')
+    def test_create_checkout_session_with_existing_customer(self, mock_create):
+        mock_create.return_value = Mock(id='cs_123', url='https://checkout.stripe.com/cs_123')
+
+        result = self.provider.create_checkout_session(
+            customer_id='cus_x', amount=Decimal('25'), org_id='org_1',
+            success_url='https://s', cancel_url='https://c',
+        )
+
+        assert result.success is True
+        assert result.session_id == 'cs_123'
+        assert result.checkout_url == 'https://checkout.stripe.com/cs_123'
+        params = mock_create.call_args.kwargs
+        assert params['customer'] == 'cus_x'
+        assert 'customer_creation' not in params
+        assert params['line_items'][0]['price_data']['unit_amount'] == 2500
+        assert params['metadata'] == {'purchase_type': 'credit_purchase', 'org_id': 'org_1'}
+
+    @patch('app.utils.stripe.stripe.checkout.Session.create')
+    def test_create_checkout_session_without_customer_sets_creation_always(self, mock_create):
+        mock_create.return_value = Mock(id='cs_456', url='https://checkout.stripe.com/cs_456')
+
+        result = self.provider.create_checkout_session(
+            customer_id=None, amount=Decimal('10'), org_id='org_2',
+            success_url='https://s', cancel_url='https://c',
+        )
+
+        assert result.success is True
+        params = mock_create.call_args.kwargs
+        assert params.get('customer_creation') == 'always'
+        assert 'customer' not in params
+
+    @patch('app.utils.stripe.stripe.checkout.Session.create')
+    def test_create_checkout_session_stripe_error(self, mock_create):
+        mock_create.side_effect = stripe.StripeError('boom')
+
+        result = self.provider.create_checkout_session(
+            customer_id=None, amount=Decimal('10'), org_id='org_3',
+            success_url='https://s', cancel_url='https://c',
+        )
+
+        assert result.success is False
+        assert 'boom' in result.error
+
+    # --- get_invoice_pdf (was untested) ---
+
+    @patch('app.utils.stripe.http_requests.get')
+    @patch('app.utils.stripe.stripe.Invoice.retrieve')
+    def test_get_invoice_pdf_downloads_bytes(self, mock_retrieve, mock_get):
+        mock_retrieve.return_value = Mock(invoice_pdf='https://files.stripe.com/in_1.pdf')
+        mock_get.return_value = Mock(content=b'%PDF-1.4 fake')
+
+        result = self.provider.get_invoice_pdf('in_1')
+
+        assert result.success is True
+        assert result.content == b'%PDF-1.4 fake'
+        assert result.filename == 'invoice-in_1.pdf'
+
+    @patch('app.utils.stripe.stripe.Invoice.retrieve')
+    def test_get_invoice_pdf_no_pdf_url_returns_failure(self, mock_retrieve):
+        mock_retrieve.return_value = Mock(invoice_pdf=None)
+
+        result = self.provider.get_invoice_pdf('in_2')
+
+        assert result.success is False
+        assert 'No PDF available' in result.error
+
+    @patch('app.utils.stripe.stripe.Invoice.retrieve')
+    def test_get_invoice_pdf_stripe_error(self, mock_retrieve):
+        mock_retrieve.side_effect = stripe.StripeError('nope')
+
+        result = self.provider.get_invoice_pdf('in_3')
+
+        assert result.success is False
+        assert 'nope' in result.error

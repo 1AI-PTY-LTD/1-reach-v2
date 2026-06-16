@@ -175,6 +175,43 @@ jobs:
           echo "New instance did not become healthy within 5 minutes."
           exit 1
 
+      - name: Verify Celery worker + beat are processing
+        # The worker writes a dispatch heartbeat to the shared Redis each beat
+        # tick; the api revision reads it. A stale/missing heartbeat means the
+        # worker/beat container is down or running the wrong process (the
+        # gunicorn-instead-of-celery incident) — fail the deploy.
+        run: |
+          URL="${{ vars.VITE_API_BASE_URL_DEV }}/api/health/worker/"
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 "$URL" 2>/dev/null) || true
+            echo "Worker health attempt $i/30: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Worker/beat not processing (heartbeat stale/missing)."
+          curl -s "$URL" || true
+          exit 1
+
+      - name: Verify debug/test surfaces are disabled
+        # Swagger is DEBUG-gated (urls.py). A 404 proves DEBUG=False, which by the
+        # boot guard (settings.py: TEST=1 refuses to boot unless DEBUG=1) also
+        # proves TEST=False — so the TEST-only endpoints and the webhook-signature
+        # bypass are inert in this environment.
+        run: |
+          BASE="${{ vars.VITE_API_BASE_URL_DEV }}"
+          SCHEMA=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/schema/" 2>/dev/null) || true
+          echo "GET /api/schema/ -> $SCHEMA (expect 404)"
+          if [ "$SCHEMA" = "200" ]; then
+            echo "::error::/api/schema/ is reachable — DEBUG appears enabled; TEST endpoints may be live."
+            exit 1
+          fi
+          TS=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BASE/api/billing/test-set-balance/" 2>/dev/null) || true
+          echo "PATCH /api/billing/test-set-balance/ (unauth) -> $TS (expect 401/403, never 200)"
+          if [ "$TS" = "200" ]; then
+            echo "::error::test-set-balance returned 200 unauthenticated."
+            exit 1
+          fi
+
   run-e2e-tests:
     needs: verify-health
     runs-on: ubuntu-latest

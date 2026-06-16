@@ -12,13 +12,17 @@ Verifies that:
 """
 
 from datetime import timedelta
-from unittest.mock import patch
+from decimal import Decimal
+from unittest.mock import Mock, patch
 
 import pytest
+import redis
+from django.conf import settings
 from django.utils import timezone
 
-from app.models import ContactGroup, MessageFormat, Schedule, ScheduleStatus
+from app.models import ContactGroup, CreditTransaction, MessageFormat, Schedule, ScheduleStatus
 from app.celery import dispatch_due_messages
+from app.utils.billing import record_usage
 
 
 # ---------------------------------------------------------------------------
@@ -461,10 +465,6 @@ class TestStaleProcessingRecovery:
         schedule, so a worker dying after the provider call meant the recipient
         received the SMS twice.
         """
-        from decimal import Decimal
-        from app.models import CreditTransaction
-        from app.utils.billing import record_usage
-
         organisation.billing_mode = organisation.BILLING_PREPAID
         organisation.credit_balance = Decimal('10.00')
         organisation.save()
@@ -508,8 +508,6 @@ class TestStaleProcessingRecovery:
 
     def test_unknown_outcome_batch_parent_fails_children_with_refunds(self, db, organisation, user):
         """A stale PROCESSING batch parent with an attempted provider call fails its children too."""
-        from decimal import Decimal
-        from app.utils.billing import record_usage
 
         organisation.billing_mode = organisation.BILLING_PREPAID
         organisation.credit_balance = Decimal('10.00')
@@ -725,3 +723,71 @@ class TestStaleQueuedRecovery:
 
         individual.refresh_from_db()
         assert individual.updated_at > old_time
+
+
+# ---------------------------------------------------------------------------
+# Worker heartbeat
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestDispatchHeartbeat:
+    """Each dispatch_due_messages tick records a liveness heartbeat in Redis.
+
+    Read by /api/health/worker/ to detect a dead/misconfigured worker+beat.
+    celery.py imports _get_redis_client at module top, so patch where it is used:
+    app.celery._get_redis_client.
+    """
+
+    def test_writes_heartbeat_each_tick(self, db):
+        """dispatch_due_messages SETs WORKER_HEARTBEAT_KEY on the broker Redis."""
+        redis_client = Mock()
+        with patch('app.celery._get_redis_client', return_value=redis_client), \
+             patch('app.celery.send_message'), \
+             patch('app.celery.send_batch_message'):
+            dispatch_due_messages()
+
+        redis_client.set.assert_called_once()
+        args, kwargs = redis_client.set.call_args
+        assert args[0] == settings.WORKER_HEARTBEAT_KEY
+        # A TTL is set so a dead worker's stale heartbeat eventually expires.
+        assert kwargs.get('ex')
+
+    def test_writes_heartbeat_even_when_nothing_due(self, db):
+        """The heartbeat is written before any dispatch work, so an idle tick still beats."""
+        redis_client = Mock()
+        with patch('app.celery._get_redis_client', return_value=redis_client), \
+             patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message') as mock_batch:
+            result = dispatch_due_messages()
+
+        assert result['dispatched'] == 0
+        mock_send.delay.assert_not_called()
+        mock_batch.delay.assert_not_called()
+        redis_client.set.assert_called_once()
+
+    def test_redis_failure_does_not_break_dispatch(self, db, organisation, user):
+        """A Redis blip while writing the heartbeat must never fail dispatch."""
+        redis_client = Mock()
+        redis_client.set.side_effect = redis.RedisError('redis down')
+        individual = Schedule.objects.create(
+            organisation=organisation,
+            phone='0412345678',
+            text='Heartbeat resilience',
+            scheduled_time=timezone.now() - timedelta(minutes=5),
+            status=ScheduleStatus.PENDING,
+            format=MessageFormat.SMS,
+            message_parts=1,
+            max_retries=3,
+            created_by=user,
+            updated_by=user,
+        )
+
+        with patch('app.celery._get_redis_client', return_value=redis_client), \
+             patch('app.celery.send_message') as mock_send, \
+             patch('app.celery.send_batch_message'):
+            mock_send.delay.return_value = None
+            result = dispatch_due_messages()
+
+        # Dispatch still proceeds despite the heartbeat write failing.
+        assert result['dispatched'] == 1
+        mock_send.delay.assert_called_once_with(individual.pk)

@@ -27,9 +27,11 @@ import {
   setOrgBalance,
   createConfig, deleteConfig,
   uploadFile, sendMms,
+  E2E_FREE_PHONE,
 } from './helpers'
 
-// 400x400 solid-colour JPEG — SMS providers reject tiny/pixel images
+// 24x24 valid JPEG. The prior 400x400 fixture was subtly corrupt (Welcorp's
+// decoder rejected it on real MMS sends); regenerated clean via Pillow.
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const TEST_IMAGE = readFileSync(join(__dirname, 'fixtures', 'test-image.jpg'))
@@ -61,17 +63,19 @@ test.beforeAll(async ({ browser }) => {
   let groupContact: any
   ;[contact, groupContact, group] = await Promise.all([
     ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' }),
-    ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: '0416222222' }),
+    // Group member pinned to the free number — the UI group send below uses the
+    // member's own phone (no per-recipient override), so it must be the free one.
+    ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: E2E_FREE_PHONE }),
     createGroup(page, { name: 'Pipeline Group' }),
   ])
   await addMembers(page, group.id, [groupContact.id])
 
   // Create schedules for pipeline status display tests
   const PIPELINE_STATES = [
-    { message: 'Hello Charlie', status: 'queued',    phone: '0416333333' },
-    { message: 'Hello Diana',   status: 'retrying',  phone: '0416444444' },
-    { message: 'Hello Eve',     status: 'delivered', phone: '0416555555' },
-    { message: 'Hello Frank',   status: 'failed',    phone: '0416666666' },
+    { message: 'Hello Charlie', status: 'queued',    phone: E2E_FREE_PHONE },
+    { message: 'Hello Diana',   status: 'retrying',  phone: E2E_FREE_PHONE },
+    { message: 'Hello Eve',     status: 'delivered', phone: E2E_FREE_PHONE },
+    { message: 'Hello Frank',   status: 'failed',    phone: E2E_FREE_PHONE },
   ]
   const results = await Promise.all(
     PIPELINE_STATES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
@@ -115,7 +119,7 @@ async function fillAndSubmitSmsForm(page: Page, message = 'Hello test') {
 
   const recipientInput = page.getByPlaceholder(/search|recipient|phone|contact/i).first()
   if (await recipientInput.isVisible()) {
-    await recipientInput.fill('0416111111')
+    await recipientInput.fill(E2E_FREE_PHONE)
     const firstOption = page.locator('[role="option"]').first()
     if (await firstOption.isVisible({ timeout: 1000 }).catch(() => false)) {
       await firstOption.click()
@@ -174,7 +178,7 @@ test.describe('MMS — file upload and send', () => {
     const result = await sendMms(page, {
       message: 'E2E MMS test',
       media_url: upload.url,
-      recipients: [{ phone: '0416111111', contact_id: contact.id }],
+      recipients: [{ phone: E2E_FREE_PHONE, contact_id: contact.id }],
     })
     expect(result.schedule_id).toBeTruthy()
 

@@ -5,6 +5,7 @@ import {
   deleteSchedule,
   apiRequest,
   setOrgBalance,
+  E2E_FREE_PHONE,
 } from './helpers'
 
 let contact: { id: number }
@@ -22,7 +23,7 @@ test.beforeAll(async ({ browser }) => {
   contact = await ensureContact(page, { first_name: 'Billing', last_name: 'Test', phone: '0416111111' })
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
     message: 'Billing test message',
-    recipients: [{ phone: '0416111111', contact_id: contact.id }],
+    recipients: [{ phone: E2E_FREE_PHONE, contact_id: contact.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
 

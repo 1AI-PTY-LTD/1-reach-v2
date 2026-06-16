@@ -18,8 +18,15 @@ from unittest.mock import Mock, patch
 from django.conf import settings
 from django.utils import timezone
 
-from app.models import CreditTransaction, Organisation, Schedule, ScheduleStatus
-from app.utils.billing import grant_credits
+from app.models import (
+    Contact,
+    CreditTransaction,
+    MessageFormat,
+    Organisation,
+    Schedule,
+    ScheduleStatus,
+)
+from app.utils.billing import grant_credits, record_usage
 from app.utils.sms import SendResult
 from tests.factories import create_contact_group_with_members
 
@@ -141,6 +148,72 @@ class TestSendSMSPipeline:
         # Credits reserved by view, then refunded by task on permanent failure
         organisation.refresh_from_db()
         assert organisation.credit_balance == Decimal('10.00')
+
+
+# ---------------------------------------------------------------------------
+# Send-time opt-out enforcement (task path)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestSendTimeOptOut:
+    """A recipient who opts out AFTER a schedule is queued must not be sent to.
+
+    The /api/sms/send/ endpoint drops opted-out recipients at 400 before any
+    schedule exists, so this defence-in-depth path (send_message re-checking
+    opt-out at dispatch) is exercised by creating a QUEUED schedule directly.
+    """
+
+    def test_queued_schedule_fails_when_recipient_opted_out(
+        self, organisation, user
+    ):
+        """send_message → recipient opted out → FAILED/opt_out, refund, provider NOT called."""
+        from app.celery import send_message
+
+        organisation.billing_mode = Organisation.BILLING_PREPAID
+        organisation.credit_balance = Decimal('0.00')  # fixture default is funded
+        organisation.save()
+        grant_credits(organisation, Decimal('10.00'), 'Test grant')
+
+        phone = '0412345678'
+        # Recipient has opted out (carrier OPTO or manual unsubscribe) after queueing
+        Contact.objects.create(
+            organisation=organisation, phone=phone, opt_out=True,
+            created_by=user, updated_by=user,
+        )
+        schedule = Schedule.objects.create(
+            organisation=organisation, phone=phone, text='Hello',
+            scheduled_time=timezone.now(), status=ScheduleStatus.QUEUED,
+            format=MessageFormat.SMS, message_parts=1, max_retries=3,
+            created_by=user, updated_by=user,
+        )
+        # Prepaid charge reserved at queue time
+        record_usage(organisation, 1, 'sms', 'reserved', schedule=schedule)
+        organisation.refresh_from_db()
+        reserved_balance = organisation.credit_balance
+        assert reserved_balance < Decimal('10.00')
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = Mock()
+            mock_get.return_value = provider
+
+            result = send_message.delay(schedule.pk)
+
+        # Provider must never be called for an opted-out recipient
+        provider.send_sms.assert_not_called()
+        provider.send_mms.assert_not_called()
+
+        schedule.refresh_from_db()
+        assert schedule.status == ScheduleStatus.FAILED
+        assert schedule.failure_category == 'opt_out'
+
+        # Reserved credits are refunded on the opt-out block
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
+        assert CreditTransaction.objects.filter(
+            schedule=schedule, transaction_type=CreditTransaction.REFUND,
+        ).exists()
+        # The task reports it was skipped (not sent)
+        assert result.get()['skipped'] is True
 
 
 # ---------------------------------------------------------------------------

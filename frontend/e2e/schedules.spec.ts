@@ -5,19 +5,21 @@ import {
   deleteContact, ensureContact,
   createGroup, addMembers, deleteGroup,
   apiRequest, forceStatus, deleteSchedule,
+  E2E_FREE_PHONE,
 } from './helpers'
 
 const scheduleIds: number[] = []
 let contact: { id: number }
 
+// All sends target the free Welcorp number; rows stay distinguishable by message.
 const SCHEDULES = [
-  { message: 'Hello Alice',   status: 'pending',   phone: '0414111111' },
-  { message: 'Hello Bob',     status: 'sent',      phone: '0414222222' },
-  { message: 'Hello Charlie', status: 'queued',    phone: '0414333333' },
-  { message: 'Hello Diana',   status: 'retrying',  phone: '0414444444' },
-  { message: 'Hello Eve',     status: 'delivered', phone: '0414555555' },
-  { message: 'Hello Frank',   status: 'failed',    phone: '0414666666' },
-  { message: 'Hello Grace',   status: 'cancelled', phone: '0414777777' },
+  { message: 'Hello Alice',   status: 'pending',   phone: E2E_FREE_PHONE },
+  { message: 'Hello Bob',     status: 'sent',      phone: E2E_FREE_PHONE },
+  { message: 'Hello Charlie', status: 'queued',    phone: E2E_FREE_PHONE },
+  { message: 'Hello Diana',   status: 'retrying',  phone: E2E_FREE_PHONE },
+  { message: 'Hello Eve',     status: 'delivered', phone: E2E_FREE_PHONE },
+  { message: 'Hello Frank',   status: 'failed',    phone: E2E_FREE_PHONE },
+  { message: 'Hello Grace',   status: 'cancelled', phone: E2E_FREE_PHONE },
 ]
 
 test.beforeAll(async ({ browser }) => {
@@ -198,7 +200,7 @@ test.describe('Schedule Page — group send', () => {
 
     const result = await apiRequest(page, 'POST', '/api/sms/send/', {
       message: 'Group name test',
-      recipients: groupContacts.map(c => ({ phone: c.id === c1.id ? '0414888881' : '0414888882', contact_id: c.id })),
+      recipients: groupContacts.map(c => ({ phone: E2E_FREE_PHONE, contact_id: c.id })),
       group_id: schedGroup.id,
     })
     parentScheduleId = result.parent_schedule_id

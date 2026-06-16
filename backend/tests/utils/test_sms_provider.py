@@ -10,7 +10,14 @@ Tests:
 import pytest
 from rest_framework.exceptions import ValidationError
 
-from app.utils.sms import MockSMSProvider, SendResult, _ProviderCache, get_sms_provider
+from app.utils.sms import (
+    ConfigurableMockSMSProvider,
+    MockSMSProvider,
+    SendResult,
+    _ProviderCache,
+    get_sms_provider,
+)
+from app.utils.welcorp import WelcorpSMSProvider
 
 
 class TestSendResult:
@@ -322,8 +329,6 @@ class TestGetSMSProvider:
 
     def test_resolves_welcorp_provider(self, settings):
         """get_sms_provider can resolve WelcorpSMSProvider."""
-        from app.utils.welcorp import WelcorpSMSProvider
-
         _ProviderCache.instance = None
         settings.SMS_PROVIDER_CLASS = 'app.utils.welcorp.WelcorpSMSProvider'
         settings.WELCORP_USERNAME = 'test'
@@ -332,3 +337,53 @@ class TestGetSMSProvider:
 
         provider = get_sms_provider()
         assert isinstance(provider, WelcorpSMSProvider)
+
+    def test_resolves_configurable_mock_from_env_overridable_setting(self, settings):
+        """get_sms_provider resolves ConfigurableMockSMSProvider when selected.
+
+        Proves the env-overridable SMS_PROVIDER_CLASS lets backend tests swap in
+        the failing mock without touching the hardcoded Welcorp default.
+        """
+        _ProviderCache.instance = None
+        settings.SMS_PROVIDER_CLASS = 'app.utils.sms.ConfigurableMockSMSProvider'
+        assert isinstance(get_sms_provider(), ConfigurableMockSMSProvider)
+
+
+class TestConfigurableMockSMSProvider:
+    """The backend failure-injection mock (retry/backoff/refund coverage)."""
+
+    def test_normal_number_succeeds(self):
+        result = ConfigurableMockSMSProvider().send_sms(to='0412345678', message='hi')
+        assert result.success is True
+        assert result.message_id
+
+    def test_transient_failure_suffix(self):
+        result = ConfigurableMockSMSProvider().send_sms(to='0412340900', message='hi')
+        assert result.success is False
+        assert result.retryable is True
+        assert result.failure_category == 'server_error'
+        assert result.http_status == 503
+
+    def test_permanent_failure_suffix(self):
+        result = ConfigurableMockSMSProvider().send_sms(to='0412340901', message='hi')
+        assert result.success is False
+        assert result.retryable is False
+        assert result.failure_category == 'invalid_number'
+
+    def test_mms_honours_transient_suffix(self):
+        result = ConfigurableMockSMSProvider().send_mms(
+            to='0412340900', message='hi', media_url='https://example.com/i.jpg')
+        assert result.success is False
+        assert result.retryable is True
+
+    def test_fail_mode_transient_fails_every_send(self, settings):
+        settings.MOCK_SMS_FAIL_MODE = 'transient'
+        result = ConfigurableMockSMSProvider().send_sms(to='0412345678', message='hi')
+        assert result.success is False
+        assert result.retryable is True
+
+    def test_fail_mode_permanent_fails_every_send(self, settings):
+        settings.MOCK_SMS_FAIL_MODE = 'permanent'
+        result = ConfigurableMockSMSProvider().send_sms(to='0412345678', message='hi')
+        assert result.success is False
+        assert result.failure_category == 'invalid_number'

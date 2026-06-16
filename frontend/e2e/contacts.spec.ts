@@ -3,6 +3,7 @@ import {
   authenticatePage,
   deleteContact, ensureContact, deleteSchedule,
   apiRequest, setOrgBalance,
+  E2E_FREE_PHONE,
 } from './helpers'
 
 const createdIds: number[] = []
@@ -26,7 +27,7 @@ test.beforeAll(async ({ browser }) => {
   // Send an SMS to c1 to populate message history
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
     message: 'Contact history test',
-    recipients: [{ phone: '0412111111', contact_id: c1.id }],
+    recipients: [{ phone: E2E_FREE_PHONE, contact_id: c1.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
 

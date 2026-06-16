@@ -354,6 +354,56 @@ class TestSendBulkSMS:
 # Integration with base class (send_sms calls validate + _send_sms_impl)
 # ---------------------------------------------------------------------------
 
+class TestManualSenderId:
+    """manual_sender_id (custom alphanumeric sender) is included only when set."""
+
+    def test_sms_includes_manual_sender_id_when_set(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi', alphanumeric_sender='MyBrand')
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['manual_sender_id'] == 'MyBrand'
+
+    def test_sms_omits_manual_sender_id_when_none(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi')
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert 'manual_sender_id' not in payload
+
+    def test_mms_includes_manual_sender_id_when_set(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_mms_impl(
+            '0412345678', 'Look', 'https://example.com/img.jpg', 'Subject',
+            alphanumeric_sender='MyBrand',
+        )
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['manual_sender_id'] == 'MyBrand'
+
+    def test_mms_omits_manual_sender_id_when_none(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_mms_impl(
+            '0412345678', 'Look', 'https://example.com/img.jpg', 'Subject',
+        )
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert 'manual_sender_id' not in payload
+
+    def test_bulk_sms_includes_manual_sender_id_when_set(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        recipients = [{'to': '0412345678', 'message': 'Hi', 'message_parts': 1}]
+        provider._send_bulk_sms_impl(recipients, alphanumeric_sender='MyBrand')
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['manual_sender_id'] == 'MyBrand'
+
+
 class TestBaseClassIntegration:
     def test_send_sms_validates_then_calls_impl(self, provider):
         provider.session.post.return_value = _ok_response(job_id=99)

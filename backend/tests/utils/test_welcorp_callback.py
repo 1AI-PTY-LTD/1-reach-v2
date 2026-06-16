@@ -10,10 +10,13 @@ Tests:
 """
 
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlparse
 
 import pytest
+import requests
 from django.test import override_settings
 
+from app.utils.failure_classifier import classify_failure
 from app.utils.welcorp import WelcorpSMSProvider
 
 
@@ -106,6 +109,45 @@ class TestParseDeliveryCallback:
         assert events[0].raw_data == data
 
 
+class TestWelcorpStatusFailureCategory:
+    """Each Welcorp failure code resolves to its expected FailureCategory.
+
+    parse_delivery_callback sets error_code=<Welcorp status>; downstream
+    (process_delivery_event → classify_failure) turns that into a category.
+    These tests pin the full mapping at the classifier level so a code that
+    re-maps to the wrong category (e.g. OPTO no longer OPT_OUT) is caught.
+    """
+
+    @pytest.mark.parametrize('welcorp_status,expected_category,expected_retryable', [
+        ('INVN', 'invalid_number', False),
+        ('RECE', 'invalid_number', False),
+        ('BARR', 'blacklisted', False),
+        ('OPTO', 'opt_out', False),
+        ('BADS', 'account_error', False),
+        ('SVRE', 'server_error', True),
+        ('EXPD', 'unknown_transient', True),
+        ('FAIL', 'unknown_transient', True),
+    ])
+    def test_failure_code_maps_to_category(
+        self, provider, welcorp_status, expected_category, expected_retryable,
+    ):
+
+        data = {'BroadcastID': '1', 'Destination': '+61412345678', 'Status': welcorp_status}
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+
+        assert events[0].error_code == welcorp_status
+        category, retryable = classify_failure(events[0].error_code, None, events[0].error_message)
+        assert category.value == expected_category
+        assert retryable is expected_retryable
+
+    def test_sent_event_has_no_error_code(self, provider):
+        """SENT → delivered carries no failure code to classify."""
+        data = {'BroadcastID': '1', 'Destination': '+61412345678', 'Status': 'SENT'}
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events[0].status == 'delivered'
+        assert events[0].error_code is None
+
+
 class TestValidateCallbackRequest:
     """Welcorp callback request validation via shared secret token."""
 
@@ -173,7 +215,6 @@ class TestGetCallbackUrl:
             p = WelcorpSMSProvider()
             url = p.get_callback_url()
             # Simulate Django QueryDict decoding: extract token param and URL-decode it
-            from urllib.parse import urlparse, parse_qs
             parsed = urlparse(url)
             decoded_token = parse_qs(parsed.query)['token'][0]
             assert decoded_token == secret
@@ -314,18 +355,16 @@ class TestPollJobStatus:
         assert events[0].recipient_phone == '0412345678'
 
     def test_api_timeout_returns_empty(self, provider):
-        import requests as req
         mock_session = Mock()
-        mock_session.get.side_effect = req.Timeout('timed out')
+        mock_session.get.side_effect = requests.Timeout('timed out')
         provider.session = mock_session
 
         events = provider.poll_job_status('12345')
         assert events == []
 
     def test_api_connection_error_returns_empty(self, provider):
-        import requests as req
         mock_session = Mock()
-        mock_session.get.side_effect = req.ConnectionError('refused')
+        mock_session.get.side_effect = requests.ConnectionError('refused')
         provider.session = mock_session
 
         events = provider.poll_job_status('12345')

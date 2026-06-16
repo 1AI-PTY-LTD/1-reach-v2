@@ -6,6 +6,7 @@ import {
   apiRequest,
   setOrgBalance,
   createConfig, deleteConfig,
+  E2E_FREE_PHONE,
 } from './helpers'
 
 let contact: { id: number }
@@ -24,7 +25,7 @@ test.beforeAll(async ({ browser }) => {
   contact = await ensureContact(page, { first_name: 'Summary', last_name: 'Test', phone: '0413111111' })
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
     message: 'Summary stats test',
-    recipients: [{ phone: '0413111111', contact_id: contact.id }],
+    recipients: [{ phone: E2E_FREE_PHONE, contact_id: contact.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
 

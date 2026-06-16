@@ -13,8 +13,11 @@ Tests:
 """
 
 import pytest
+from datetime import datetime, timezone as dt_timezone
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+from clerk_backend_api.models.clerkbaseerror import ClerkBaseError
 
 from app.models import (
     Contact,
@@ -27,6 +30,7 @@ from app.models import (
 )
 from app.utils.clerk import (
     WebhookProcessingError,
+    _is_stale_billing_event,
     _handle_organisation_created as handle_organization_created,
     _handle_organisation_deleted as handle_organization_deleted,
     _handle_membership_created as handle_organization_membership_created,
@@ -566,8 +570,6 @@ class TestHandleSubscriptionPastDue:
 
     def test_clerk_api_failure_does_not_raise(self):
         """If Clerk SDK throws, function still completes and billing_mode is still set."""
-        from clerk_backend_api.models.clerkbaseerror import ClerkBaseError
-        from unittest.mock import MagicMock
         org = OrganisationFactory(clerk_org_id='org_clerk_fail')
         with patch('app.utils.clerk.Clerk') as MockClerk:
             MockClerk.return_value.organizations.update.side_effect = ClerkBaseError(
@@ -672,8 +674,6 @@ class TestHandleSubscriptionActiveClears:
         Svix delivers unordered. The org's billing_event_at records the last
         applied payload updated_at; older events are skipped.
         """
-        from datetime import datetime, timezone as dt_timezone
-
         org = OrganisationFactory(
             clerk_org_id='org_ooo',
             billing_mode=Organisation.BILLING_PAST_DUE,
@@ -693,8 +693,6 @@ class TestHandleSubscriptionActiveClears:
 
     def test_newer_active_event_applies_and_records_timestamp(self):
         """A genuinely newer event applies and advances billing_event_at."""
-        from datetime import datetime, timezone as dt_timezone
-
         org = OrganisationFactory(
             clerk_org_id='org_newer',
             billing_mode=Organisation.BILLING_PAST_DUE,
@@ -740,3 +738,96 @@ class TestHandleSubscriptionActiveClears:
             organization_id='org_clerk_clear',
             private_metadata={'billing_suspended': False},
         )
+
+
+# ============================================================================
+# _is_stale_billing_event ordering edges
+# ============================================================================
+
+class TestIsStaleBillingEvent:
+    """Ordering guard for out-of-order Svix billing deliveries.
+
+    Operates on the unsaved ``billing_event_at`` attribute only, so no DB is
+    required. ``True`` means "skip this event, it is older than the last applied
+    one"; ``False`` means "apply it".
+    """
+
+    @staticmethod
+    def _ms(dt):
+        return int(dt.timestamp() * 1000)
+
+    def test_older_event_is_stale_when_last_applied_is_newer(self):
+        """A newer past_due was applied; an older active arriving late is stale."""
+        last_applied = datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc)
+        org = Organisation(clerk_org_id='org_stale', billing_event_at=last_applied)
+
+        older = datetime(2026, 6, 10, 11, 0, tzinfo=dt_timezone.utc)
+        data = {'updated_at': self._ms(older)}
+
+        assert _is_stale_billing_event(org, data, 'subscription.active') is True
+
+    def test_newer_event_is_not_stale(self):
+        """A genuinely newer event is applied (not stale)."""
+        last_applied = datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc)
+        org = Organisation(clerk_org_id='org_fresh', billing_event_at=last_applied)
+
+        newer = datetime(2026, 6, 10, 13, 0, tzinfo=dt_timezone.utc)
+        data = {'updated_at': self._ms(newer)}
+
+        assert _is_stale_billing_event(org, data, 'subscription.active') is False
+
+    def test_equal_timestamp_is_not_stale(self):
+        """An event with the same timestamp as the last applied is applied (not <)."""
+        ts = datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc)
+        org = Organisation(clerk_org_id='org_equal', billing_event_at=ts)
+        data = {'updated_at': self._ms(ts)}
+
+        assert _is_stale_billing_event(org, data, 'subscription.active') is False
+
+    def test_missing_timestamp_in_payload_is_not_stale(self):
+        """No usable timestamp in the payload → no ordering info → apply."""
+        org = Organisation(
+            clerk_org_id='org_no_ts',
+            billing_event_at=datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc),
+        )
+
+        assert _is_stale_billing_event(org, {}, 'subscription.active') is False
+
+    def test_null_timestamp_value_is_not_stale(self):
+        """An explicit null updated_at/created_at yields no timestamp → apply."""
+        org = Organisation(
+            clerk_org_id='org_null_ts',
+            billing_event_at=datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc),
+        )
+        data = {'updated_at': None, 'created_at': None}
+
+        assert _is_stale_billing_event(org, data, 'subscription.active') is False
+
+    def test_no_prior_billing_event_at_is_not_stale(self):
+        """First-ever billing event (org.billing_event_at is None) always applies."""
+        org = Organisation(clerk_org_id='org_first', billing_event_at=None)
+        data = {'updated_at': self._ms(datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc))}
+
+        assert _is_stale_billing_event(org, data, 'subscription.active') is False
+
+    def test_newer_past_due_then_older_active_keeps_past_due(self):
+        """End-to-end ordering: applying past_due then a stale active is a no-op.
+
+        Mirrors the real out-of-order scenario — billing_mode stays past_due
+        because the older active event is recognised as stale and skipped.
+        """
+        newer = datetime(2026, 6, 10, 12, 0, tzinfo=dt_timezone.utc)
+        org = Organisation(
+            clerk_org_id='org_seq',
+            billing_mode=Organisation.BILLING_PAST_DUE,
+            past_due_source=Organisation.PAST_DUE_SOURCE_CLERK,
+            billing_event_at=newer,
+        )
+
+        older = datetime(2026, 6, 10, 11, 0, tzinfo=dt_timezone.utc)
+        stale_active = {'updated_at': self._ms(older)}
+
+        # The active handler would short-circuit on this guard.
+        assert _is_stale_billing_event(org, stale_active, 'subscription.active') is True
+        # Nothing changed the in-memory state.
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE

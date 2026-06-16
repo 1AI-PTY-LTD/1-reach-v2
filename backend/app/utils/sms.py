@@ -333,6 +333,47 @@ class MockSMSProvider(SMSProvider):
         return SendResult(success=True, message_id=message_id)
 
 
+class ConfigurableMockSMSProvider(MockSMSProvider):
+    """Mock provider that can be told to fail deterministically.
+
+    Used by BACKEND integration tests to exercise the retry/backoff/refund and
+    failure-classification paths that the real Welcorp provider cannot produce
+    on demand (it succeeds for valid numbers). Not used by E2E — E2E sends real
+    Welcorp messages to the free test number.
+
+    Failure is selected two ways, both deterministic (no randomness):
+      - Reserved recipient suffix, so a single run can mix outcomes per message:
+          ...0900 -> transient, retryable (server_error)
+          ...0901 -> permanent, non-retryable (invalid_number)
+      - settings.MOCK_SMS_FAIL_MODE = 'transient' | 'permanent' fails every send.
+    """
+
+    @staticmethod
+    def _failure_for(to: str) -> Optional[SendResult]:
+        mode = getattr(settings, 'MOCK_SMS_FAIL_MODE', '') or ''
+        if to.endswith('0900') or mode == 'transient':
+            return SendResult(
+                success=False, error='Mock transient failure',
+                http_status=503, retryable=True, failure_category='server_error',
+            )
+        if to.endswith('0901') or mode == 'permanent':
+            return SendResult(
+                success=False, error='Mock permanent failure',
+                error_code='21211', http_status=400,
+                retryable=False, failure_category='invalid_number',
+            )
+        return None
+
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
+        return self._failure_for(to) or super()._send_sms_impl(
+            to, message, alphanumeric_sender=alphanumeric_sender)
+
+    def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
+                       alphanumeric_sender: str | None = None) -> SendResult:
+        return self._failure_for(to) or super()._send_mms_impl(
+            to, message, media_url, subject, alphanumeric_sender=alphanumeric_sender)
+
+
 class _ProviderCache:
     """Simple cache for the SMS provider singleton."""
     instance: Optional[SMSProvider] = None
