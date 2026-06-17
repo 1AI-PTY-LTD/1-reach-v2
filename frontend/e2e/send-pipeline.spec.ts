@@ -46,7 +46,7 @@ const TEST_IMAGE = readFileSync(join(__dirname, 'fixtures', 'test-image.jpg'))
 // ---------------------------------------------------------------------------
 
 let contact: { id: number }
-let group: { id: number }
+let group: { id: number; name: string }
 let pipelineScheduleIds: number[] = []
 
 test.beforeAll(async ({ browser }) => {
@@ -323,19 +323,16 @@ test.describe('Group send — pipeline flow', () => {
     await page.goto('/app/send')
     await expect(page.locator('textarea').first()).toBeVisible({ timeout: 10000 })
 
-    const groupTab = page
-      .getByRole('tab', { name: /group/i })
-      .or(page.getByRole('button', { name: /group/i }))
-      .first()
+    // There is no separate "group" tab — the recipient field is a unified
+    // picker that searches contacts AND groups. Type the group name and pick it
+    // from the dropdown; its members are expanded into the recipient chips.
+    const recipientInput = page.getByPlaceholder(/phone|name|list/i).first()
+    await expect(recipientInput).toBeVisible({ timeout: 5000 })
+    await recipientInput.fill(group.name)
 
-    // Group send is a core feature — assert the tab/control exists rather than
-    // silently skipping when it's missing.
-    await expect(groupTab).toBeVisible({ timeout: 5000 })
-    await groupTab.click()
-
-    const groupSelect = page.getByRole('combobox').or(page.getByLabel(/group/i)).first()
-    await expect(groupSelect).toBeVisible({ timeout: 5000 })
-    await groupSelect.selectOption({ index: 0 })
+    const groupOption = page.getByRole('option', { name: group.name }).first()
+    await expect(groupOption).toBeVisible({ timeout: 8000 })
+    await groupOption.click()
 
     const textarea = page.locator('textarea').first()
     await textarea.fill(`${TOKEN} Hello group!`)
