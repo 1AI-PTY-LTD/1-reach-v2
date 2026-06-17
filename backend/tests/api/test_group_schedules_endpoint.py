@@ -16,7 +16,7 @@ from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
 
-from app.models import Organisation, Schedule, ScheduleStatus
+from app.models import CreditTransaction, Organisation, Schedule, ScheduleStatus
 from app.utils.billing import grant_credits
 from tests.factories import (
     ContactFactory,
@@ -174,7 +174,7 @@ class TestGroupScheduleCreate:
     """Tests for POST /api/group-schedules/ endpoint."""
 
     def test_create_group_schedule_creates_parent_and_children(
-        self, authenticated_client, organisation, user, mock_check_sms_limit
+        self, authenticated_client, organisation, user
     ):
         """Creating group schedule creates parent + child schedules atomically."""
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
@@ -238,7 +238,7 @@ class TestGroupScheduleCreate:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_create_skips_opted_out_contacts(self, authenticated_client, organisation, user, mock_check_sms_limit):
+    def test_create_skips_opted_out_contacts(self, authenticated_client, organisation, user):
         """Opted-out contacts excluded from child schedule creation."""
         group, contacts = create_contact_group_with_members(organisation, num_members=5, user=user)
 
@@ -302,10 +302,11 @@ class TestGroupScheduleUpdate:
         )
 
         future = timezone.now() + timedelta(hours=2)
+        new_text = 'x' * 200  # >160 chars → 2 parts, so message_parts must recompute
         data = {
             'name': 'Campaign',
             'group_id': group.id,
-            'text': 'Updated message',
+            'text': new_text,
             'scheduled_time': future.isoformat()
         }
 
@@ -313,10 +314,15 @@ class TestGroupScheduleUpdate:
 
         assert response.status_code == status.HTTP_200_OK
 
+        parent.refresh_from_db()
         child1.refresh_from_db()
         child2.refresh_from_db()
-        assert child1.text == 'Updated message'
-        assert child2.text == 'Updated message'
+        assert child1.text == new_text
+        assert child2.text == new_text
+        # message_parts recalculated server-side from the new text on parent + children
+        assert parent.message_parts == 2
+        assert child1.message_parts == 2
+        assert child2.message_parts == 2
 
     def test_update_blocked_when_children_have_been_sent(self, authenticated_client, organisation, user):
         """Cannot update a group schedule after any child message has already been sent."""
@@ -363,7 +369,7 @@ class TestGroupScheduleUpdate:
         assert 'already been sent' in response.data['detail']
 
     def test_create_group_schedule_all_opted_out_members(
-        self, authenticated_client, organisation, user, mock_check_sms_limit
+        self, authenticated_client, organisation, user
     ):
         """Creating a group schedule when all members are opted out returns 400."""
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
@@ -689,6 +695,9 @@ class TestGroupScheduleBilling:
         assert organisation.credit_balance == Decimal('10.00') - 2 * settings.SMS_RATE  # 2 members × 1 part
 
         parent_id = create_response.data['id']
+        children = list(Schedule.objects.filter(parent=parent_id))
+        assert len(children) == 2
+
         response = authenticated_client.patch(
             f'/api/group-schedules/{parent_id}/', {'text': 'x' * 200}, format='json',
         )
@@ -699,6 +708,23 @@ class TestGroupScheduleBilling:
         parent = Schedule.objects.get(pk=parent_id)
         assert parent.message_parts == 2
         assert set(Schedule.objects.filter(parent=parent).values_list('message_parts', flat=True)) == {2}
+
+        # The swap leaves a per-child ledger trail: each child's original 1-part
+        # DEDUCT is refunded and a new 2-part DEDUCT is recorded.
+        for child in children:
+            child_txns = CreditTransaction.objects.filter(
+                organisation=organisation, schedule=child,
+            )
+            deducts = list(
+                child_txns.filter(transaction_type=CreditTransaction.DEDUCT).order_by('created_at')
+            )
+            refunds = list(child_txns.filter(transaction_type=CreditTransaction.REFUND))
+            assert len(deducts) == 2  # original 1-part charge + re-priced 2-part charge
+            assert len(refunds) == 1  # original charge refunded once
+            assert deducts[0].amount == settings.SMS_RATE          # 1 part
+            assert deducts[1].amount == 2 * settings.SMS_RATE      # 2 parts (re-priced)
+            assert refunds[0].amount == settings.SMS_RATE          # refunds the original 1-part charge
+            assert refunds[0].refunded_transaction_id == deducts[0].pk
 
     def test_update_blocked_when_new_cost_exceeds_balance(
         self, authenticated_client, organisation, user
@@ -716,6 +742,9 @@ class TestGroupScheduleBilling:
         assert create_response.status_code == status.HTTP_201_CREATED  # balance now 0.00
 
         parent_id = create_response.data['id']
+        children = list(Schedule.objects.filter(parent=parent_id))
+        assert len(children) == 2
+
         response = authenticated_client.patch(
             f'/api/group-schedules/{parent_id}/', {'text': 'x' * 200}, format='json',
         )
@@ -724,8 +753,20 @@ class TestGroupScheduleBilling:
         parent = Schedule.objects.get(pk=parent_id)
         assert parent.text == 'Hello'  # rolled back
         assert parent.message_parts == 1
+        assert set(Schedule.objects.filter(parent=parent).values_list('message_parts', flat=True)) == {1}
         organisation.refresh_from_db()
         assert organisation.credit_balance == Decimal('0.00')  # original reservation intact
+
+        # The whole re-price (refund + re-charge) rolled back: each child still has
+        # exactly its original 1-part DEDUCT and no REFUND leaked through.
+        for child in children:
+            child_txns = CreditTransaction.objects.filter(
+                organisation=organisation, schedule=child,
+            )
+            assert child_txns.filter(transaction_type=CreditTransaction.DEDUCT).count() == 1
+            assert child_txns.filter(transaction_type=CreditTransaction.REFUND).count() == 0
+            deduct = child_txns.get(transaction_type=CreditTransaction.DEDUCT)
+            assert deduct.amount == settings.SMS_RATE  # original 1-part charge intact
 
     def test_cancel_action_refunds_credits_for_trial_org(
         self, authenticated_client, organisation, user

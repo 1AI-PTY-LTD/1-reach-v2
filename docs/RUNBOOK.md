@@ -128,3 +128,63 @@ Azure Cache for Redis is provisioned outside this repo; two settings matter:
 | Clerk (Svix) | `https://<api-host>/api/webhooks/clerk/` | `CLERK_WEBHOOK_SIGNING_SECRET` |
 | Stripe | `https://<api-host>/api/webhooks/stripe/` | `STRIPE_WEBHOOK_SECRET` |
 | Welcorp delivery callbacks | sent per-job automatically (requires `BASE_URL` + `WELCORP_CALLBACK_SECRET`) | `WELCORP_CALLBACK_SECRET` |
+
+## Testing — CI gates & non-gating pilots
+
+The gating suites (backend pytest, frontend vitest+coverage, Playwright E2E) and
+the CI gate table are documented in [README.md](../README.md#testing). This
+section covers the **ops-side** notes: how E2E exercises the real stack and how
+to run the pilots that live outside CI.
+
+### E2E runs against the real worker + real provider
+
+CI's E2E job starts `celery_worker` + `celery_beat` and **gates on
+`/api/health/worker/`** before any spec runs — a worker that is down or running
+the wrong process (the gunicorn-instead-of-celery incident) fails the job here
+instead of letting the real-pipeline specs time out ambiguously. The deploy
+workflow runs the same heartbeat assertion post-deploy (see *Monitoring*).
+
+Real-pipeline specs send to the **free Welcorp number `+61447119283`**
+(`E2E_WELCORP_PASS_PHONE`, default), so the real sends cost nothing. Running E2E
+locally needs `CLERK_*`, `STRIPE_SECRET_KEY`, and `WELCORP_USERNAME` /
+`WELCORP_PASSWORD` / `WELCORP_CALLBACK_SECRET` passed into the backend container,
+plus `TEST=1` (+ `DEBUG=1`, enforced by the `app.E001` deploy check).
+
+### Mutation testing pilot
+
+Not wired into CI (slow, non-deterministic). Run ad hoc to find assertions that
+pass against deliberately broken code — focus on the two correctness-critical
+modules:
+
+```bash
+# Example with cosmic-ray (or mutmut) — target the high-value modules only:
+docker compose run --rm -e CONTAINER_ROLE= backend uv run \
+  python -m pytest tests/utils/test_billing.py tests/api/test_sms_endpoint.py -q
+# then run the mutation tool against app/utils/billing.py and app/utils/sms.py
+```
+
+Surviving mutants point at weak assertions (e.g. a refund test that checks
+`.exists()` rather than `refund.amount == charge`). Tighten the test, re-run.
+
+### Load / perf pilot
+
+```bash
+docker compose run --rm -e CONTAINER_ROLE= backend uv run \
+  python -m pytest -m load tests/load/ -q
+```
+
+Excluded from the default suite via the `load` marker. Asserts a generous
+wall-clock bound on bulk dispatch (1500 schedules drained in 500-per-tick
+batches) — flags a gross regression, not micro-perf.
+
+### Visual-regression pilot
+
+```bash
+# Generate/refresh baselines (review before committing):
+VISUAL=1 docker compose exec frontend npx playwright test visual.spec.ts --update-snapshots
+# Compare against baselines:
+VISUAL=1 docker compose exec frontend npx playwright test visual.spec.ts
+```
+
+Skipped unless `VISUAL=1`. Pilots the unauthenticated landing page (no Clerk
+needed). Promote to gating once baselines are stable across the CI renderer.

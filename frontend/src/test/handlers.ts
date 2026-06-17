@@ -89,7 +89,19 @@ export const handlers = [
   }),
 
   http.post(`${BASE_URL}/api/contacts/import/`, () => {
-    return HttpResponse.json({ status: 'success', message: 'Contacts imported', filename: 'contacts.csv' })
+    // Mirrors the REAL backend import envelope (see tests/api/test_response_contract.py):
+    // success | partial, with per-row error_records and a 207 on partial failure.
+    return HttpResponse.json(
+      {
+        status: 'success',
+        message: '2 imported successfully',
+        record_count: 2,
+        success_count: 2,
+        error_count: 0,
+        error_records: [],
+      },
+      { status: 200 },
+    )
   }),
 
   // Templates
@@ -240,6 +252,10 @@ export const handlers = [
   }),
 
   // SMS
+  http.get(`${BASE_URL}/api/sms/alphanumeric-senders/`, () => {
+    return HttpResponse.json({ alphanumeric_senders: [] })
+  }),
+
   http.post(`${BASE_URL}/api/sms/send/`, () => {
     return HttpResponse.json(
       { success: true, message: 'Message queued for delivery', schedule_id: 1 },

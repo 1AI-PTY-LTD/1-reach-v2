@@ -390,3 +390,36 @@ class TestPollJobStatus:
 
         events = provider.poll_job_status('12345')
         assert events == []
+
+    def test_missing_stage_is_skipped(self, provider):
+        """A report with no stage key is treated as not-yet-confirmed → skipped."""
+        self._mock_poll_response(provider, [
+            {'status': 'FAIL', 'destination': '+61412111111'},
+        ])
+
+        events = provider.poll_job_status('12345')
+        assert events == []
+
+    def test_confirmed_sent_missing_destination_has_none_phone(self, provider):
+        """A Confirmed SENT report with no destination → delivered event, phone None."""
+        self._mock_poll_response(provider, [
+            {'status': 'SENT', 'stage': 'Confirmed'},
+        ])
+
+        events = provider.poll_job_status('12345')
+        assert len(events) == 1
+        assert events[0].status == 'delivered'
+        assert events[0].recipient_phone is None
+        assert events[0].provider_message_id == '12345'
+
+    def test_confirmed_failure_missing_destination_has_none_phone(self, provider):
+        """A Confirmed failure report with no destination → failed event, phone None."""
+        self._mock_poll_response(provider, [
+            {'status': 'INVN', 'stage': 'Confirmed'},
+        ])
+
+        events = provider.poll_job_status('12345')
+        assert len(events) == 1
+        assert events[0].status == 'failed'
+        assert events[0].error_code == 'INVN'
+        assert events[0].recipient_phone is None

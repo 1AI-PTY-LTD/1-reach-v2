@@ -27,8 +27,13 @@ import {
   setOrgBalance,
   createConfig, deleteConfig,
   uploadFile, sendMms,
+  waitForProviderMessageId,
   E2E_FREE_PHONE,
 } from './helpers'
+
+// Per-spec token so fixtures (contacts, messages) can't collide with other
+// specs and retries stay idempotent (stable string, NOT Date.now()).
+const TOKEN = 'PIPE'
 
 // 24x24 valid JPEG. The prior 400x400 fixture was subtly corrupt (Welcorp's
 // decoder rejected it on real MMS sends); regenerated clean via Pillow.
@@ -62,20 +67,20 @@ test.beforeAll(async ({ browser }) => {
 
   let groupContact: any
   ;[contact, groupContact, group] = await Promise.all([
-    ensureContact(page, { first_name: 'Pipeline', last_name: 'Test', phone: '0416111111' }),
+    ensureContact(page, { first_name: `${TOKEN}-Pipeline`, last_name: 'Test', phone: '0416111111' }),
     // Group member pinned to the free number — the UI group send below uses the
     // member's own phone (no per-recipient override), so it must be the free one.
-    ensureContact(page, { first_name: 'Group', last_name: 'Member', phone: E2E_FREE_PHONE }),
-    createGroup(page, { name: 'Pipeline Group' }),
+    ensureContact(page, { first_name: `${TOKEN}-Group`, last_name: 'Member', phone: E2E_FREE_PHONE }),
+    createGroup(page, { name: `${TOKEN} Pipeline Group` }),
   ])
   await addMembers(page, group.id, [groupContact.id])
 
   // Create schedules for pipeline status display tests
   const PIPELINE_STATES = [
-    { message: 'Hello Charlie', status: 'queued',    phone: E2E_FREE_PHONE },
-    { message: 'Hello Diana',   status: 'retrying',  phone: E2E_FREE_PHONE },
-    { message: 'Hello Eve',     status: 'delivered', phone: E2E_FREE_PHONE },
-    { message: 'Hello Frank',   status: 'failed',    phone: E2E_FREE_PHONE },
+    { message: `${TOKEN} Hello Charlie`, status: 'queued',    phone: E2E_FREE_PHONE },
+    { message: `${TOKEN} Hello Diana`,   status: 'retrying',  phone: E2E_FREE_PHONE },
+    { message: `${TOKEN} Hello Eve`,     status: 'delivered', phone: E2E_FREE_PHONE },
+    { message: `${TOKEN} Hello Frank`,   status: 'failed',    phone: E2E_FREE_PHONE },
   ]
   const results = await Promise.all(
     PIPELINE_STATES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
@@ -84,9 +89,12 @@ test.beforeAll(async ({ browser }) => {
   )
   results.forEach(r => pipelineScheduleIds.push(r.schedule_id))
 
-  // Wait for the Celery worker to finish processing all dispatched tasks
-  // before overriding statuses — otherwise the worker may change them back.
-  await page.waitForTimeout(3000)
+  // Wait deterministically for the Celery worker to finish its real send (each
+  // schedule gets a provider_message_id) before overriding statuses — otherwise
+  // the worker may change them back. Replaces a racy fixed sleep.
+  await Promise.all(
+    results.map(r => waitForProviderMessageId(page, r.schedule_id))
+  )
 
   await Promise.all(
     PIPELINE_STATES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
@@ -320,25 +328,25 @@ test.describe('Group send — pipeline flow', () => {
       .or(page.getByRole('button', { name: /group/i }))
       .first()
 
-    if (await groupTab.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await groupTab.click()
+    // Group send is a core feature — assert the tab/control exists rather than
+    // silently skipping when it's missing.
+    await expect(groupTab).toBeVisible({ timeout: 5000 })
+    await groupTab.click()
 
-      const groupSelect = page.getByRole('combobox').or(page.getByLabel(/group/i)).first()
-      if (await groupSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await groupSelect.selectOption({ index: 0 })
-      }
+    const groupSelect = page.getByRole('combobox').or(page.getByLabel(/group/i)).first()
+    await expect(groupSelect).toBeVisible({ timeout: 5000 })
+    await groupSelect.selectOption({ index: 0 })
 
-      const textarea = page.locator('textarea').first()
-      await textarea.fill('Hello group!')
+    const textarea = page.locator('textarea').first()
+    await textarea.fill(`${TOKEN} Hello group!`)
 
-      const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
-      await sendBtn.click()
+    const sendBtn = page.getByRole('button', { name: /^send now$/i }).first()
+    await sendBtn.click()
 
-      // Summary should mention 1 recipient (1 group member from beforeAll)
-      await expect(
-        page.getByText('1').or(page.getByText(/1 recipient/i)).first()
-      ).toBeVisible({ timeout: 8000 })
-    }
+    // Summary should mention 1 recipient (1 group member from beforeAll)
+    await expect(
+      page.getByText('1').or(page.getByText(/1 recipient/i)).first()
+    ).toBeVisible({ timeout: 8000 })
   })
 })
 
@@ -349,25 +357,25 @@ test.describe('Group send — pipeline flow', () => {
 test.describe('Dispatch pipeline — schedule status display', () => {
   test('queued schedule appears in the schedule list', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Charlie').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Charlie`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/queued/i).first()).toBeVisible()
   })
 
   test('retrying schedule shows retrying status with retry context', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Diana').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Diana`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/retrying/i).first()).toBeVisible()
   })
 
   test('delivered schedule shows delivered status', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Eve').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Eve`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/delivered/i).first()).toBeVisible()
   })
 
   test('failed schedule shows failed status', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Frank').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Frank`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/failed/i).first()).toBeVisible()
   })
 })

@@ -9,6 +9,10 @@ import {
   E2E_FREE_PHONE,
 } from './helpers'
 
+// Per-spec token so fixtures (contacts, messages) can't collide with other
+// specs and retries stay idempotent (stable string, NOT Date.now()).
+const TOKEN = 'SUM'
+
 let contact: { id: number }
 const scheduleIds: number[] = []
 let configId: number | null = null
@@ -22,9 +26,9 @@ test.beforeAll(async ({ browser }) => {
   await setOrgBalance(page, 100)
 
   // Create a contact and send an SMS to generate stats
-  contact = await ensureContact(page, { first_name: 'Summary', last_name: 'Test', phone: '0413111111' })
+  contact = await ensureContact(page, { first_name: `${TOKEN}-Summary`, last_name: 'Test', phone: '0418111111' })
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
-    message: 'Summary stats test',
+    message: `${TOKEN} Summary stats test`,
     recipients: [{ phone: E2E_FREE_PHONE, contact_id: contact.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)

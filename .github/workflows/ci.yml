@@ -47,6 +47,20 @@ jobs:
           # (current backend coverage sits around 86%).
           docker compose run --rm -e CONTAINER_ROLE= backend sh -c "pip install uv -q && uv sync -q && uv run python -m pytest tests/ -q --cov-fail-under=80"
 
+      - name: Check for missing migrations
+        run: |
+          # Fails if a model change isn't captured in a migration file (the test
+          # suite runs with --no-migrations, so schema drift is otherwise invisible).
+          # makemigrations --check needs no DB connection.
+          docker compose run --rm --entrypoint "" \
+            backend sh -c "pip install uv -q && uv sync -q && uv run python manage.py makemigrations --check --dry-run"
+
+      - name: Dependency audit — pip (report-only)
+        continue-on-error: true  # report-only until the existing advisory backlog is triaged; flip to blocking once clean
+        run: |
+          docker compose run --rm --entrypoint "" \
+            backend sh -c "pip install uv -q && uv sync -q && uv run --with pip-audit pip-audit || true"
+
       - name: Django deployment checklist
         run: |
           # Production-like env so security-setting regressions fail the build.
@@ -78,9 +92,19 @@ jobs:
         working-directory: frontend
         run: npm run typecheck
 
-      - name: Run frontend tests
+      - name: Lint (report-only)
         working-directory: frontend
-        run: npx vitest run
+        continue-on-error: true  # ~190 pre-existing eslint errors; report-only until the backlog is cleared, then flip to blocking
+        run: npm run lint
+
+      - name: Run frontend tests (with coverage gate)
+        working-directory: frontend
+        run: npm run test:coverage
+
+      - name: Dependency audit — npm (report-only)
+        working-directory: frontend
+        continue-on-error: true  # report-only until the existing advisory backlog is triaged; flip to blocking once clean
+        run: npm audit --audit-level=high
 
   e2e:
     runs-on: ubuntu-latest

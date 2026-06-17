@@ -52,7 +52,7 @@ export const Route = createFileRoute('/app/_layout/send')({
   errorComponent: RouteErrorComponent,
 })
 
-function SendContent() {
+export function SendContent() {
   const client = useApiClient()
   const { data: templates } = useSuspenseQuery(getAllTemplatesQueryOptions(client))
   const { data: sendersData } = useQuery(alphanumericSendersQueryOptions(client))
@@ -775,7 +775,7 @@ function SendContent() {
   )
 }
 
-function Send() {
+export function Send() {
   return (
     <Suspense fallback={<LoadingSpinner />}>
       <SendContent />

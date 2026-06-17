@@ -38,7 +38,7 @@ const txTypeBadgeColor: Record<TransactionType, 'green' | 'red' | 'blue' | 'indi
   refund: 'indigo',
 }
 
-function BillingContent() {
+export function BillingContent() {
   const client = useApiClient()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'

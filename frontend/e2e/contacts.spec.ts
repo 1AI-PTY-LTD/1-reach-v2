@@ -6,6 +6,10 @@ import {
   E2E_FREE_PHONE,
 } from './helpers'
 
+// Per-spec token so fixtures (contacts, messages) can't collide with other
+// specs and retries stay idempotent (stable string, NOT Date.now()).
+const TOKEN = 'CTC'
+
 const createdIds: number[] = []
 const scheduleIds: number[] = []
 let c1: { id: number }, c2: { id: number }, c3: { id: number }
@@ -18,15 +22,15 @@ test.beforeAll(async ({ browser }) => {
   await setOrgBalance(page, 100)
 
   ;[c1, c2, c3] = await Promise.all([
-    ensureContact(page, { first_name: 'Alice', last_name: 'Smith', phone: '0412111111' }),
-    ensureContact(page, { first_name: 'Bob',   last_name: 'Jones', phone: '0412222222' }),
-    ensureContact(page, { first_name: 'Charlie', last_name: 'Brown', phone: '0412333333' }),
+    ensureContact(page, { first_name: `${TOKEN}-Alice`, last_name: 'Smith', phone: '0412111111' }),
+    ensureContact(page, { first_name: `${TOKEN}-Bob`,   last_name: 'Jones', phone: '0412222222' }),
+    ensureContact(page, { first_name: `${TOKEN}-Charlie`, last_name: 'Brown', phone: '0412333333' }),
   ])
   createdIds.push(c1.id, c2.id, c3.id)
 
   // Send an SMS to c1 to populate message history
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
-    message: 'Contact history test',
+    message: `${TOKEN} Contact history test`,
     recipients: [{ phone: E2E_FREE_PHONE, contact_id: c1.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
@@ -50,21 +54,21 @@ test.beforeEach(async ({ page }) => {
 test.describe('Contacts Page', () => {
   test('displays contacts list after loading', async ({ page }) => {
     await page.goto('/app/contacts')
-    await expect(page.getByText('Alice Smith').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText('Bob Jones').first()).toBeVisible()
-    await expect(page.getByText('Charlie Brown').first()).toBeVisible()
+    await expect(page.getByText(`${TOKEN}-Alice Smith`).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN}-Bob Jones`).first()).toBeVisible()
+    await expect(page.getByText(`${TOKEN}-Charlie Brown`).first()).toBeVisible()
   })
 
   test('shows contact details when clicking a contact', async ({ page }) => {
     await page.goto('/app/contacts')
-    await expect(page.getByText('Alice Smith').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN}-Alice Smith`).first()).toBeVisible({ timeout: 10000 })
     await page.locator(`a[href="/app/contacts/${c2?.id}"]`).first().click()
     await expect(page.getByText('0412 222 222').or(page.getByText('0412222222')).first()).toBeVisible({ timeout: 5000 })
   })
 
   test('can search for contacts', async ({ page }) => {
     await page.goto('/app/contacts')
-    await expect(page.getByText('Alice Smith').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN}-Alice Smith`).first()).toBeVisible({ timeout: 10000 })
     const searchInput = page.getByRole('searchbox').or(page.getByPlaceholder(/search/i)).first()
     if (await searchInput.isVisible()) {
       await searchInput.fill('Alice')
@@ -74,14 +78,14 @@ test.describe('Contacts Page', () => {
 
   test('can open create contact modal', async ({ page }) => {
     await page.goto('/app/contacts')
-    await expect(page.getByText('Alice Smith').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN}-Alice Smith`).first()).toBeVisible({ timeout: 10000 })
     await page.getByRole('button', { name: /add/i }).first().click()
     await expect(page.getByText(/first name/i).first()).toBeVisible({ timeout: 5000 })
   })
 
   test('can fill and submit the create contact form', async ({ page }) => {
     await page.goto('/app/contacts')
-    await expect(page.getByText('Alice Smith').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN}-Alice Smith`).first()).toBeVisible({ timeout: 10000 })
     await page.getByRole('button', { name: /add/i }).first().click()
     await expect(page.getByText(/first name/i).first()).toBeVisible({ timeout: 5000 })
     await page.getByPlaceholder('First Name').fill('Jane')

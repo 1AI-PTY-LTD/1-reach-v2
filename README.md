@@ -334,19 +334,27 @@ All endpoints require Clerk JWT authentication except health/smoke endpoints (un
 docker compose run --rm backend uv run python -m pytest tests/ -x -q
 ```
 
-800+ tests. Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
+1090+ tests, 89% coverage (CI enforces an 80% floor). Run with `-v` for verbose output or `--cov` for a coverage report. If the schema has changed since the last run, rebuild the test database first:
 
 ```bash
 docker compose run --rm backend uv run python -m pytest --create-db tests/ -q
 ```
 
+The async send pipeline is tested end-to-end with **eager Celery** (`task_always_eager`): the dispatcher tests in `tests/tasks/` run the real task body and assert the schedule reaches the expected status (`queued → processing → sent/retrying/failed`), rather than only asserting `.delay()` was called. The billing gate (`check_can_send`) is **exercised for real** — overspend, `past_due`, and monthly-limit rejections assert both the 402/400 status **and** the absence of side effects (no `Schedule` created, no task dispatched, balance unchanged). Webhook handlers verify **real Svix/Stripe signatures**. A `load` marker (`-m load`) holds a non-gating bulk-dispatch perf pilot that is excluded from the default suite.
+
 ### Frontend (unit + integration)
 
 ```bash
-docker compose exec frontend npx vitest run
+docker compose exec frontend npx vitest run            # tests only
+docker compose exec frontend npm run test:coverage     # tests + coverage gate (what CI runs)
 ```
 
-475 tests. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+530+ tests across 46 files. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+
+- **Coverage gate.** `npm run test:coverage` enforces a v8 floor (statements 50 / branches 52 / functions 47 / lines 50) configured in `vitest.config.ts`. The `include` glob counts *all* `src/**` files — not just test-imported ones — so untested components stay in the denominator and the percentage is honest. CI runs this command, not bare `vitest run`.
+- **Real routes, not copies.** Route integration tests import and render the **actual** layout/route components (exported from `src/routes/app/_layout.*.tsx`) instead of re-creating a parallel test version, so the real suspense/loader/error logic runs. `send-full.test.tsx` drives the full Send-form journey (add/dedupe/validate recipients, counter, group↔individual switch, submit→endpoint, and the 402/400/opt-out error surfaces).
+- **Auth states.** `clerk-roles.test.tsx` + the `loginAs('org:member' | 'org:admin')` helper cover admin-vs-member access on admin-only routes (the global mock is no longer admin-only).
+- **Contract pinning.** The canonical DRF response envelopes (pagination shape, SMS-send 202, insufficient-balance 402/400, contacts-import 207, billing summary) are pinned in a backend test — `backend/tests/api/test_response_contract.py` — so a rename of an envelope field fails a backend test instead of silently drifting. The MSW handlers in `src/test/handlers.ts` were aligned to those real shapes (e.g. the contacts-import handler now returns the real `record_count`/`error_records` body), so the frontend mocks can't go green against a shape prod never sends.
 
 ### Frontend (E2E)
 
@@ -354,7 +362,9 @@ docker compose exec frontend npx vitest run
 docker compose exec frontend npx playwright test
 ```
 
-105+ Playwright tests covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), billing-stripe (subscribe via PricingTable with Stripe test card + invoice generation + invoice display + cancel subscription), and users (table + invite + role/status management). Tests hit the **real backend** (Django + PostgreSQL) — no `page.route()` mocking.
+115+ Playwright tests (20 spec files) covering all user flows: contacts (CRUD + message history + send modal), groups (CRUD + edit + member removal + schedule modal), templates (CRUD + edit + pre-fill verification), schedules (navigation + status badges + cancellation + row expansion + pagination), send SMS (form validation + recipient count + template selection), send pipeline (SMS/MMS success + billing gates + group send + status display), summary (stats table + monthly limit), billing (balance display + transaction history + exhausted warning), billing-stripe (subscribe via PricingTable with Stripe test card + invoice generation + invoice display + cancel subscription), users (table + invite + role/status management), plus accessibility (`@axe-core/playwright`), worker-health, and an opt-in visual-regression pilot. Tests hit the **real backend** (Django + PostgreSQL + a running Celery worker/beat) — no `page.route()` mocking.
+
+The pipeline specs run two ways. The **real-pipeline** specs (`send-real-pipeline`, `schedule-retry-real`, `send-fail-pipeline`) send to the **real Welcorp free number** (`+61447119283`, `E2E_FREE_PHONE`), then poll until the worker sets `provider_message_id` and drive delivery/failure/opt-out by POSTing a simulated DLR to the real webhook — no forced statuses. The legacy display-state specs still use the TEST-only `force-status` endpoint, but **only** to arrange states the pipeline can't organically produce in a fast test (e.g. `cancelled`, `pending`) and for teardown — the dispatch path itself is never faked. Every spec prefixes its fixture data with a per-spec token so specs can't collide and retries stay idempotent.
 
 **Authentication:** E2E tests use real Clerk authentication via `@clerk/testing/playwright`:
 
@@ -363,25 +373,28 @@ docker compose exec frontend npx playwright test
 3. All chromium tests inherit the pre-authenticated state. `beforeAll` blocks that need API access (e.g., `send-pipeline.spec.ts`) use `authenticatePage()` which falls back to a full sign-in from the state file.
 4. `global-teardown.ts` deletes the Clerk user + org.
 
-**CI requirements:** Set `CLERK_SECRET_KEY` (Clerk secret key) and `E2E_CLERK_USER_ID` (a test user ID) as CI secrets. For Stripe billing E2E tests, also set `STRIPE_SECRET_KEY` (Stripe test mode key). The backend must have `TEST=True` to enable test-only endpoints (`force-status`, `test-set-balance`, `test-seed-usage`, `test-generate-invoices`, `test-link-billing-customer`) and skip webhook signature verification.
+**CI requirements:** Set `CLERK_SECRET_KEY` (Clerk secret key) and `E2E_CLERK_USER_ID` (a test user ID) as CI secrets. For Stripe billing E2E tests, also set `STRIPE_SECRET_KEY` (Stripe test mode key). For the real-pipeline specs, set `WELCORP_USERNAME` / `WELCORP_PASSWORD` / `WELCORP_CALLBACK_SECRET` (the real provider + callback) — `E2E_WELCORP_PASS_PHONE` defaults to the free number `+61447119283` so the real sends cost nothing. The backend must have `TEST=True` to enable test-only endpoints (`force-status`, `test-set-balance`, `test-seed-usage`, `test-generate-invoices`, `test-link-billing-customer`) and skip webhook signature verification.
+
+The CI E2E job starts the real `celery_worker` + `celery_beat` containers and **gates on `/api/health/worker/`** before running specs — a dead or misconfigured worker (the gunicorn-instead-of-celery incident) fails the job loudly instead of letting the real-pipeline specs time out ambiguously. `worker-health.spec.ts` re-asserts the heartbeat is fresh from inside the suite.
 
 **users.spec.ts** is self-contained: it creates its own Clerk admin, member, and inactive users + org in `beforeAll`, independent of the global test user. It uses `test.use({ storageState: { cookies: [], origins: [] } })` to clear the main user's session.
 
-### E2E Test Limitations
+### E2E: what's real vs. mocked
 
-The E2E tests are **UI integration tests** — they exercise real HTTP calls against a real backend and database, but external services and the async task queue are mocked or bypassed:
+The E2E tests are **integration tests against a real stack** — real HTTP, real Django + PostgreSQL, a **running Celery worker + beat**, the **real Welcorp provider**, and **real Stripe test mode**. The only things still stubbed are blob storage and the *transport* of webhooks (the handlers and their signatures are tested for real elsewhere). The table below is precise about the boundary:
 
-| Component | E2E Behaviour | What's NOT tested |
+| Component | E2E behaviour | Still NOT covered by E2E |
 |---|---|---|
-| **SMS/MMS provider** | `MockSMSProvider` returns fake message IDs | No real message delivery or provider error handling |
-| **Storage provider** | `MockStorageProvider` returns fake URLs | No real file uploads (MMS attachments) |
-| **Clerk webhooks** | Simulated via direct POST (no Svix signature) | Real webhook delivery, retries, and signature validation |
-| **Celery workers** | Not running — tasks enqueued to Redis but never consumed | Async dispatch, retry logic, status transitions, failure recovery |
-| **Schedule statuses** | Forced via TEST-only `PATCH /api/schedules/:id/force-status/` | Organic state machine transitions from task execution |
-| **Billing** | Real `check_can_send` DB checks; balance set via TEST-only endpoint | Credit transactions from actual task execution; refund-on-failure flow |
-| **Stripe** | Real Stripe test mode API calls (`sk_test_` key); invoices created via `StripeMeteredBillingProvider`; usage seeded via TEST-only endpoint | Automatic Stripe webhook delivery (simulated via direct POST); real payment collection |
-| **Clerk subscription** | Real Clerk PricingTable + Stripe test card checkout; webhook simulated via direct POST | Real Clerk webhook delivery (locally unreachable) |
-| **Redis** | Running but effectively unused (no worker consuming tasks) | Broker reliability, task routing |
+| **SMS/MMS provider** | **Real `WelcorpSMSProvider`.** Real-pipeline specs send to the free number `+61447119283` and poll until the worker sets `provider_message_id`. | Paid-number delivery; provider-side outages (covered by backend Welcorp `Timeout`/`ConnectionError` unit tests) |
+| **Celery worker + beat** | **Running.** Real-pipeline specs assert `queued → processing → sent → delivered/failed` organically; CI gates on `/api/health/worker/`. | — (this is now exercised, not bypassed) |
+| **Delivery / failure / opt-out** | Driven by POSTing a **simulated DLR to the real webhook** (real `WELCORP_CALLBACK_SECRET`), so the real callback handler runs. | Provider-initiated callback transport/retries |
+| **Schedule statuses** | Organic for the pipeline path. `force-status` is used **only** to arrange non-producible display states (`cancelled`, `pending`) and for teardown. | — |
+| **Billing** | Real `check_can_send` gate **and** real `record_usage`/`refund_usage` from actual task execution (charge on send, refund on terminal failure); balance set via TEST-only endpoint. | — |
+| **Storage provider** | `MockStorageProvider` returns in-memory URLs (no Azure blob in E2E). | Real MMS upload/fetch (real Azure SAS is a runbook opt-in) — corrupt/truncated-image rejection is covered by the backend `tests/utils/test_media_validation.py` decode tests |
+| **Clerk webhooks** | Simulated via direct POST (TEST mode skips Svix verification). | Webhook *transport*/retries — but **signature verification is tested for real** in `tests/utils/test_clerk_utils.py` (real Svix) |
+| **Stripe** | Real Stripe test mode API (`sk_test_`); invoices via `StripeMeteredBillingProvider`; usage seeded via TEST-only endpoint. | Stripe webhook *transport* (simulated via direct POST; **signature verified for real** in `tests/utils/test_stripe.py`); real card collection |
+| **Clerk subscription** | Real Clerk PricingTable + Stripe test card checkout. | Real Clerk webhook delivery (locally unreachable) |
+| **Redis** | Running and **actively consumed** by the worker. | Broker failover |
 
 **TEST-mode-only endpoints** used by E2E tests:
 - `PATCH /api/schedules/:id/force-status/` — set schedule status directly
@@ -390,6 +403,29 @@ The E2E tests are **UI integration tests** — they exercise real HTTP calls aga
 - `POST /api/billing/test-generate-invoices/` — trigger `generate_monthly_invoices` task synchronously
 - `POST /api/billing/test-link-billing-customer/` — trigger Stripe customer lookup and link `billing_customer_id`
 - Webhook endpoint skips Svix signature verification
+
+A `--deploy` Django system check (`app.E001` in `app/checks.py`) errors when `TEST=1` is set without `DEBUG`, so a production release that would expose these endpoints / skip webhook signature verification fails `manage.py check --deploy` before it serves — a defense-in-depth complement to the import-time guard in `settings.py`.
+
+### CI gates
+
+Beyond the test suites, CI runs these guards (`.github/workflows/ci.yml`):
+
+| Gate | What it catches | Blocking? |
+|---|---|---|
+| **Backend coverage ≥ 80%** | Untested backend code | ✅ blocking |
+| **Frontend coverage gate** (50/52/47/50) | Untested frontend code | ✅ blocking |
+| **`makemigrations --check --dry-run`** | Model changes with no committed migration (schema drift to deploy) | ✅ blocking |
+| **Response-contract test** | Backend renaming a response-envelope field (the cause of MSW↔DRF drift) | ✅ blocking (backend suite) |
+| **`/api/health/worker/` gate** | Dead/misconfigured Celery worker before E2E | ✅ blocking |
+| **Accessibility** (`@axe-core/playwright`) | Critical a11y violations on key pages | ✅ blocking (critical only) |
+| **`npm audit` / `pip audit`** | Vulnerable dependencies | ⚠️ report-only (existing backlog; flip to blocking once cleared) |
+| **`npm run lint`** | ESLint errors | ⚠️ report-only (existing backlog) |
+| **Dependabot** (`.github/dependabot.yml`) | Stale deps — weekly grouped PRs for npm/pip/actions | — |
+
+**Non-gating pilots** (run manually, out of CI):
+- **Load:** `docker compose run --rm -e CONTAINER_ROLE= backend uv run python -m pytest -m load tests/load/ -q` — bulk dispatch throughput.
+- **Mutation:** seeded but not wired into CI — run a mutation tester (`mutmut`/`cosmic-ray`) against `app/utils/sms.py` and `app/utils/billing.py` to find assertions that pass against broken code. See [docs/RUNBOOK.md](docs/RUNBOOK.md#mutation-testing-pilot).
+- **Visual regression:** `VISUAL=1 docker compose exec frontend npx playwright test visual.spec.ts` (generate baselines with `--update-snapshots` first).
 
 ---
 

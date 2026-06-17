@@ -1,6 +1,7 @@
 """Tests for the Stripe webhook endpoint (StripeWebhookView)."""
 
 import json
+import threading
 import time
 from decimal import Decimal
 from datetime import datetime, timezone
@@ -8,9 +9,10 @@ from unittest.mock import patch, Mock
 
 import pytest
 import stripe
+from django.db import connection
 from rest_framework.test import APIClient
 
-from app.models import CreditPurchase, CreditTransaction, Invoice, Organisation
+from app.models import CreditPurchase, CreditTransaction, Invoice, Organisation, WebhookEvent
 from app.utils.metered_billing import _BillingProviderCache
 from app.utils.stripe import StripeMeteredBillingProvider
 from tests.utils.stripe_signing import event_dict, signed_event
@@ -401,6 +403,186 @@ class TestStripeWebhookView:
         assert response.status_code == 200
         invoice.refresh_from_db()
         assert invoice.status == Invoice.STATUS_PAID
+
+
+@pytest.mark.django_db
+class TestStripeWebhookHandlerRollback:
+    """A handler raising mid-processing must leave no dedup marker behind.
+
+    Mirrors StripeWebhookView.post: the WebhookEvent marker commits atomically
+    with the handler, so when a handler raises the marker rolls back and a
+    Stripe retry of the same event id reprocesses instead of being dropped.
+    """
+
+    @patch('app.utils.stripe.StripeWebhookView._handle_invoice_paid', side_effect=RuntimeError('boom'))
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_handler_raise_rolls_back_dedup_row(
+        self, mock_get_provider, mock_handler, webhook_client, org_with_invoice,
+    ):
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'id': 'evt_rollback_1',
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        # A bare exception is not a DRF APIException → 500, re-raised by the
+        # test client. The atomic marker insert must roll back with it.
+        with pytest.raises(RuntimeError):
+            webhook_client.post(
+                '/api/webhooks/stripe/', data=b'{}',
+                content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+            )
+
+        assert not WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_STRIPE, event_id='evt_rollback_1',
+        ).exists()
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_OPEN  # side effect rolled back
+
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_retry_after_rolled_back_marker_reprocesses(
+        self, mock_get_provider, webhook_client, org_with_invoice,
+    ):
+        """After a failed delivery rolls back the marker, a healthy retry of the
+        same event id is NOT skipped as a duplicate — it processes for real."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'id': 'evt_retry_1',
+            'type': 'invoice.paid',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        with patch(
+            'app.utils.stripe.StripeWebhookView._handle_invoice_paid',
+            side_effect=RuntimeError('boom'),
+        ), pytest.raises(RuntimeError):
+            webhook_client.post(
+                '/api/webhooks/stripe/', data=b'{}',
+                content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+            )
+
+        # Retry: handler healthy now, same event id — must reprocess.
+        retry = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert retry.status_code == 200
+        assert retry.data.get('duplicate') is None
+        invoice.refresh_from_db()
+        assert invoice.status == Invoice.STATUS_PAID
+        assert WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_STRIPE, event_id='evt_retry_1',
+        ).count() == 1
+
+
+@pytest.mark.django_db
+class TestStripeWebhookIdempotentReapplication:
+    """Re-applying the SAME event leaves identical final state (sequential)."""
+
+    @patch('app.utils.stripe.get_billing_provider')
+    def test_same_payment_failed_event_sets_past_due_once(
+        self, mock_get_provider, webhook_client, org_with_invoice,
+    ):
+        """invoice.payment_failed redelivered (same event id) → past_due set once,
+        and past_due_source is not relabelled on the second (skipped) delivery."""
+        org, invoice = org_with_invoice
+        mock_provider = Mock()
+        mock_provider.parse_webhook.return_value = {
+            'id': 'evt_pastdue_idem',
+            'type': 'invoice.payment_failed',
+            'data': {'id': 'inv_test_123'},
+        }
+        mock_get_provider.return_value = mock_provider
+
+        first = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+        second = webhook_client.post(
+            '/api/webhooks/stripe/', data=b'{}',
+            content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert second.data.get('duplicate') is True
+        org.refresh_from_db()
+        assert org.billing_mode == Organisation.BILLING_PAST_DUE
+        assert org.past_due_source == Organisation.PAST_DUE_SOURCE_STRIPE_INVOICE
+        # Only one dedup marker exists for the duplicated deliveries.
+        assert WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_STRIPE, event_id='evt_pastdue_idem',
+        ).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+class TestStripeWebhookConcurrentDelivery:
+    """Concurrency variant: Stripe delivers the same event id from several
+    workers at once. The unique (provider, event_id) constraint + atomic marker
+    means the grant runs exactly once across racing deliveries."""
+
+    def test_concurrent_checkout_completed_grants_exactly_once(self):
+        org = Organisation.objects.create(
+            clerk_org_id='org_stripe_concurrent',
+            name='Stripe Concurrent',
+            billing_mode=Organisation.BILLING_PREPAID,
+            credit_balance=Decimal('0.00'),
+        )
+        CreditPurchase.objects.create(
+            organisation=org, stripe_checkout_session_id='cs_concurrent', amount=Decimal('25'),
+        )
+        parsed_event = {
+            'id': 'evt_stripe_concurrent',
+            'type': 'checkout.session.completed',
+            'data': {
+                'id': 'cs_concurrent', 'object': 'checkout.session',
+                'payment_status': 'paid', 'amount_total': 2500, 'customer': 'cus_concurrent',
+                'metadata': {'purchase_type': 'credit_purchase', 'org_id': org.clerk_org_id},
+            },
+        }
+
+        provider = Mock()
+        provider.parse_webhook.return_value = parsed_event
+
+        statuses = []
+        lock = threading.Lock()
+
+        def deliver():
+            client = APIClient()
+            try:
+                resp = client.post(
+                    '/api/webhooks/stripe/', data=b'{}',
+                    content_type='application/json', HTTP_STRIPE_SIGNATURE='sig_test',
+                )
+                with lock:
+                    statuses.append(resp.status_code)
+            finally:
+                connection.close()
+
+        # Patch once around the whole thread lifecycle — every request resolves
+        # the same provider stub (parse_webhook returns the identical event).
+        with patch('app.utils.stripe.get_billing_provider', return_value=provider):
+            threads = [threading.Thread(target=deliver) for _ in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert statuses == [200] * 6
+        org.refresh_from_db()
+        assert org.credit_balance == Decimal('25.00')  # granted exactly once
+        assert CreditTransaction.objects.filter(
+            organisation=org, transaction_type=CreditTransaction.GRANT,
+        ).count() == 1
+        assert WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_STRIPE, event_id='evt_stripe_concurrent',
+        ).count() == 1
 
 
 # ---------------------------------------------------------------------------

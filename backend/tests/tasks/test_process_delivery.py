@@ -19,6 +19,7 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 import pytest
+from django.conf import settings
 from django.utils import timezone
 
 from app.celery import process_delivery_event, reconcile_stale_sent
@@ -112,6 +113,12 @@ class TestProcessDeliveryEventSingleSend:
     def test_failed_event_calls_refund(self, schedule_sent, organisation):
         grant_credits(organisation, Decimal('10.00'), 'test')
         record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
+        organisation.refresh_from_db()
+        balance_after_usage = organisation.credit_balance  # $10 - 1×SMS_RATE
+        usage_amount = CreditTransaction.objects.get(
+            schedule=schedule_sent, transaction_type=CreditTransaction.DEDUCT,
+        ).amount
+        assert usage_amount == settings.SMS_RATE
 
         process_delivery_event({
             'provider_message_id': schedule_sent.provider_message_id,
@@ -120,10 +127,45 @@ class TestProcessDeliveryEventSingleSend:
             'error_message': 'Welcorp delivery failed: BARR',
         })
 
-        assert CreditTransaction.objects.filter(
+        refunds = CreditTransaction.objects.filter(
             schedule=schedule_sent,
             transaction_type=CreditTransaction.REFUND,
-        ).exists()
+        )
+        assert refunds.count() == 1
+        # The refund reverses exactly the original usage charge...
+        assert refunds.first().amount == usage_amount
+        # ...and restores the org's balance to its pre-charge value.
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == balance_after_usage + usage_amount
+
+    def test_failed_event_refund_is_idempotent(self, schedule_sent, organisation):
+        """A second identical failed delivery receipt must NOT double-refund."""
+        grant_credits(organisation, Decimal('10.00'), 'test')
+        record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
+
+        event = {
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': schedule_sent.phone,
+            'error_code': 'BARR',
+            'error_message': 'Welcorp delivery failed: BARR',
+        }
+
+        process_delivery_event(event)
+        organisation.refresh_from_db()
+        balance_after_first = organisation.credit_balance
+        assert CreditTransaction.objects.filter(
+            schedule=schedule_sent, transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
+
+        # Replay the exact same failed DLR — no second refund, balance unchanged.
+        process_delivery_event(event)
+
+        assert CreditTransaction.objects.filter(
+            schedule=schedule_sent, transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == balance_after_first
 
     def test_idempotent_already_delivered(self, schedule_sent):
         schedule_sent.status = ScheduleStatus.DELIVERED

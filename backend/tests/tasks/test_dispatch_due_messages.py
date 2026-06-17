@@ -1,6 +1,18 @@
 """
 Tests for the dispatch_due_messages Celery beat task.
 
+Two complementary styles are used:
+
+ROUTING tests patch ``app.celery.send_message`` / ``app.celery.send_batch_message``
+and assert which task is targeted (single vs batch), the dispatched count, and
+which schedules are skipped — without executing any send.
+
+EAGER (dispatch -> EXECUTE) tests run under Celery's ``task_always_eager`` mode so
+the dispatched task runs synchronously in-process against a mocked SMS provider
+(no real Welcorp call). They assert the schedule reaches its expected terminal
+status: PENDING/QUEUED/PROCESSING -> SENT on success, RETRYING/FAILED on a
+failure-mock, and FAILED + refund on a fail-with-refund recovery.
+
 Verifies that:
 - PENDING parents (batch) with scheduled_time <= now are QUEUED and dispatched
   via send_batch_message.
@@ -20,9 +32,28 @@ import redis
 from django.conf import settings
 from django.utils import timezone
 
-from app.models import ContactGroup, CreditTransaction, MessageFormat, Schedule, ScheduleStatus
+from app.models import (
+    ContactGroup,
+    CreditTransaction,
+    MessageFormat,
+    Schedule,
+    ScheduleStatus,
+)
 from app.celery import dispatch_due_messages
 from app.utils.billing import record_usage
+
+
+# ---------------------------------------------------------------------------
+# Shared eager-mode fixture — execute Celery tasks synchronously (no broker)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def celery_eager():
+    """Run Celery tasks synchronously so .delay()/.apply_async() execute in-process."""
+    from app.celery import app as celery_app
+    celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
+    yield
+    celery_app.conf.update(task_always_eager=False, task_eager_propagates=False)
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +105,28 @@ def _make_child(organisation, user, parent, group=None, scheduled_time=None, sta
     )
 
 
+def _make_individual(organisation, user, status=ScheduleStatus.PENDING, **extra):
+    """Create a leaf individual schedule (no parent, no children).
+
+    Defaults for text / scheduled_time / max_retries can be overridden via extra.
+    """
+    extra.setdefault('text', 'Individual message')
+    extra.setdefault('scheduled_time', timezone.now() - timedelta(minutes=5))
+    extra.setdefault('max_retries', 3)
+    return Schedule.objects.create(
+        organisation=organisation,
+        phone='0412345678',
+        status=status,
+        format=MessageFormat.SMS,
+        message_parts=1,
+        created_by=user,
+        updated_by=user,
+        **extra,
+    )
+
+
 # ---------------------------------------------------------------------------
-# Core dispatch tests
+# Core dispatch ROUTING tests (which task / counts / skips) — no execution
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
@@ -128,18 +179,7 @@ class TestDispatchDueMessages:
 
     def test_dispatches_individual_schedules(self, db, organisation, user):
         """Individual schedules (parent=None, group=None) are dispatched via send_message."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Individual message',
-            scheduled_time=timezone.now() - timedelta(minutes=5),
-            status=ScheduleStatus.PENDING,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
-        )
+        individual = _make_individual(organisation, user)
 
         with patch('app.celery.send_message') as mock_send, \
              patch('app.celery.send_batch_message') as mock_batch:
@@ -156,12 +196,7 @@ class TestDispatchDueMessages:
         """Schedules belonging to soft-deleted orgs are never dispatched."""
         organisation.is_active = False
         organisation.save()
-        Schedule.objects.create(
-            organisation=organisation, phone='0412345678', text='Orphaned',
-            scheduled_time=timezone.now() - timedelta(minutes=5),
-            status=ScheduleStatus.PENDING, format=MessageFormat.SMS,
-            message_parts=1, max_retries=3, created_by=user, updated_by=user,
-        )
+        _make_individual(organisation, user, text='Orphaned')
 
         with patch('app.celery.send_message') as mock_send, \
              patch('app.celery.send_batch_message') as mock_batch:
@@ -175,12 +210,7 @@ class TestDispatchDueMessages:
         """Past-due orgs' PENDING schedules wait and resume when billing recovers."""
         organisation.billing_mode = organisation.BILLING_PAST_DUE
         organisation.save()
-        schedule = Schedule.objects.create(
-            organisation=organisation, phone='0412345678', text='Held',
-            scheduled_time=timezone.now() - timedelta(minutes=5),
-            status=ScheduleStatus.PENDING, format=MessageFormat.SMS,
-            message_parts=1, max_retries=3, created_by=user, updated_by=user,
-        )
+        schedule = _make_individual(organisation, user, text='Held')
 
         with patch('app.celery.send_message') as mock_send:
             result = dispatch_due_messages()
@@ -273,7 +303,72 @@ class TestDispatchDueMessages:
 
 
 # ---------------------------------------------------------------------------
-# Batch size cap
+# Core dispatch EAGER (dispatch -> EXECUTE) tests — schedule reaches SENT/FAILED
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestDispatchDueMessagesEager:
+    def test_due_individual_dispatched_and_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """A due PENDING individual runs send_message synchronously and reaches SENT."""
+        individual = _make_individual(organisation, user)
+
+        result = dispatch_due_messages()
+
+        assert result['dispatched'] == 1
+        mock_sms_provider.send_sms.assert_called_once()
+        individual.refresh_from_db()
+        assert individual.status == ScheduleStatus.SENT
+
+    def test_due_batch_parent_dispatched_and_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """A due PENDING batch parent runs send_batch_message; parent and children reach SENT."""
+        parent = _make_parent(organisation, user)
+        child_a = _make_child(organisation, user, parent)
+        child_b = _make_child(organisation, user, parent)
+
+        result = dispatch_due_messages()
+
+        assert result['dispatched'] == 1
+        mock_sms_provider.send_bulk_sms.assert_called_once()
+        parent.refresh_from_db()
+        child_a.refresh_from_db()
+        child_b.refresh_from_db()
+        assert parent.status == ScheduleStatus.SENT
+        assert child_a.status == ScheduleStatus.SENT
+        assert child_b.status == ScheduleStatus.SENT
+
+    def test_due_individual_permanent_failure_marks_failed(
+        self, db, organisation, user, celery_eager, mock_sms_provider_permanent_fail
+    ):
+        """A permanent (non-retryable) provider failure drives the schedule to FAILED."""
+        individual = _make_individual(organisation, user)
+
+        dispatch_due_messages()
+
+        individual.refresh_from_db()
+        assert individual.status == ScheduleStatus.FAILED
+        assert individual.failure_category == 'invalid_number'
+
+    def test_due_individual_transient_failure_exhausts_retries_to_failed(
+        self, db, organisation, user, celery_eager, mock_sms_provider_transient_fail
+    ):
+        """A transient failure retries (eager apply_async runs inline) until max_retries,
+        then permanently fails — eager retries don't sleep, so this is finite."""
+        individual = _make_individual(organisation, user, max_retries=2)
+
+        dispatch_due_messages()
+
+        individual.refresh_from_db()
+        # All attempts failed transiently; after max_retries the schedule is FAILED.
+        assert individual.status == ScheduleStatus.FAILED
+        assert individual.retry_count == individual.max_retries
+
+
+# ---------------------------------------------------------------------------
+# Batch size cap (routing — 500 real sends would be heavy/non-deterministic)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
@@ -318,50 +413,42 @@ class TestDispatchBatchSize:
 
 @pytest.mark.django_db
 class TestDispatchRetrying:
-    def test_dispatches_overdue_retrying_parent(self, db, organisation, user):
-        """RETRYING parent with next_retry_at <= now is re-dispatched via send_batch_message."""
+    def test_dispatches_overdue_retrying_parent_to_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """RETRYING parent with next_retry_at <= now is re-sent; parent and child reach SENT."""
         parent = _make_parent(organisation, user, status=ScheduleStatus.RETRYING)
         parent.next_retry_at = timezone.now() - timedelta(minutes=1)
         parent.save(update_fields=['next_retry_at', 'updated_at'])
-        _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_batch.delay.return_value = None
-            result = dispatch_due_messages()
+        result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
-        mock_batch.delay.assert_called_once_with(parent.pk)
-        mock_send.delay.assert_not_called()
+        assert result['dispatched'] == 1
+        mock_sms_provider.send_bulk_sms.assert_called_once()
         parent.refresh_from_db()
-        assert parent.status == ScheduleStatus.QUEUED
+        child.refresh_from_db()
+        assert parent.status == ScheduleStatus.SENT
+        assert child.status == ScheduleStatus.SENT
 
-    def test_dispatches_overdue_retrying_individual(self, db, organisation, user):
-        """RETRYING individual schedule with next_retry_at <= now is re-dispatched via send_message."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Retry me',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+    def test_dispatches_overdue_retrying_individual_to_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """RETRYING individual with next_retry_at <= now is re-sent and reaches SENT."""
+        individual = _make_individual(
+            organisation, user,
             status=ScheduleStatus.RETRYING,
+            scheduled_time=timezone.now() - timedelta(hours=1),
             next_retry_at=timezone.now() - timedelta(minutes=1),
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            text='Retry me',
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_send.delay.return_value = None
-            result = dispatch_due_messages()
+        result = dispatch_due_messages()
 
-        assert result == {'dispatched': 1, 'recovered_queued': 0, 'recovered_processing': 0, 'failed_unknown': 0}
-        mock_send.delay.assert_called_once_with(individual.pk)
-        mock_batch.delay.assert_not_called()
+        assert result['dispatched'] == 1
+        mock_sms_provider.send_sms.assert_called_once()
         individual.refresh_from_db()
-        assert individual.status == ScheduleStatus.QUEUED
+        assert individual.status == ScheduleStatus.SENT
 
     def test_ignores_future_retrying_schedules(self, db, organisation, user):
         """RETRYING parent whose next_retry_at is in the future is left alone."""
@@ -387,51 +474,47 @@ class TestDispatchRetrying:
 
 @pytest.mark.django_db
 class TestStaleProcessingRecovery:
-    def test_resets_stale_individual_and_dispatches_via_send_message(self, db, organisation, user):
-        """Stale individual send reset to QUEUED and dispatched via send_message."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Stale individual',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+    def test_resets_stale_individual_and_sends_via_send_message(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """Stale individual reset to QUEUED, re-sent via send_message, reaches SENT."""
+        individual = _make_individual(
+            organisation, user,
             status=ScheduleStatus.PROCESSING,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            text='Stale individual',
         )
         Schedule.objects.filter(pk=individual.pk).update(
             updated_at=timezone.now() - timedelta(minutes=15)
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_send.delay.return_value = None
-            dispatch_due_messages()
+        dispatch_due_messages()
 
-        mock_send.delay.assert_called_once_with(individual.pk)
-        mock_batch.delay.assert_not_called()
+        mock_sms_provider.send_sms.assert_called_once()
         individual.refresh_from_db()
-        assert individual.status == ScheduleStatus.QUEUED
+        assert individual.status == ScheduleStatus.SENT
 
-    def test_resets_stale_batch_parent_and_dispatches_via_send_batch_message(self, db, organisation, user):
-        """Stale batch parent reset to QUEUED and dispatched via send_batch_message."""
+    def test_resets_stale_batch_parent_and_sends_via_send_batch_message(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """Stale batch parent reset to QUEUED, re-sent via send_batch_message;
+        parent and child reach SENT."""
         parent = _make_parent(organisation, user, status=ScheduleStatus.PROCESSING)
-        _make_child(organisation, user, parent, status=ScheduleStatus.PROCESSING)
-        Schedule.objects.filter(pk=parent.pk).update(
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.PROCESSING)
+        # Backdate BOTH parent and child so the stale-PROCESSING recovery resets
+        # both to QUEUED — a still-fresh child would be excluded by the batch task
+        # (it only loads PENDING/QUEUED/RETRYING children) and nothing would send.
+        Schedule.objects.filter(pk__in=[parent.pk, child.pk]).update(
             updated_at=timezone.now() - timedelta(minutes=15)
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_batch.delay.return_value = None
-            dispatch_due_messages()
+        dispatch_due_messages()
 
-        mock_batch.delay.assert_called_once_with(parent.pk)
-        mock_send.delay.assert_not_called()
+        mock_sms_provider.send_bulk_sms.assert_called_once()
         parent.refresh_from_db()
-        assert parent.status == ScheduleStatus.QUEUED
+        child.refresh_from_db()
+        assert parent.status == ScheduleStatus.SENT
+        assert child.status == ScheduleStatus.SENT
 
     def test_resets_stale_batch_children_without_dispatching(self, db, organisation, user):
         """Stale batch children are reset to QUEUED but NOT dispatched (parent handles them)."""
@@ -458,28 +541,24 @@ class TestStaleProcessingRecovery:
         dispatched_batch_pks = {c[0][0] for c in mock_batch.delay.call_args_list}
         assert child.pk not in dispatched_batch_pks
 
-    def test_unknown_outcome_individual_fails_with_refund_instead_of_resend(self, db, organisation, user):
+    def test_unknown_outcome_individual_fails_with_refund_instead_of_resend(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
         """A stale PROCESSING send whose provider call may have gone out is failed, not re-sent.
 
         Regression test: recovery previously re-queued every stale PROCESSING
         schedule, so a worker dying after the provider call meant the recipient
-        received the SMS twice.
+        received the SMS twice. Under eager, the provider must NOT be called.
         """
         organisation.billing_mode = organisation.BILLING_PREPAID
         organisation.credit_balance = Decimal('10.00')
         organisation.save()
 
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Maybe sent',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+        individual = _make_individual(
+            organisation, user,
             status=ScheduleStatus.PROCESSING,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            text='Maybe sent',
         )
         record_usage(organisation, 1, 'sms', 'dispatch', user, individual)
         Schedule.objects.filter(pk=individual.pk).update(
@@ -487,12 +566,10 @@ class TestStaleProcessingRecovery:
             dispatch_attempted_at=timezone.now() - timedelta(minutes=15),
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            result = dispatch_due_messages()
+        result = dispatch_due_messages()
 
-        mock_send.delay.assert_not_called()
-        mock_batch.delay.assert_not_called()
+        # Never re-sent — duplicate delivery risk.
+        mock_sms_provider.send_sms.assert_not_called()
         individual.refresh_from_db()
         assert individual.status == ScheduleStatus.FAILED
         assert individual.failure_category == 'unknown'
@@ -506,9 +583,10 @@ class TestStaleProcessingRecovery:
             transaction_type=CreditTransaction.REFUND,
         ).exists()
 
-    def test_unknown_outcome_batch_parent_fails_children_with_refunds(self, db, organisation, user):
+    def test_unknown_outcome_batch_parent_fails_children_with_refunds(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
         """A stale PROCESSING batch parent with an attempted provider call fails its children too."""
-
         organisation.billing_mode = organisation.BILLING_PREPAID
         organisation.credit_balance = Decimal('10.00')
         organisation.save()
@@ -524,12 +602,10 @@ class TestStaleProcessingRecovery:
             updated_at=timezone.now() - timedelta(minutes=15),
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            dispatch_due_messages()
+        dispatch_due_messages()
 
-        mock_batch.delay.assert_not_called()
-        mock_send.delay.assert_not_called()
+        # Never re-sent — duplicate delivery risk.
+        mock_sms_provider.send_bulk_sms.assert_not_called()
         parent.refresh_from_db()
         child.refresh_from_db()
         assert parent.status == ScheduleStatus.FAILED
@@ -539,17 +615,11 @@ class TestStaleProcessingRecovery:
 
     def test_leaves_fresh_processing_schedule_alone(self, db, organisation, user):
         """A schedule in PROCESSING updated recently is NOT touched."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Fresh processing',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+        individual = _make_individual(
+            organisation, user,
             status=ScheduleStatus.PROCESSING,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            text='Fresh processing',
         )
         # updated_at is set to now() by default — well within the timeout
 
@@ -571,51 +641,44 @@ class TestStaleProcessingRecovery:
 class TestStaleQueuedRecovery:
     """Schedules stuck in QUEUED (Celery task lost) are re-dispatched by the beat task."""
 
-    def test_redispatches_stale_queued_individual(self, db, organisation, user):
-        """Stale individual QUEUED schedule is re-dispatched via send_message."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Stuck queued',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+    def test_redispatches_stale_queued_individual_to_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """Stale individual QUEUED schedule is re-sent via send_message and reaches SENT."""
+        individual = _make_individual(
+            organisation, user,
             status=ScheduleStatus.QUEUED,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            text='Stuck queued',
         )
         Schedule.objects.filter(pk=individual.pk).update(
             updated_at=timezone.now() - timedelta(minutes=10)
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_send.delay.return_value = None
-            dispatch_due_messages()
+        dispatch_due_messages()
 
-        mock_send.delay.assert_called_once_with(individual.pk)
-        mock_batch.delay.assert_not_called()
+        mock_sms_provider.send_sms.assert_called_once()
         individual.refresh_from_db()
-        assert individual.status == ScheduleStatus.QUEUED
+        assert individual.status == ScheduleStatus.SENT
 
-    def test_redispatches_stale_queued_batch_parent(self, db, organisation, user):
-        """Stale batch parent QUEUED schedule is re-dispatched via send_batch_message."""
+    def test_redispatches_stale_queued_batch_parent_to_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """Stale batch parent QUEUED schedule is re-sent via send_batch_message;
+        parent and child reach SENT."""
         parent = _make_parent(organisation, user, status=ScheduleStatus.QUEUED)
-        _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
+        child = _make_child(organisation, user, parent, status=ScheduleStatus.QUEUED)
         Schedule.objects.filter(pk=parent.pk).update(
             updated_at=timezone.now() - timedelta(minutes=10)
         )
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_batch.delay.return_value = None
-            dispatch_due_messages()
+        dispatch_due_messages()
 
-        mock_batch.delay.assert_called_once_with(parent.pk)
-        mock_send.delay.assert_not_called()
+        mock_sms_provider.send_bulk_sms.assert_called_once()
         parent.refresh_from_db()
-        assert parent.status == ScheduleStatus.QUEUED
+        child.refresh_from_db()
+        assert parent.status == ScheduleStatus.SENT
+        assert child.status == ScheduleStatus.SENT
 
     def test_stale_queued_children_not_dispatched(self, db, organisation, user):
         """Stale QUEUED children are NOT directly dispatched — parent handles them."""
@@ -678,17 +741,11 @@ class TestStaleQueuedRecovery:
 
     def test_fresh_queued_not_redispatched(self, db, organisation, user):
         """A QUEUED schedule with recent updated_at is NOT re-dispatched."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Fresh queued',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+        _make_individual(
+            organisation, user,
             status=ScheduleStatus.QUEUED,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            text='Fresh queued',
         )
         # updated_at is set to now() by default — well within the timeout
 
@@ -701,17 +758,11 @@ class TestStaleQueuedRecovery:
 
     def test_stale_queued_updated_at_is_bumped(self, db, organisation, user):
         """After re-dispatch, updated_at is bumped so schedule isn't re-dispatched next tick."""
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Stuck queued',
-            scheduled_time=timezone.now() - timedelta(hours=1),
+        individual = _make_individual(
+            organisation, user,
             status=ScheduleStatus.QUEUED,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
+            scheduled_time=timezone.now() - timedelta(hours=1),
+            text='Stuck queued',
         )
         old_time = timezone.now() - timedelta(minutes=10)
         Schedule.objects.filter(pk=individual.pk).update(updated_at=old_time)
@@ -769,18 +820,7 @@ class TestDispatchHeartbeat:
         """A Redis blip while writing the heartbeat must never fail dispatch."""
         redis_client = Mock()
         redis_client.set.side_effect = redis.RedisError('redis down')
-        individual = Schedule.objects.create(
-            organisation=organisation,
-            phone='0412345678',
-            text='Heartbeat resilience',
-            scheduled_time=timezone.now() - timedelta(minutes=5),
-            status=ScheduleStatus.PENDING,
-            format=MessageFormat.SMS,
-            message_parts=1,
-            max_retries=3,
-            created_by=user,
-            updated_by=user,
-        )
+        individual = _make_individual(organisation, user, text='Heartbeat resilience')
 
         with patch('app.celery._get_redis_client', return_value=redis_client), \
              patch('app.celery.send_message') as mock_send, \

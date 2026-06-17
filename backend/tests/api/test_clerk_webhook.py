@@ -8,15 +8,19 @@ Tests:
 """
 
 import json
+import threading
 from datetime import datetime, timezone as dt_timezone
 
 import pytest
+from django.db import connection
 from django.test import override_settings
+from rest_framework.test import APIClient
 from svix.webhooks import Webhook, WebhookVerificationError
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from rest_framework import status
 
 from app.models import (
+    CreditTransaction,
     Organisation,
     OrganisationMembership,
     Schedule,
@@ -179,6 +183,172 @@ class TestClerkWebhookDedup:
             user__clerk_id='user_not_synced_yet',
             organisation__clerk_org_id='org_dedup_2',
         ).exists()
+
+
+@pytest.mark.django_db
+class TestClerkWebhookHandlerRollback:
+    """A handler raising mid-processing must leave no dedup marker behind.
+
+    The marker row commits atomically with the handler's side effects (see
+    ClerkWebhookView.post): when the handler raises, the whole transaction —
+    including the WebhookEvent row — rolls back, so a Svix retry of the same
+    svix-id reprocesses rather than being dropped as a duplicate.
+    """
+
+    def _post(self, api_client, payload, svix_id):
+        return api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            HTTP_SVIX_ID=svix_id,
+        )
+
+    @patch('svix.Webhook.verify')
+    def test_handler_raise_returns_422_and_rolls_back_dedup_row(self, mock_verify, api_client):
+        """Deferred handler (422) → no WebhookEvent row persists for that svix-id."""
+        mock_verify.side_effect = mock_webhook_verify
+        # membership before the user exists → _handle_membership_created raises
+        # WebhookProcessingError (422) after the dedup row was created.
+        payload = {
+            'type': 'organizationMembership.created',
+            'data': {
+                'public_user_data': {'user_id': 'user_rollback'},
+                'organization': {'id': 'org_rollback', 'name': 'RB', 'slug': 'rb'},
+                'role': 'member',
+            },
+        }
+
+        response = self._post(api_client, payload, 'msg_rollback_1')
+
+        assert response.status_code == 422
+        # The dedup marker rolled back with the failed handler.
+        assert not WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_CLERK, event_id='msg_rollback_1',
+        ).exists()
+        # No partial side effects either.
+        assert not OrganisationMembership.objects.filter(
+            organisation__clerk_org_id='org_rollback',
+        ).exists()
+
+    @patch('svix.Webhook.verify')
+    def test_unexpected_handler_error_rolls_back_dedup_row(self, mock_verify, api_client):
+        """A non-deferral handler exception also rolls back the dedup marker.
+
+        Patches the resolved handler to raise a bare RuntimeError mid-processing;
+        the transaction must unwind the WebhookEvent row so the event is not
+        wrongly marked processed.
+        """
+        mock_verify.side_effect = mock_webhook_verify
+        payload = {
+            'type': 'organization.created',
+            'data': {'id': 'org_boom', 'name': 'Boom', 'slug': 'boom'},
+        }
+
+        boom = patch.dict(
+            'app.utils.clerk.WEBHOOK_HANDLERS',
+            {'organization.created': Mock(side_effect=RuntimeError('boom'))},
+        )
+        with boom, pytest.raises(RuntimeError):
+            self._post(api_client, payload, 'msg_boom_1')
+
+        # Marker rolled back → a retry (handler now healthy) will reprocess.
+        assert not WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_CLERK, event_id='msg_boom_1',
+        ).exists()
+        assert not Organisation.objects.filter(clerk_org_id='org_boom').exists()
+
+
+@pytest.mark.django_db
+class TestClerkWebhookIdempotentReapplication:
+    """Re-applying the SAME event yields identical final state (sequential).
+
+    organization.created grants free signup credits exactly once: a duplicate
+    delivery (same svix-id) is short-circuited by the dedup row, so the balance
+    and the grant transaction count never double.
+    """
+
+    def _post(self, api_client, payload, svix_id):
+        return api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            HTTP_SVIX_ID=svix_id,
+        )
+
+    @patch('svix.Webhook.verify')
+    def test_same_event_twice_grants_credits_once(self, mock_verify, api_client):
+        mock_verify.side_effect = mock_webhook_verify
+        payload = {
+            'type': 'organization.created',
+            'data': {'id': 'org_reapply', 'name': 'Reapply', 'slug': 'reapply'},
+        }
+
+        first = self._post(api_client, payload, 'msg_reapply_1')
+        second = self._post(api_client, payload, 'msg_reapply_1')
+
+        assert first.status_code == status.HTTP_200_OK
+        assert second.status_code == status.HTTP_200_OK
+        assert second.data.get('duplicate') is True
+
+        org = Organisation.objects.get(clerk_org_id='org_reapply')
+        grants = CreditTransaction.objects.filter(
+            organisation=org, transaction_type=CreditTransaction.GRANT,
+        )
+        # Granted exactly once; balance reflects a single grant.
+        assert grants.count() == 1
+        assert org.credit_balance == grants.first().amount
+
+
+@pytest.mark.django_db(transaction=True)
+class TestClerkWebhookConcurrentDelivery:
+    """Concurrency variant: Svix delivers the same svix-id from several workers
+    at once. The unique constraint on (provider, event_id) plus the atomic
+    marker means the handler's side effect (free-credit grant) runs exactly once.
+    """
+
+    def test_concurrent_same_event_grants_credits_exactly_once(self):
+        payload = {
+            'type': 'organization.created',
+            'data': {'id': 'org_concurrent', 'name': 'Concurrent', 'slug': 'concurrent'},
+        }
+        body = json.dumps(payload)
+
+        statuses = []
+        lock = threading.Lock()
+
+        def deliver():
+            client = APIClient()
+            try:
+                resp = client.post(
+                    '/api/webhooks/clerk/',
+                    data=body,
+                    content_type='application/json',
+                    HTTP_SVIX_ID='msg_concurrent',
+                )
+                with lock:
+                    statuses.append(resp.status_code)
+            finally:
+                connection.close()
+
+        # Patch once around the whole thread lifecycle — all threads share the
+        # same verify stub, so the side effect remains active for every request.
+        with patch('svix.Webhook.verify', side_effect=mock_webhook_verify):
+            threads = [threading.Thread(target=deliver) for _ in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        # Every delivery is acknowledged 200; the side effect runs once.
+        assert statuses == [200] * 6
+        org = Organisation.objects.get(clerk_org_id='org_concurrent')
+        assert CreditTransaction.objects.filter(
+            organisation=org, transaction_type=CreditTransaction.GRANT,
+        ).count() == 1
+        # Exactly one dedup marker exists for the racing deliveries.
+        assert WebhookEvent.objects.filter(
+            provider=WebhookEvent.PROVIDER_CLERK, event_id='msg_concurrent',
+        ).count() == 1
 
 
 @pytest.mark.django_db

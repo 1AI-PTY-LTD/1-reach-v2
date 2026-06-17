@@ -2,7 +2,17 @@
 Recovery-path tests for the dispatch/reconciliation beat tasks.
 
 Covers the "worker/broker lost the message" and "delivery callback never
-arrived" recovery flows by calling the tasks directly (no real Celery):
+arrived" recovery flows. The dispatch -> EXECUTE tests run under Celery's
+``task_always_eager`` mode so the real send tasks run synchronously in-process:
+``dispatch_due_messages`` re-dispatches a stale schedule, and the recovered
+``send_message`` / ``send_batch_message`` actually runs against a mocked SMS
+provider (no real Welcorp call). We then assert the schedule reaches its
+expected terminal status (QUEUED -> SENT on success, FAILED on a fail-with-
+refund recovery), rather than merely asserting ``.delay()`` was called.
+
+A small number of pure ROUTING tests still patch ``.delay`` to assert which
+task (single vs batch) is targeted for a given schedule shape, without
+executing the send.
 
 - dispatch_due_messages re-dispatches stale QUEUED schedules.
 - dispatch_due_messages resets stale PROCESSING schedules WITHOUT a
@@ -16,9 +26,7 @@ arrived" recovery flows by calling the tasks directly (no real Celery):
 - Fresh schedules (recent updated_at / sent_time) are left untouched.
 
 Staleness is induced by backdating updated_at / dispatch_attempted_at / sent_time
-via .update() (bypasses auto_now). send_message / send_batch_message /
-process_delivery_event are patched at app.celery so .delay() is asserted, never
-executed.
+via .update() (bypasses auto_now).
 """
 
 from datetime import timedelta
@@ -33,11 +41,25 @@ from app.models import (
     ContactGroup,
     CreditTransaction,
     MessageFormat,
+    Organisation,
     Schedule,
     ScheduleStatus,
 )
 from app.utils.billing import record_usage
 from app.utils.sms import DeliveryEvent
+
+
+# ---------------------------------------------------------------------------
+# Shared eager-mode fixture — execute Celery tasks synchronously (no broker)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def celery_eager():
+    """Run Celery tasks synchronously so .delay()/.apply_async() execute in-process."""
+    from app.celery import app as celery_app
+    celery_app.conf.update(task_always_eager=True, task_eager_propagates=True)
+    yield
+    celery_app.conf.update(task_always_eager=False, task_eager_propagates=False)
 
 
 # ---------------------------------------------------------------------------
@@ -106,13 +128,55 @@ def _backdate(pk, minutes, *, dispatch_attempted=False):
 
 
 # ---------------------------------------------------------------------------
-# Stale QUEUED recovery (broker dropped the task)
+# Stale QUEUED recovery (broker dropped the task) — EAGER EXECUTION
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
 class TestStaleQueuedRedispatch:
-    def test_stale_queued_individual_is_redispatched(self, db, organisation, user):
-        """A QUEUED individual schedule past the queued timeout is re-sent."""
+    """The recovered task runs under eager mode and drives the schedule to SENT."""
+
+    def test_stale_queued_individual_is_redispatched_and_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """A stale QUEUED individual schedule is re-sent and reaches SENT."""
+        sched = _make_individual(organisation, user, ScheduleStatus.QUEUED)
+        _backdate(sched.pk, minutes=10)
+
+        result = dispatch_due_messages()
+
+        assert result['recovered_queued'] == 1
+        mock_sms_provider.send_sms.assert_called_once()
+        sched.refresh_from_db()
+        assert sched.status == ScheduleStatus.SENT
+
+    def test_stale_queued_batch_parent_is_redispatched_and_sent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """A stale QUEUED batch parent is re-sent via the batch task; children reach SENT."""
+        parent = _make_parent(organisation, user, ScheduleStatus.QUEUED)
+        child = _make_child(organisation, user, parent, ScheduleStatus.QUEUED)
+        _backdate(parent.pk, minutes=10)
+
+        result = dispatch_due_messages()
+
+        assert result['recovered_queued'] == 1
+        mock_sms_provider.send_bulk_sms.assert_called_once()
+        parent.refresh_from_db()
+        child.refresh_from_db()
+        assert parent.status == ScheduleStatus.SENT
+        assert child.status == ScheduleStatus.SENT
+
+
+# ---------------------------------------------------------------------------
+# Stale QUEUED recovery — ROUTING (which task) without executing the send
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestStaleQueuedRouting:
+    """Pure routing: a stale QUEUED individual goes to send_message, a batch
+    parent goes to send_batch_message. .delay is patched so nothing executes."""
+
+    def test_stale_queued_individual_routes_to_send_message(self, db, organisation, user):
         sched = _make_individual(organisation, user, ScheduleStatus.QUEUED)
         _backdate(sched.pk, minutes=10)
 
@@ -124,11 +188,8 @@ class TestStaleQueuedRedispatch:
         mock_send.delay.assert_called_once_with(sched.pk)
         mock_batch.delay.assert_not_called()
         assert result['recovered_queued'] == 1
-        sched.refresh_from_db()
-        assert sched.status == ScheduleStatus.QUEUED
 
-    def test_stale_queued_batch_parent_is_redispatched(self, db, organisation, user):
-        """A QUEUED batch parent past the queued timeout is re-sent via the batch task."""
+    def test_stale_queued_batch_parent_routes_to_send_batch_message(self, db, organisation, user):
         parent = _make_parent(organisation, user, ScheduleStatus.QUEUED)
         _make_child(organisation, user, parent, ScheduleStatus.QUEUED)
         _backdate(parent.pk, minutes=10)
@@ -144,32 +205,34 @@ class TestStaleQueuedRedispatch:
 
 
 # ---------------------------------------------------------------------------
-# Stale PROCESSING recovery (worker crashed mid-task)
+# Stale PROCESSING recovery (worker crashed mid-task) — EAGER EXECUTION
 # ---------------------------------------------------------------------------
 
 @pytest.mark.django_db
 class TestStaleProcessingRecovery:
-    def test_processing_without_marker_is_reset_and_resent(self, db, organisation, user):
-        """No dispatch_attempted_at → worker died BEFORE the provider call → safe to re-send."""
+    def test_processing_without_marker_is_reset_and_resent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """No dispatch_attempted_at → worker died BEFORE the provider call → safe
+        to re-send. Under eager the recovered send runs and reaches SENT."""
         sched = _make_individual(organisation, user, ScheduleStatus.PROCESSING)
         # No dispatch_attempted_at set → marker is NULL.
         _backdate(sched.pk, minutes=15)
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            mock_send.delay.return_value = None
-            result = dispatch_due_messages()
+        result = dispatch_due_messages()
 
-        mock_send.delay.assert_called_once_with(sched.pk)
-        mock_batch.delay.assert_not_called()
         assert result['recovered_processing'] == 1
         assert result['failed_unknown'] == 0
+        mock_sms_provider.send_sms.assert_called_once()
         sched.refresh_from_db()
-        assert sched.status == ScheduleStatus.QUEUED
+        assert sched.status == ScheduleStatus.SENT
 
-    def test_processing_with_marker_is_failed_with_refund_not_resent(self, db, organisation, user):
-        """dispatch_attempted_at set → provider call may have gone out → fail+refund, never re-send."""
-        organisation.billing_mode = organisation.BILLING_PREPAID
+    def test_processing_with_marker_is_failed_with_refund_not_resent(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """dispatch_attempted_at set → provider call may have gone out → fail+refund,
+        never re-send. Under eager the provider must NOT be called for this schedule."""
+        organisation.billing_mode = Organisation.BILLING_PREPAID
         organisation.credit_balance = Decimal('10.00')
         organisation.save()
 
@@ -178,13 +241,10 @@ class TestStaleProcessingRecovery:
         record_usage(organisation, 1, 'sms', 'dispatch', user, sched)
         _backdate(sched.pk, minutes=15, dispatch_attempted=True)
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            result = dispatch_due_messages()
+        result = dispatch_due_messages()
 
         # Never re-sent — duplicate delivery risk.
-        mock_send.delay.assert_not_called()
-        mock_batch.delay.assert_not_called()
+        mock_sms_provider.send_sms.assert_not_called()
         assert result['failed_unknown'] == 1
         assert result['recovered_processing'] == 0
 
@@ -200,17 +260,17 @@ class TestStaleProcessingRecovery:
             transaction_type=CreditTransaction.REFUND,
         ).exists()
 
-    def test_fresh_processing_is_untouched(self, db, organisation, user):
-        """A PROCESSING schedule updated recently (within timeout) is left alone."""
+    def test_fresh_processing_is_untouched(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """A PROCESSING schedule updated recently (within timeout) is left alone —
+        no send executes and the status stays PROCESSING."""
         sched = _make_individual(organisation, user, ScheduleStatus.PROCESSING)
         # updated_at defaults to now() — well within MESSAGE_PROCESSING_TIMEOUT_MINUTES.
 
-        with patch('app.celery.send_message') as mock_send, \
-             patch('app.celery.send_batch_message') as mock_batch:
-            result = dispatch_due_messages()
+        result = dispatch_due_messages()
 
-        mock_send.delay.assert_not_called()
-        mock_batch.delay.assert_not_called()
+        mock_sms_provider.send_sms.assert_not_called()
         assert result['recovered_processing'] == 0
         assert result['failed_unknown'] == 0
         sched.refresh_from_db()

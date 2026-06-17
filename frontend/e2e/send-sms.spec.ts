@@ -46,10 +46,11 @@ test.describe('Send SMS Page', () => {
     await page.goto('/app/send')
     await expect(page.locator('textarea').or(page.getByPlaceholder(/message/i)).first()).toBeVisible({ timeout: 10000 })
     const recipientInput = page.getByPlaceholder(/search|recipient|phone|contact/i).first()
-    if (await recipientInput.isVisible()) {
-      await recipientInput.fill('Alice')
-      await expect(page.getByText('Alice').first()).toBeVisible({ timeout: 5000 })
-    }
+    // Recipient search is a core feature — assert the input exists rather than
+    // silently skipping the search assertion when it's missing.
+    await expect(recipientInput).toBeVisible({ timeout: 5000 })
+    await recipientInput.fill('Alice')
+    await expect(page.getByText('Alice').first()).toBeVisible({ timeout: 5000 })
   })
 
   test('can type a message', async ({ page }) => {
@@ -63,11 +64,12 @@ test.describe('Send SMS Page', () => {
   test('shows templates for selection', async ({ page }) => {
     await page.goto('/app/send')
     await expect(page.locator('textarea').or(page.getByPlaceholder(/message/i)).first()).toBeVisible({ timeout: 10000 })
-    const templateSelect = page.getByText(/template/i).first()
-    if (await templateSelect.isVisible()) {
-      await templateSelect.click()
-      await expect(page.getByText('SMS Welcome').first()).toBeVisible({ timeout: 5000 })
-    }
+    // Template selection is a core feature — the native <select> must offer the
+    // seeded template as an option (options aren't rendered as visible text until
+    // the select is opened, so assert against the option element directly).
+    const select = page.locator('select').first()
+    await expect(select).toBeVisible({ timeout: 5000 })
+    await expect(select.locator('option', { hasText: 'SMS Welcome' })).toHaveCount(1)
   })
 
   test('send button is present', async ({ page }) => {

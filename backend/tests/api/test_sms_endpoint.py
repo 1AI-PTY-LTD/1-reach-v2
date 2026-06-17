@@ -14,8 +14,10 @@ These are CRITICAL tests as they verify:
 - Provider abstraction integration
 """
 
-import pytest
 from decimal import Decimal
+from unittest.mock import patch
+
+import pytest
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
@@ -39,7 +41,7 @@ class TestSendSMS:
     """Tests for POST /api/sms/send/ endpoint."""
 
     def test_send_sms_creates_schedule(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, organisation, user, mock_send_message_task
     ):
         """Sending SMS creates a QUEUED Schedule record and returns 202."""
         data = {
@@ -69,7 +71,7 @@ class TestSendSMS:
         mock_send_message_task.delay.assert_called_once_with(schedule.pk)
 
     def test_send_sms_with_contact_id(
-        self, authenticated_client, contact, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, contact, mock_send_message_task
     ):
         """Sending SMS with contact_id links to contact."""
         data = {
@@ -86,7 +88,7 @@ class TestSendSMS:
         assert schedule.contact == contact
 
     def test_send_sms_checks_monthly_limit(
-        self, authenticated_client, organisation
+        self, authenticated_client, organisation, mock_send_message_task,
     ):
         """Send SMS is blocked when monthly spending limit is reached."""
         organisation.credit_balance = Decimal('10.00')
@@ -98,10 +100,15 @@ class TestSendSMS:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
+        # Rejection is total: no schedule, no dispatch, no charge.
+        assert Schedule.objects.count() == 0
+        mock_send_message_task.delay.assert_not_called()
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
 
     def test_send_sms_blocks_opted_out_recipient(
         self, authenticated_client, organisation, contact,
-        mock_check_sms_limit, mock_send_message_task,
+        mock_send_message_task,
     ):
         """Direct sends to opted-out numbers are rejected (Spam Act compliance).
 
@@ -121,7 +128,7 @@ class TestSendSMS:
 
     def test_send_sms_skips_opted_out_in_multi_recipient(
         self, authenticated_client, organisation, contact,
-        mock_check_sms_limit, mock_send_batch_message_task,
+        mock_send_batch_message_task,
     ):
         """Multi-recipient sends drop opted-out numbers and report the skip."""
         contact.opt_out = True
@@ -139,20 +146,22 @@ class TestSendSMS:
         assert not Schedule.objects.filter(phone=contact.phone).exists()
 
     def test_send_sms_402_when_deduction_would_go_negative(
-        self, authenticated_client, organisation, mock_check_sms_limit,
-        mock_send_message_task,
+        self, authenticated_client, organisation, mock_send_message_task,
     ):
         """Simulates the gate/deduct race: the gate passed but the balance is gone.
 
         check_can_send is unlocked, so concurrent sends can all pass it; the
         locked floor in record_usage must reject the deduction with 402 and
-        roll back the created schedule.
+        roll back the created schedule. We force the gate open (the race that
+        only the unlocked pre-check can lose) and let the REAL record_usage
+        floor reject the deduction.
         """
         organisation.credit_balance = settings.SMS_RATE - Decimal('0.01')  # below one SMS part
         organisation.save()
 
         data = {'message': 'Test', 'recipients': [{'phone': '0412345678'}]}
-        response = authenticated_client.post('/api/sms/send/', data, format='json')
+        with patch('app.views.check_can_send', return_value=(True, None)):
+            response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
         organisation.refresh_from_db()
@@ -161,14 +170,17 @@ class TestSendSMS:
         mock_send_message_task.delay.assert_not_called()
 
     def test_send_sms_gates_on_full_multipart_cost(
-        self, authenticated_client, mock_check_sms_limit,
+        self, authenticated_client, organisation,
         mock_send_message_task, mock_send_batch_message_task,
     ):
         """Billing gate counts recipients × message_parts, not just recipients.
 
         Regression test: the gate previously checked units=len(recipients), so a
-        2-part message to 2 recipients was gated at half its real cost.
+        2-part message to 2 recipients was gated at half its real cost. With the
+        real check_can_send running, prove the units via the schedules' parts and
+        the prepaid deduction: 2 recipients × 2 parts = 4 units.
         """
+        balance_before = organisation.credit_balance
         data = {
             'message': 'x' * 200,  # >160 chars → 2 parts
             'recipients': [{'phone': '0412345678'}, {'phone': '0412345679'}],
@@ -177,10 +189,16 @@ class TestSendSMS:
         response = authenticated_client.post('/api/sms/send/', data, format='json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
-        assert mock_check_sms_limit.call_args.kwargs['units'] == 4
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        children = Schedule.objects.filter(parent=parent)
+        assert children.count() == 2
+        assert set(children.values_list('message_parts', flat=True)) == {2}
+        # 2 recipients × 2 parts = 4 units deducted from the funded prepaid org
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == balance_before - (4 * settings.SMS_RATE)
 
     def test_send_sms_validates_phone_number(
-        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """Invalid phone numbers rejected."""
         data = {
@@ -193,7 +211,7 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_send_sms_validates_message(
-        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """Empty/invalid messages rejected."""
         data = {
@@ -206,7 +224,7 @@ class TestSendSMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_send_sms_dispatches_celery_task(
-        self, authenticated_client, organisation, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, organisation, mock_send_message_task
     ):
         """send_sms dispatches a Celery task (not the provider directly)."""
         data = {
@@ -233,7 +251,7 @@ class TestSendToGroup:
     """Tests for POST /api/sms/send-to-group/ endpoint."""
 
     def test_send_to_group_creates_parent_and_children(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_batch_message_task
+        self, authenticated_client, organisation, user, mock_send_batch_message_task
     ):
         """Sending to group creates parent + QUEUED child schedules."""
         # Create group with 3 members
@@ -270,7 +288,7 @@ class TestSendToGroup:
         mock_send_batch_message_task.delay.assert_called_once_with(parent.pk)
 
     def test_send_to_group_skips_opted_out_contacts(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, organisation, user, mock_send_message_task
     ):
         """Opted-out contacts excluded from bulk send."""
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
@@ -286,20 +304,31 @@ class TestSendToGroup:
         assert response.data['results']['total'] == 2  # Only 2 queued
 
     def test_send_to_group_gates_on_full_multipart_cost(
-        self, authenticated_client, organisation, user, mock_check_sms_limit,
+        self, authenticated_client, organisation, user,
         mock_send_batch_message_task,
     ):
-        """Billing gate counts members × message_parts, not just members."""
+        """Billing gate counts members × message_parts, not just members.
+
+        With the real check_can_send running, prove the 6 units via the child
+        schedules' parts and the prepaid deduction: 3 members × 2 parts.
+        """
+        balance_before = organisation.credit_balance
         group, _ = create_contact_group_with_members(organisation, num_members=3, user=user)
 
         data = {'message': 'x' * 200, 'group_id': group.id}  # 2 parts × 3 members
         response = authenticated_client.post('/api/sms/send-to-group/', data)
 
         assert response.status_code == status.HTTP_202_ACCEPTED
-        assert mock_check_sms_limit.call_args.kwargs['units'] == 6
+        parent = Schedule.objects.get(pk=response.data['group_schedule_id'])
+        children = Schedule.objects.filter(parent=parent)
+        assert children.count() == 3
+        assert set(children.values_list('message_parts', flat=True)) == {2}
+        # 3 members × 2 parts = 6 units deducted from the funded prepaid org
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == balance_before - (6 * settings.SMS_RATE)
 
     def test_send_to_group_validates_group_exists(
-        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """Non-existent group ID rejected."""
         data = {'message': 'Test', 'group_id': 99999}
@@ -308,7 +337,7 @@ class TestSendToGroup:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_send_to_group_checks_bulk_limit(
-        self, authenticated_client, organisation, user
+        self, authenticated_client, organisation, user, mock_send_batch_message_task,
     ):
         """Bulk send is blocked when monthly spending limit is reached."""
         group, _ = create_contact_group_with_members(organisation, num_members=10, user=user)
@@ -321,6 +350,11 @@ class TestSendToGroup:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
+        # Rejection is total: no schedules created, no batch dispatch, no charge.
+        assert Schedule.objects.count() == 0
+        mock_send_batch_message_task.delay.assert_not_called()
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
 
 
 @pytest.mark.django_db
@@ -328,7 +362,7 @@ class TestSendMMS:
     """Tests for POST /api/sms/send-mms/ endpoint."""
 
     def test_send_mms_creates_schedule(
-        self, authenticated_client, organisation, mock_check_mms_limit, mock_send_message_task
+        self, authenticated_client, organisation, mock_send_message_task
     ):
         """Sending MMS creates a QUEUED Schedule with format=MMS."""
         data = {
@@ -356,7 +390,7 @@ class TestSendMMS:
         assert schedule.status == ScheduleStatus.QUEUED
 
     def test_send_mms_multiple_recipients_creates_parent_and_children(
-        self, authenticated_client, organisation, mock_check_mms_limit, mock_send_batch_message_task
+        self, authenticated_client, organisation, mock_send_batch_message_task
     ):
         """MMS with multiple recipients creates parent + children."""
         data = {
@@ -387,7 +421,7 @@ class TestSendMMS:
         mock_send_batch_message_task.delay.assert_called_once_with(parent.pk)
 
     def test_send_mms_checks_monthly_limit(
-        self, authenticated_client, organisation
+        self, authenticated_client, organisation, mock_send_message_task,
     ):
         """Send MMS is blocked when monthly spending limit is reached."""
         organisation.credit_balance = Decimal('10.00')
@@ -404,9 +438,14 @@ class TestSendMMS:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'limit' in str(response.data).lower()
+        # Rejection is total: no schedule, no dispatch, no charge.
+        assert Schedule.objects.count() == 0
+        mock_send_message_task.delay.assert_not_called()
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('10.00')
 
     def test_send_mms_accepts_empty_message(
-        self, authenticated_client, mock_check_mms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """MMS with empty text (image-only) accepted."""
         data = {
@@ -420,7 +459,7 @@ class TestSendMMS:
         assert response.status_code == status.HTTP_202_ACCEPTED
 
     def test_send_mms_missing_media_url_rejected(
-        self, authenticated_client, mock_check_mms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """MMS without a media_url is rejected with 400."""
         data = {
@@ -434,7 +473,7 @@ class TestSendMMS:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_send_mms_invalid_media_url_rejected(
-        self, authenticated_client, mock_check_mms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """MMS with a non-URL media_url is rejected with 400."""
         data = {
@@ -453,7 +492,7 @@ class TestSendToGroupInactiveMembers:
     """Additional coverage for send_to_group inactive member filtering."""
 
     def test_send_to_group_skips_inactive_members(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, organisation, user, mock_send_message_task
     ):
         """Members with is_active=False are excluded from group sends."""
         group, contacts = create_contact_group_with_members(organisation, num_members=3, user=user)
@@ -674,7 +713,7 @@ class TestPrepaidCreditReservation:
 @pytest.mark.django_db
 class TestSendEdgeCases:
     def test_send_sms_with_unknown_contact_id_returns_404(
-        self, authenticated_client, mock_check_sms_limit, mock_send_message_task
+        self, authenticated_client, mock_send_message_task
     ):
         """contact_id belonging to a different org (or non-existent) returns 404."""
         other_contact = ContactFactory()  # different org — not visible to request.org
@@ -713,7 +752,7 @@ class TestSendWithGroupId:
     """Tests for optional group_id on /api/sms/send/ and /api/sms/send-mms/."""
 
     def test_send_sms_with_group_id_sets_group_on_parent(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_batch_message_task
+        self, authenticated_client, organisation, user, mock_send_batch_message_task
     ):
         """Batch SMS with group_id sets group FK on parent schedule."""
         group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
@@ -732,7 +771,7 @@ class TestSendWithGroupId:
         assert parent.group == group
 
     def test_send_sms_without_group_id_leaves_group_null(
-        self, authenticated_client, organisation, user, mock_check_sms_limit, mock_send_batch_message_task
+        self, authenticated_client, organisation, user, mock_send_batch_message_task
     ):
         """Batch SMS without group_id keeps group FK null on parent."""
         response = authenticated_client.post('/api/sms/send/', {
@@ -748,7 +787,7 @@ class TestSendWithGroupId:
         assert parent.group is None
 
     def test_send_sms_with_invalid_group_id_ignores_group(
-        self, authenticated_client, organisation, mock_check_sms_limit, mock_send_batch_message_task
+        self, authenticated_client, organisation, mock_send_batch_message_task
     ):
         """group_id from another org is silently ignored (group set to None)."""
         other_org = OrganisationFactory()
@@ -768,7 +807,7 @@ class TestSendWithGroupId:
         assert parent.group is None
 
     def test_send_mms_with_group_id_sets_group_on_parent(
-        self, authenticated_client, organisation, user, mock_check_mms_limit, mock_send_batch_message_task
+        self, authenticated_client, organisation, user, mock_send_batch_message_task
     ):
         """Batch MMS with group_id sets group FK on parent schedule."""
         group, contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
