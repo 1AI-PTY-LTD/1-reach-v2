@@ -186,6 +186,23 @@ describe('schedulesApi', () => {
       expect(refetchInterval(query)).toBe(60000)
     })
 
+    it('returns 5000ms when a message is sent (awaiting delivery receipt)', () => {
+      const options = getAllSchedulesQueryOptions(client, '2026-01-15')
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: {
+            results: [
+              { status: 'delivered' },
+              { status: 'sent' },
+            ],
+            pagination: { total: 2, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
+          },
+        },
+      }
+      expect(refetchInterval(query)).toBe(5000)
+    })
+
     it('returns 60000ms when data is not yet loaded', () => {
       const options = getAllSchedulesQueryOptions(client, '2026-01-15')
       const refetchInterval = options.refetchInterval as Function
@@ -234,6 +251,20 @@ describe('schedulesApi', () => {
         },
       }
       expect(refetchInterval(query)).toBe(2000)
+    })
+
+    it('recipients query returns 5000ms when a message is sent', () => {
+      const options = getScheduleRecipientsQueryOptions(client, 1)
+      const refetchInterval = options.refetchInterval as Function
+      const query = {
+        state: {
+          data: [
+            { status: 'delivered' },
+            { status: 'sent' },
+          ],
+        },
+      }
+      expect(refetchInterval(query)).toBe(5000)
     })
   })
 
