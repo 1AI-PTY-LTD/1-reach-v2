@@ -349,9 +349,9 @@ docker compose exec frontend npx vitest run            # tests only
 docker compose exec frontend npm run test:coverage     # tests + coverage gate (what CI runs)
 ```
 
-530+ tests across 46 files. Uses Vitest + MSW for API mocking. Covers API modules, components, and route integration tests.
+780+ tests across 60+ files, ~85% coverage. Uses Vitest + MSW for API mocking. Covers API modules (queries **and** mutation hooks), components (modals, pickers, forms), and route integration tests.
 
-- **Coverage gate.** `npm run test:coverage` enforces a v8 floor (statements 50 / branches 52 / functions 47 / lines 50) configured in `vitest.config.ts`. The `include` glob counts *all* `src/**` files — not just test-imported ones — so untested components stay in the denominator and the percentage is honest. CI runs this command, not bare `vitest run`.
+- **Coverage gate.** `npm run test:coverage` enforces a v8 floor (statements 84 / branches 77 / functions 81 / lines 84) configured in `vitest.config.ts`. The `include` glob counts *all* non-excluded `src/**` files. Deliberately **excluded** from the denominator: the `ui/` Catalyst kit (styled Headless-UI wrappers), the `landing/` marketing page, and static/boilerplate route shells — these are presentational/vendored and are exercised by E2E + the visual-regression pilot, so the percentage reflects app *logic* rather than styling. CI runs this command, not bare `vitest run`.
 - **Real routes, not copies.** Route integration tests import and render the **actual** layout/route components (exported from `src/routes/app/_layout.*.tsx`) instead of re-creating a parallel test version, so the real suspense/loader/error logic runs. `send-full.test.tsx` drives the full Send-form journey (add/dedupe/validate recipients, counter, group↔individual switch, submit→endpoint, and the 402/400/opt-out error surfaces).
 - **Auth states.** `clerk-roles.test.tsx` + the `loginAs('org:member' | 'org:admin')` helper cover admin-vs-member access on admin-only routes (the global mock is no longer admin-only).
 - **Contract pinning.** The canonical DRF response envelopes (pagination shape, SMS-send 202, insufficient-balance 402/400, contacts-import 207, billing summary) are pinned in a backend test — `backend/tests/api/test_response_contract.py` — so a rename of an envelope field fails a backend test instead of silently drifting. The MSW handlers in `src/test/handlers.ts` were aligned to those real shapes (e.g. the contacts-import handler now returns the real `record_count`/`error_records` body), so the frontend mocks can't go green against a shape prod never sends.
@@ -413,7 +413,7 @@ Beyond the test suites, CI runs these guards (`.github/workflows/ci.yml`):
 | Gate | What it catches | Blocking? |
 |---|---|---|
 | **Backend coverage ≥ 80%** | Untested backend code | ✅ blocking |
-| **Frontend coverage gate** (50/52/47/50) | Untested frontend code | ✅ blocking |
+| **Frontend coverage gate** (84/77/81/84) | Untested frontend logic (ui/landing/static excluded) | ✅ blocking |
 | **`makemigrations --check --dry-run`** | Model changes with no committed migration (schema drift to deploy) | ✅ blocking |
 | **Response-contract test** | Backend renaming a response-envelope field (the cause of MSW↔DRF drift) | ✅ blocking (backend suite) |
 | **`/api/health/worker/` gate** | Dead/misconfigured Celery worker before E2E | ✅ blocking |

@@ -79,6 +79,73 @@ describe('ScheduleDateTimePicker', () => {
       expect(screen.queryByText(/scheduled/)).not.toBeInTheDocument()
       expect(screen.queryByText(/past/)).not.toBeInTheDocument()
     })
+
+    it('renders the exact past-time message and only that message', () => {
+      const pastIso = NOW.subtract(1, 'hour').toISOString()
+      render(<ScheduleDateTimePicker value={pastIso} onChange={vi.fn()} />)
+      expect(
+        screen.getByText("A message can't be scheduled for a time in the past!"),
+      ).toBeInTheDocument()
+      expect(screen.queryByText(/will be sent immediately/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/will be scheduled for future delivery/)).not.toBeInTheDocument()
+    })
+
+    it('renders the exact immediate message with the interpolated delay minutes', () => {
+      const nearFuture = NOW.add(2, 'minute').toISOString()
+      render(<ScheduleDateTimePicker value={nearFuture} onChange={vi.fn()} />)
+      expect(
+        screen.getByText(
+          'This message will be sent immediately (scheduled time is within 5 minutes)',
+        ),
+      ).toBeInTheDocument()
+      expect(
+        screen.queryByText("A message can't be scheduled for a time in the past!"),
+      ).not.toBeInTheDocument()
+    })
+
+    it('renders the exact future-delivery message and only that message', () => {
+      const future = NOW.add(1, 'hour').toISOString()
+      render(<ScheduleDateTimePicker value={future} onChange={vi.fn()} />)
+      expect(
+        screen.getByText('This message will be scheduled for future delivery'),
+      ).toBeInTheDocument()
+      expect(screen.queryByText(/will be sent immediately/)).not.toBeInTheDocument()
+      expect(
+        screen.queryByText("A message can't be scheduled for a time in the past!"),
+      ).not.toBeInTheDocument()
+    })
+
+    it('uses the red (past) container styling for past times', () => {
+      const pastIso = NOW.subtract(1, 'hour').toISOString()
+      render(<ScheduleDateTimePicker value={pastIso} onChange={vi.fn()} />)
+      const message = screen.getByText("A message can't be scheduled for a time in the past!")
+      expect(message.className).toContain('bg-red-50')
+    })
+
+    it('uses the orange (immediate) container styling for near-future times', () => {
+      const nearFuture = NOW.add(2, 'minute').toISOString()
+      render(<ScheduleDateTimePicker value={nearFuture} onChange={vi.fn()} />)
+      const message = screen.getByText(/will be sent immediately/)
+      expect(message.className).toContain('bg-orange-50')
+    })
+
+    it('uses the blue (scheduled) container styling for future times', () => {
+      const future = NOW.add(1, 'hour').toISOString()
+      render(<ScheduleDateTimePicker value={future} onChange={vi.fn()} />)
+      const message = screen.getByText('This message will be scheduled for future delivery')
+      expect(message.className).toContain('bg-blue-50')
+    })
+
+    it('prioritises the past message over the immediate message when both predicates would fire', () => {
+      // A past time satisfies both isTimeInPast and shouldSendImmediately,
+      // but isPast wins the conditional ladder.
+      const pastIso = NOW.subtract(1, 'minute').toISOString()
+      render(<ScheduleDateTimePicker value={pastIso} onChange={vi.fn()} />)
+      expect(
+        screen.getByText("A message can't be scheduled for a time in the past!"),
+      ).toBeInTheDocument()
+      expect(screen.queryByText(/will be sent immediately/)).not.toBeInTheDocument()
+    })
   })
 
   describe('onChange', () => {
@@ -112,6 +179,15 @@ describe('isTimeInPast', () => {
   it('returns false for future times', () => {
     expect(isTimeInPast(dayjs().add(1, 'minute').toISOString())).toBe(false)
   })
+
+  it('returns false for exactly now (now is not strictly before now)', () => {
+    // Fake timers freeze the clock, so the component's dayjs() equals NOW.
+    expect(isTimeInPast(NOW.toISOString())).toBe(false)
+  })
+
+  it('returns true one millisecond into the past', () => {
+    expect(isTimeInPast(NOW.subtract(1, 'millisecond').toISOString())).toBe(true)
+  })
 })
 
 describe('shouldSendImmediately', () => {
@@ -125,5 +201,20 @@ describe('shouldSendImmediately', () => {
 
   it('returns true for past times', () => {
     expect(shouldSendImmediately(dayjs().subtract(1, 'minute').toISOString())).toBe(true)
+  })
+
+  it('returns true for "now" (within the delay window)', () => {
+    expect(shouldSendImmediately(NOW.toISOString())).toBe(true)
+  })
+
+  it('returns false exactly at the MIN_MESSAGE_DELAY boundary (not strictly before)', () => {
+    // scheduled === now + 5min: isBefore(now+5min) is false, isBefore(now) is false.
+    expect(shouldSendImmediately(NOW.add(5, 'minute').toISOString())).toBe(false)
+  })
+
+  it('returns true one millisecond inside the MIN_MESSAGE_DELAY boundary', () => {
+    expect(
+      shouldSendImmediately(NOW.add(5, 'minute').subtract(1, 'millisecond').toISOString()),
+    ).toBe(true)
   })
 })

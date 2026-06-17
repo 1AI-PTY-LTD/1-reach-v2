@@ -55,7 +55,7 @@ const allNavItems = [
   { label: 'Billing', to: '/app/billing', match: '/app/_layout/billing/', adminOnly: true },
 ]
 
-function AppLayout() {
+export function AppLayout() {
   const matches = useMatches()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'

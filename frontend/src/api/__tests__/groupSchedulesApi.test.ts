@@ -1,12 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
+import { renderHook, waitFor } from '@testing-library/react'
 import {
   getAllGroupSchedulesQueryOptions,
   getGroupScheduleByIdQueryOptions,
   getGroupSchedulesInfiniteOptions,
+  useCreateGroupScheduleMutation,
+  useUpdateGroupScheduleMutation,
+  useDeleteGroupScheduleMutation,
 } from '../groupSchedulesApi'
-import { createMockApiClient } from '../../test/test-utils'
+import { createMockApiClient, createWrapper } from '../../test/test-utils'
 import { server } from '../../test/handlers'
+
+const BASE_URL = 'http://localhost:8000'
 
 describe('groupSchedulesApi', () => {
   const client = createMockApiClient()
@@ -107,6 +113,126 @@ describe('groupSchedulesApi', () => {
       )
       const options = getAllGroupSchedulesQueryOptions(client)
       await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('getGroupScheduleByIdQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/group-schedules/:id/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getGroupScheduleByIdQueryOptions(client, 1)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('getGroupSchedulesInfiniteOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/group-schedules/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getGroupSchedulesInfiniteOptions(client, 1)
+      await expect(options.queryFn!({ pageParam: 1 } as any)).rejects.toThrow()
+    })
+  })
+
+  describe('useCreateGroupScheduleMutation', () => {
+    it('creates a group schedule on success', async () => {
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useCreateGroupScheduleMutation(client), {
+        wrapper: Wrapper,
+      })
+
+      result.current.mutate({
+        name: 'New schedule',
+        group_id: 1,
+        text: 'Hello',
+        scheduled_time: new Date(Date.now() + 3600000).toISOString(),
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toHaveProperty('id', 100)
+      expect(result.current.data).toHaveProperty('name', 'New schedule')
+    })
+
+    it('sets isError when the API returns 400', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/group-schedules/`, () =>
+          HttpResponse.json({ detail: 'Invalid payload' }, { status: 400 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useCreateGroupScheduleMutation(client), {
+        wrapper: Wrapper,
+      })
+
+      result.current.mutate({
+        name: 'Bad schedule',
+        group_id: 1,
+        scheduled_time: new Date(Date.now() + 3600000).toISOString(),
+      })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+    })
+  })
+
+  describe('useUpdateGroupScheduleMutation', () => {
+    it('updates a group schedule on success', async () => {
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useUpdateGroupScheduleMutation(client), {
+        wrapper: Wrapper,
+      })
+
+      result.current.mutate({ id: 7, text: 'Updated text' })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toHaveProperty('id', 7)
+      expect(result.current.data).toHaveProperty('text', 'Updated text')
+    })
+
+    it('sets isError when the API returns 500', async () => {
+      server.use(
+        http.put(`${BASE_URL}/api/group-schedules/:id/`, () =>
+          HttpResponse.json({ detail: 'Server Error' }, { status: 500 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useUpdateGroupScheduleMutation(client), {
+        wrapper: Wrapper,
+      })
+
+      result.current.mutate({ id: 7, text: 'Updated text' })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+    })
+  })
+
+  describe('useDeleteGroupScheduleMutation', () => {
+    it('deletes a group schedule on success', async () => {
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useDeleteGroupScheduleMutation(client), {
+        wrapper: Wrapper,
+      })
+
+      result.current.mutate(7)
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    })
+
+    it('sets isError when the API returns 404', async () => {
+      server.use(
+        http.delete(`${BASE_URL}/api/group-schedules/:id/`, () =>
+          HttpResponse.json({ detail: 'Not found' }, { status: 404 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useDeleteGroupScheduleMutation(client), {
+        wrapper: Wrapper,
+      })
+
+      result.current.mutate(999)
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
     })
   })
 })

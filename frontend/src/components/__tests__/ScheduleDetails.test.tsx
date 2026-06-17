@@ -247,4 +247,142 @@ describe('ScheduleDetails', () => {
       )
     })
   })
+
+  describe('alphanumeric sender', () => {
+    it('renders the Sender ID block when alphanumeric_sender is set', () => {
+      const message = createSchedule({
+        contact: 1,
+        contact_detail: contactDetail,
+        alphanumeric_sender: 'ACMECORP',
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      expect(screen.getByText('Sender ID:')).toBeInTheDocument()
+      expect(screen.getByText('ACMECORP')).toBeInTheDocument()
+    })
+
+    it('does not render Sender ID block when alphanumeric_sender is absent', () => {
+      const message = createSchedule({
+        contact: 1,
+        contact_detail: contactDetail,
+        alphanumeric_sender: null,
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      expect(screen.queryByText('Sender ID:')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('retry button visibility', () => {
+    it('shows Retry button for failed messages', () => {
+      const message = createSchedule({
+        status: 'failed',
+        contact: 1,
+        contact_detail: contactDetail,
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+      expect(screen.getByText('Retry')).toBeInTheDocument()
+    })
+
+    const nonRetryableStatuses: ScheduleStatus[] = [
+      'pending', 'queued', 'processing', 'sent', 'delivered', 'cancelled', 'retrying',
+    ]
+
+    it.each(nonRetryableStatuses)(
+      'does not show Retry button for %s status',
+      (status) => {
+        const message = createSchedule({
+          status,
+          contact: 1,
+          contact_detail: contactDetail,
+        })
+        renderWithProviders(<ScheduleDetails message={message} />)
+        expect(screen.queryByText('Retry')).not.toBeInTheDocument()
+      }
+    )
+  })
+
+  describe('retry confirmation dialog', () => {
+    it('opens retry confirmation dialog when Retry is clicked', async () => {
+      const user = userEvent.setup()
+      const message = createSchedule({
+        status: 'failed',
+        contact: 1,
+        contact_detail: contactDetail,
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      await user.click(screen.getByText('Retry'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Retry this message?')).toBeInTheDocument()
+        expect(screen.getByText('The message will be re-queued for delivery.')).toBeInTheDocument()
+        expect(screen.getByText('Yes, retry')).toBeInTheDocument()
+      })
+    })
+
+    it('closes retry dialog when "No, keep it" is clicked', async () => {
+      const user = userEvent.setup()
+      const message = createSchedule({
+        status: 'failed',
+        contact: 1,
+        contact_detail: contactDetail,
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      await user.click(screen.getByText('Retry'))
+      await waitFor(() => {
+        expect(screen.getByText('Retry this message?')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByText('No, keep it'))
+      await waitFor(() => {
+        expect(screen.queryByText('Retry this message?')).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  describe('batch parent recipients table', () => {
+    it('renders the recipients table with status, name, phone, and error for batch parents', async () => {
+      // The /recipients/ MSW handler returns three recipients: two sent and
+      // one failed (see src/test/handlers.ts).
+      const message = createSchedule({
+        id: 7,
+        contact: 1,
+        contact_detail: contactDetail,
+        recipient_count: 3,
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      // Recipients arrive via the schedules/:id/recipients/ query.
+      await waitFor(() => {
+        expect(screen.getByText('Phone')).toBeInTheDocument()
+      })
+
+      // Column headers specific to the recipients table.
+      expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument()
+      expect(screen.getByRole('columnheader', { name: 'Phone' })).toBeInTheDocument()
+      expect(screen.getByRole('columnheader', { name: 'Status' })).toBeInTheDocument()
+      expect(screen.getByRole('columnheader', { name: 'Error' })).toBeInTheDocument()
+
+      // Per-recipient status badges from the handler payload.
+      expect(screen.getAllByText('sent')).toHaveLength(2)
+      expect(screen.getByText('failed')).toBeInTheDocument()
+
+      // Phone numbers are reformatted with spaces.
+      expect(screen.getByText('0412 111 111')).toBeInTheDocument()
+    })
+
+    it('does not render the recipients table for non-batch messages', () => {
+      const message = createSchedule({
+        contact: 1,
+        contact_detail: contactDetail,
+        recipient_count: 0,
+      })
+      renderWithProviders(<ScheduleDetails message={message} />)
+
+      // No recipient column headers should be present.
+      expect(screen.queryByRole('columnheader', { name: 'Phone' })).not.toBeInTheDocument()
+    })
+  })
 })

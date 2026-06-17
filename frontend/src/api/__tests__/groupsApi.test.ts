@@ -1,13 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { http, HttpResponse } from 'msw'
+import { renderHook, waitFor } from '@testing-library/react'
 import {
   getAllGroupsQueryOptions,
   getGroupByIdQueryOptions,
   getGroupMembersInfiniteOptions,
   getSearchInGroupsQueryOptions,
+  useCreateGroupMutation,
+  useUpdateGroupMutation,
+  useDeleteGroupMutation,
+  useAddMembersToGroupMutation,
+  useRemoveMembersFromGroupMutation,
 } from '../groupsApi'
-import { createMockApiClient } from '../../test/test-utils'
+import { createMockApiClient, createWrapper } from '../../test/test-utils'
 import { server } from '../../test/handlers'
+
+const BASE_URL = 'http://localhost:8000'
 
 describe('groupsApi', () => {
   const client = createMockApiClient()
@@ -136,6 +144,210 @@ describe('groupsApi', () => {
       )
       const options = getAllGroupsQueryOptions(client)
       await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('getGroupByIdQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/groups/:id/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getGroupByIdQueryOptions(client, 1)
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+
+    it('getGroupMembersInfiniteOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/groups/:id/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getGroupMembersInfiniteOptions(client, 1)
+      await expect(options.queryFn!({ pageParam: 1 } as any)).rejects.toThrow()
+    })
+
+    it('getSearchInGroupsQueryOptions rejects when API returns 500', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/groups/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const options = getSearchInGroupsQueryOptions(client, 'VIP')
+      await expect(options.queryFn!({} as any)).rejects.toThrow()
+    })
+  })
+
+  describe('useCreateGroupMutation', () => {
+    it('creates a group successfully', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/groups/`, async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>
+          return HttpResponse.json(
+            {
+              id: 100,
+              name: body.name,
+              description: body.description ?? null,
+              is_active: true,
+              member_count: 0,
+              created_at: '2026-01-01T00:00:00Z',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+            { status: 201 }
+          )
+        })
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useCreateGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ name: 'Brand New Group', description: 'desc' })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toMatchObject({ id: 100, name: 'Brand New Group' })
+    })
+
+    it('surfaces an error when the API returns 400', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/groups/`, () =>
+          HttpResponse.json({ detail: 'name is required' }, { status: 400 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useCreateGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ name: '' })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+    })
+  })
+
+  describe('useUpdateGroupMutation', () => {
+    it('updates a group successfully', async () => {
+      server.use(
+        http.put(`${BASE_URL}/api/groups/:id/`, async ({ params, request }) => {
+          const body = (await request.json()) as Record<string, unknown>
+          return HttpResponse.json({
+            id: Number(params.id),
+            name: 'Existing',
+            description: null,
+            is_active: true,
+            member_count: 3,
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            ...body,
+          })
+        })
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useUpdateGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ id: 1, name: 'Renamed Group' })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toMatchObject({ id: 1, name: 'Renamed Group' })
+    })
+
+    it('surfaces an error when the API returns 404', async () => {
+      server.use(
+        http.put(`${BASE_URL}/api/groups/:id/`, () =>
+          HttpResponse.json({ detail: 'Group not found' }, { status: 404 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useUpdateGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ id: 999, name: 'Nope' })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+    })
+  })
+
+  describe('useDeleteGroupMutation', () => {
+    it('deletes a group successfully', async () => {
+      server.use(
+        http.delete(`${BASE_URL}/api/groups/:id/`, () => new HttpResponse(null, { status: 204 }))
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useDeleteGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate(1)
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    })
+
+    it('surfaces an error when the API returns 500', async () => {
+      server.use(
+        http.delete(`${BASE_URL}/api/groups/:id/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useDeleteGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate(1)
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+    })
+  })
+
+  describe('useAddMembersToGroupMutation', () => {
+    it('adds members successfully', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/groups/:id/members/`, () =>
+          HttpResponse.json({ message: 'Members added', added_count: 2 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useAddMembersToGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ group_id: 1, contact_ids: [1, 2] })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toMatchObject({ added_count: 2 })
+    })
+
+    it('surfaces an error when the API returns 400', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/groups/:id/members/`, () =>
+          HttpResponse.json({ detail: 'Invalid contact ids' }, { status: 400 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useAddMembersToGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ group_id: 1, contact_ids: [999] })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+    })
+  })
+
+  describe('useRemoveMembersFromGroupMutation', () => {
+    it('removes members successfully', async () => {
+      server.use(
+        http.delete(`${BASE_URL}/api/groups/:id/members/`, () =>
+          HttpResponse.json({ message: 'Members removed', removed_count: 1 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useRemoveMembersFromGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ group_id: 1, contact_ids: [1] })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      expect(result.current.data).toMatchObject({ removed_count: 1 })
+    })
+
+    it('surfaces an error when the API returns 500', async () => {
+      server.use(
+        http.delete(`${BASE_URL}/api/groups/:id/members/`, () =>
+          HttpResponse.json({ detail: 'Internal Server Error' }, { status: 500 })
+        )
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(() => useRemoveMembersFromGroupMutation(client), { wrapper: Wrapper })
+
+      result.current.mutate({ group_id: 1, contact_ids: [1] })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
     })
   })
 })

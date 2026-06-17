@@ -32,7 +32,7 @@ export const Route = createFileRoute('/app/_layout/contacts/$contactId')({
   },
 })
 
-function ContactDetails() {
+export function ContactDetails() {
   const { contactId } = Route.useParams()
   const client = useApiClient()
   const contactsQuery = useQuery(getAllContactsQueryOptions(client))
