@@ -31,7 +31,6 @@ class TestScheduleRetry:
 
     def test_retry_resets_failed_to_queued(
         self, authenticated_client, organisation, user, mock_send_message_task,
-        mock_check_sms_limit,
     ):
         """Retrying a failed schedule resets it to QUEUED."""
         schedule = ScheduleFactory(
@@ -56,7 +55,6 @@ class TestScheduleRetry:
 
     def test_retry_dispatches_send_message_task(
         self, authenticated_client, organisation, user, mock_send_message_task,
-        mock_check_sms_limit,
     ):
         """Retrying dispatches the send_message Celery task."""
         schedule = ScheduleFactory(
@@ -115,7 +113,7 @@ class TestScheduleRetry:
 
     def test_retry_batch_parent_resets_failed_children(
         self, authenticated_client, organisation, user,
-        mock_send_batch_message_task, mock_check_sms_limit,
+        mock_send_batch_message_task,
     ):
         """Retrying a batch parent resets only failed children to QUEUED."""
         parent = ScheduleFactory(
@@ -201,7 +199,6 @@ class TestScheduleRetry:
 
     def test_retry_returns_serialized_schedule(
         self, authenticated_client, organisation, user, mock_send_message_task,
-        mock_check_sms_limit,
     ):
         """Retry response includes the updated schedule data."""
         schedule = ScheduleFactory(

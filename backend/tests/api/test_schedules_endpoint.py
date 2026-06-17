@@ -303,6 +303,41 @@ class TestScheduleCreate:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_blocked_for_opted_out_recipient(self, authenticated_client, organisation, user):
+        """Spam Act: scheduling a send to an opted-out number is rejected with 400.
+
+        The opt-out gate runs before billing, so no schedule and no charge are
+        created.
+        """
+        _fund(organisation)
+        ContactFactory(
+            organisation=organisation, phone='0412345678', opt_out=True,
+            created_by=user,
+        )
+        future = timezone.now() + timedelta(hours=1)
+        data = {'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat()}
+
+        response = authenticated_client.post('/api/schedules/', data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'opted out' in str(response.data).lower()
+        assert Schedule.objects.count() == 0
+        assert not CreditTransaction.objects.filter(organisation=organisation).exists()
+
+    def test_create_allowed_for_non_opted_out_recipient(self, authenticated_client, organisation, user):
+        """A contact with the same number but opt_out=False does not block the send."""
+        _fund(organisation)
+        ContactFactory(
+            organisation=organisation, phone='0412345678', opt_out=False,
+            created_by=user,
+        )
+        future = timezone.now() + timedelta(hours=1)
+        data = {'text': 'Test', 'phone': '0412345678', 'scheduled_time': future.isoformat()}
+
+        response = authenticated_client.post('/api/schedules/', data)
+
+        assert response.status_code == status.HTTP_201_CREATED
+
 
 @pytest.mark.django_db
 class TestScheduleRetrieve:

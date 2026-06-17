@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { renderWithProviders, screen, waitFor, userEvent } from '../../test/test-utils'
 import { http, HttpResponse } from 'msw'
 import { server } from '../../test/handlers'
@@ -62,48 +62,16 @@ vi.mock('../../ui/dialog', () => ({
   DialogActions: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
-import { useSuspenseQuery } from '@tanstack/react-query'
-import { getBillingSummaryQueryOptions } from '../../api/billingApi'
-import { useApiClient } from '../../lib/ApiClientProvider'
-import { useOrganization } from '@clerk/clerk-react'
-// Import billing route so createFileRoute is called and capturedBillingRouteOptions is populated
-import '../app/_layout.billing'
+// Import billing route so createFileRoute is called and capturedBillingRouteOptions
+// is populated, and import the REAL exported BillingContent component (#6).
+import { BillingContent } from '../app/_layout.billing'
 
-function BillingContentTest() {
-  const client = useApiClient()
-  const { membership } = useOrganization()
-  const isAdmin = membership?.role === 'org:admin'
-  const { data } = useSuspenseQuery(getBillingSummaryQueryOptions(client))
-
-  if (!isAdmin) {
-    return <div data-testid="access-denied">Access restricted to organisation admins.</div>
-  }
-
-  return (
-    <div>
-      <div data-testid="billing-mode">{data.billing_mode}</div>
-      <div data-testid="balance">{data.balance}</div>
-      <div data-testid="monthly-spend">{data.total_monthly_spend}</div>
-      <div data-testid="monthly-limit">{data.monthly_limit ?? 'no-limit'}</div>
-      {Object.entries(data.monthly_usage_by_format).map(([fmt, info]) => (
-        <div key={fmt} data-testid={`format-${fmt}`}>
-          {fmt}: ${info.spend} @ ${info.rate}
-        </div>
-      ))}
-      <div data-testid="tx-count">{data.pagination.total}</div>
-      {data.results.map((tx) => (
-        <div key={tx.id} data-testid={`tx-${tx.id}`}>
-          {tx.transaction_type}: ${tx.amount}
-        </div>
-      ))}
-    </div>
-  )
-}
-
+// Render the REAL BillingContent inside a Suspense boundary (it uses useInfiniteQuery
+// internally but the route's RouteComponent wraps it in Suspense in production).
 function BillingWithSuspense() {
   return (
     <Suspense fallback={<div>Loading billing...</div>}>
-      <BillingContentTest />
+      <BillingContent />
     </Suspense>
   )
 }
@@ -112,25 +80,15 @@ describe('BillingLayout', () => {
   // Default to admin for all tests
   afterEach(() => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
+    mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
   })
 
   beforeEach(() => {
     mockUseOrganization.mockReturnValue({ membership: { role: 'org:admin' }, isLoaded: true })
+    mockUseSubscription.mockReturnValue({ data: null, isLoading: false })
   })
 
-  it('shows loading state via Suspense fallback', () => {
-    server.use(
-      http.get('http://localhost:8000/api/billing/summary/', async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-        return HttpResponse.json(createBillingSummary())
-      })
-    )
-
-    renderWithProviders(<BillingWithSuspense />)
-    expect(screen.getByText('Loading billing...')).toBeInTheDocument()
-  })
-
-  it('renders prepaid billing mode', async () => {
+  it('renders prepaid balance', async () => {
     server.use(
       http.get('http://localhost:8000/api/billing/summary/', () =>
         HttpResponse.json(createBillingSummary({ billing_mode: 'prepaid', balance: '8.50' }))
@@ -140,9 +98,9 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('billing-mode')).toHaveTextContent('prepaid')
+      expect(screen.getByText('Prepaid balance')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('balance')).toHaveTextContent('8.50')
+    expect(screen.getByText('$8.50')).toBeInTheDocument()
   })
 
   it('renders subscribed billing mode', async () => {
@@ -155,7 +113,7 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('billing-mode')).toHaveTextContent('subscribed')
+      expect(screen.getByText('Subscribed')).toBeInTheDocument()
     })
   })
 
@@ -163,8 +121,9 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('monthly-spend')).toHaveTextContent('1.50')
+      expect(screen.getByText('Monthly spend')).toBeInTheDocument()
     })
+    expect(screen.getByText('$1.50')).toBeInTheDocument()
   })
 
   it('displays monthly limit when set', async () => {
@@ -177,7 +136,7 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('monthly-limit')).toHaveTextContent('25.00')
+      expect(screen.getByText('/ $25.00 limit')).toBeInTheDocument()
     })
   })
 
@@ -191,7 +150,7 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('monthly-limit')).toHaveTextContent('no-limit')
+      expect(screen.getByText('no limit set')).toBeInTheDocument()
     })
   })
 
@@ -199,9 +158,13 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('format-sms')).toHaveTextContent('sms: $1.00 @ $0.10')
+      expect(screen.getByText('Usage:')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('format-mms')).toHaveTextContent('mms: $0.50 @ $0.50')
+    // SMS: $1.00 ($0.10/msg) — text is split across nodes, so match fragments.
+    expect(screen.getByText('SMS')).toBeInTheDocument()
+    expect(screen.getByText(/\$1\.00 \(\$0\.10\/msg\)/)).toBeInTheDocument()
+    expect(screen.getByText('MMS')).toBeInTheDocument()
+    expect(screen.getByText(/\$0\.50 \(\$0\.50\/msg\)/)).toBeInTheDocument()
   })
 
   it('renders transaction history', async () => {
@@ -210,8 +173,8 @@ describe('BillingLayout', () => {
         HttpResponse.json(
           createBillingSummary({
             results: [
-              createCreditTransaction({ id: 1, transaction_type: 'grant', amount: '10.00' }),
-              createCreditTransaction({ id: 2, transaction_type: 'deduct', amount: '0.10', format: 'sms' }),
+              createCreditTransaction({ id: 1, transaction_type: 'grant', amount: '10.00', balance_after: '10.00' }),
+              createCreditTransaction({ id: 2, transaction_type: 'deduct', amount: '0.10', format: 'sms', balance_after: '9.90' }),
             ],
             pagination: { total: 2, page: 1, limit: 50, totalPages: 1, hasNext: false, hasPrev: false },
           })
@@ -222,10 +185,12 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('tx-1')).toHaveTextContent('grant: $10.00')
+      expect(screen.getByText('grant')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('tx-2')).toHaveTextContent('deduct: $0.10')
-    expect(screen.getByTestId('tx-count')).toHaveTextContent('2')
+    expect(screen.getByText('deduct')).toBeInTheDocument()
+    // tx2 amount $0.10 is unique (tx1's $10.00 also appears in the balance-after column).
+    expect(screen.getByText('$0.10')).toBeInTheDocument()
+    expect(screen.getByText(/Showing 2 of 2/)).toBeInTheDocument()
   })
 
   it('shows access denied for non-admin', async () => {
@@ -234,11 +199,11 @@ describe('BillingLayout', () => {
     renderWithProviders(<BillingWithSuspense />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('access-denied')).toBeInTheDocument()
+      expect(screen.getByText(/Access restricted to organisation admins/i)).toBeInTheDocument()
     })
   })
 
-  it('renders past_due billing_mode in data layer', async () => {
+  it('renders past_due billing mode in the UI', async () => {
     server.use(
       http.get('http://localhost:8000/api/billing/summary/', () =>
         HttpResponse.json(createBillingSummary({ billing_mode: 'past_due' }))
@@ -246,7 +211,7 @@ describe('BillingLayout', () => {
     )
     renderWithProviders(<BillingWithSuspense />)
     await waitFor(() => {
-      expect(screen.getByTestId('billing-mode')).toHaveTextContent('past_due')
+      expect(screen.getAllByText('Past Due').length).toBeGreaterThan(0)
     })
   })
 

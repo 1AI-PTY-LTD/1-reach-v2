@@ -19,11 +19,13 @@ from decimal import Decimal
 from unittest.mock import Mock, patch
 
 import pytest
+from django.conf import settings
 from django.utils import timezone
 
-from app.celery import process_delivery_event
-from app.models import CreditTransaction, Schedule, ScheduleStatus
-from app.utils.billing import grant_credits
+from app.celery import process_delivery_event, reconcile_stale_sent
+from app.models import Contact, CreditTransaction, Organisation, Schedule, ScheduleStatus
+from app.utils.billing import grant_credits, record_usage
+from app.utils.sms import DeliveryEvent
 
 
 @pytest.mark.django_db
@@ -58,9 +60,7 @@ class TestProcessDeliveryEventSingleSend:
         # Grant credits so refund has something to reverse
         grant_credits(organisation, Decimal('10.00'), 'test')
 
-        # Record initial usage
-        from app.utils.billing import record_usage
-        record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
+        # Record initial usage        record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
 
         result = process_delivery_event({
             'provider_message_id': schedule_sent.provider_message_id,
@@ -112,8 +112,13 @@ class TestProcessDeliveryEventSingleSend:
 
     def test_failed_event_calls_refund(self, schedule_sent, organisation):
         grant_credits(organisation, Decimal('10.00'), 'test')
-        from app.utils.billing import record_usage
         record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
+        organisation.refresh_from_db()
+        balance_after_usage = organisation.credit_balance  # $10 - 1×SMS_RATE
+        usage_amount = CreditTransaction.objects.get(
+            schedule=schedule_sent, transaction_type=CreditTransaction.DEDUCT,
+        ).amount
+        assert usage_amount == settings.SMS_RATE
 
         process_delivery_event({
             'provider_message_id': schedule_sent.provider_message_id,
@@ -122,10 +127,45 @@ class TestProcessDeliveryEventSingleSend:
             'error_message': 'Welcorp delivery failed: BARR',
         })
 
-        assert CreditTransaction.objects.filter(
+        refunds = CreditTransaction.objects.filter(
             schedule=schedule_sent,
             transaction_type=CreditTransaction.REFUND,
-        ).exists()
+        )
+        assert refunds.count() == 1
+        # The refund reverses exactly the original usage charge...
+        assert refunds.first().amount == usage_amount
+        # ...and restores the org's balance to its pre-charge value.
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == balance_after_usage + usage_amount
+
+    def test_failed_event_refund_is_idempotent(self, schedule_sent, organisation):
+        """A second identical failed delivery receipt must NOT double-refund."""
+        grant_credits(organisation, Decimal('10.00'), 'test')
+        record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
+
+        event = {
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': schedule_sent.phone,
+            'error_code': 'BARR',
+            'error_message': 'Welcorp delivery failed: BARR',
+        }
+
+        process_delivery_event(event)
+        organisation.refresh_from_db()
+        balance_after_first = organisation.credit_balance
+        assert CreditTransaction.objects.filter(
+            schedule=schedule_sent, transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
+
+        # Replay the exact same failed DLR — no second refund, balance unchanged.
+        process_delivery_event(event)
+
+        assert CreditTransaction.objects.filter(
+            schedule=schedule_sent, transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == balance_after_first
 
     def test_idempotent_already_delivered(self, schedule_sent):
         schedule_sent.status = ScheduleStatus.DELIVERED
@@ -202,6 +242,86 @@ class TestProcessDeliveryEventSingleSend:
         schedule_sent.refresh_from_db()
         assert schedule_sent.status == ScheduleStatus.DELIVERED
         assert result == {'schedule_id': schedule_sent.pk, 'status': 'delivered'}
+
+
+@pytest.mark.django_db
+class TestProcessDeliveryEventFailureCodes:
+    """Each Welcorp failure code drives the schedule to its terminal status."""
+
+    @pytest.mark.parametrize('error_code,expected_category', [
+        ('INVN', 'invalid_number'),
+        ('RECE', 'invalid_number'),
+        ('BARR', 'blacklisted'),
+        ('BADS', 'account_error'),
+        ('SVRE', 'server_error'),
+        ('EXPD', 'unknown_transient'),
+        ('FAIL', 'unknown_transient'),
+        ('OPTO', 'opt_out'),
+    ])
+    def test_failure_code_marks_failed_with_category(
+        self, schedule_sent, organisation, error_code, expected_category,
+    ):
+        """A delivery-callback failure always lands the schedule in FAILED with
+        the classifier's category, and refunds the reserved charge."""
+        grant_credits(organisation, Decimal('10.00'), 'test')
+        record_usage(organisation, 1, 'sms', 'test send', schedule=schedule_sent)
+
+        result = process_delivery_event({
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': schedule_sent.phone,
+            'error_code': error_code,
+            'error_message': f'Welcorp delivery failed: {error_code}',
+        })
+
+        schedule_sent.refresh_from_db()
+        assert schedule_sent.status == ScheduleStatus.FAILED
+        assert schedule_sent.failure_category == expected_category
+        assert result == {'schedule_id': schedule_sent.pk, 'status': 'failed'}
+        # Terminal failure always refunds the reserved charge
+        assert CreditTransaction.objects.filter(
+            schedule=schedule_sent,
+            transaction_type=CreditTransaction.REFUND,
+        ).exists()
+
+    def test_opto_propagates_to_all_contacts_sharing_phone(
+        self, schedule_sent, organisation, user,
+    ):
+        """OPTO opts out the org contact with that phone and is org-scoped: a
+        same-number contact in a different org is untouched (Spam Act compliance).
+
+        (A (organisation, phone) unique constraint means at most one contact per
+        org can hold a given number, so propagation within an org targets that
+        one contact.)"""
+        phone = schedule_sent.phone
+        # The org's contact for this phone (reuse the fixture's if it exists).
+        org_contact, _ = Contact.objects.get_or_create(
+            organisation=organisation, phone=phone,
+            defaults={'first_name': 'Dup', 'created_by': user, 'updated_by': user},
+        )
+        Contact.objects.filter(pk=org_contact.pk).update(opt_out=False)
+        # Same number, different org — must NOT be opted out.
+        other_org = Organisation.objects.create(
+            clerk_org_id='org_unrelated', name='Other',
+        )
+        foreign = Contact.objects.create(
+            organisation=other_org, phone=phone, first_name='Foreign',
+            created_by=user, updated_by=user,
+        )
+
+        process_delivery_event({
+            'provider_message_id': schedule_sent.provider_message_id,
+            'status': 'failed',
+            'recipient_phone': phone,
+            'error_code': 'OPTO',
+            'error_message': 'Welcorp delivery failed: OPTO',
+        })
+
+        org_contact.refresh_from_db()
+        foreign.refresh_from_db()
+        assert org_contact.opt_out is True
+        # Opt-out is org-scoped — a same-number contact in another org is untouched
+        assert foreign.opt_out is False
 
 
 @pytest.mark.django_db
@@ -296,8 +416,6 @@ class TestReconcileStaleSent:
     """Tests for the reconcile_stale_sent beat task (polls provider for status)."""
 
     def test_stale_schedule_triggers_poll(self, schedule_sent):
-        from app.celery import reconcile_stale_sent
-        from app.utils.sms import DeliveryEvent
 
         schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
         schedule_sent.save()
@@ -324,8 +442,6 @@ class TestReconcileStaleSent:
         mock_task.delay.assert_called_once()
 
     def test_no_stale_schedules(self, schedule_sent):
-        from app.celery import reconcile_stale_sent
-
         # Recently sent — not stale
         with patch('app.celery.get_sms_provider') as mock_get:
             result = reconcile_stale_sent()
@@ -334,8 +450,6 @@ class TestReconcileStaleSent:
         mock_get.assert_not_called()
 
     def test_provider_without_polling_skips(self, schedule_sent):
-        from app.celery import reconcile_stale_sent
-
         schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
         schedule_sent.save()
 
@@ -349,8 +463,6 @@ class TestReconcileStaleSent:
         assert result['reason'] == 'not_supported'
 
     def test_api_error_continues_to_next(self, schedule_sent, organisation, user, contact):
-        from app.celery import reconcile_stale_sent
-
         # Create two stale schedules with different job IDs
         schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
         schedule_sent.save()
@@ -389,8 +501,6 @@ class TestReconcileStaleSent:
 
     def test_batch_children_are_polled(self, batch_sent_schedules):
         """Batch children with provider_message_id should be included in polling."""
-        from app.celery import reconcile_stale_sent
-
         parent, children = batch_sent_schedules
         stale_time = timezone.now() - timedelta(hours=25)
 
@@ -418,8 +528,6 @@ class TestReconcileStaleSent:
 
     def test_oldest_schedules_polled_first(self, organisation, user, contact):
         """Schedules are polled oldest-first so old backlog doesn't get stuck."""
-        from app.celery import reconcile_stale_sent
-
         older = Schedule.objects.create(
             organisation=organisation, contact=contact, phone='0412111111',
             text='Old', scheduled_time=timezone.now(),

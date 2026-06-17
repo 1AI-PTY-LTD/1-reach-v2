@@ -21,7 +21,7 @@ export const Route = createFileRoute('/app/_layout/templates/$templateId')({
   errorComponent: RouteErrorComponent,
 })
 
-function TemplateDetails() {
+export function TemplateDetails() {
   const { templateId } = Route.useParams()
   const client = useApiClient()
   const templateQuery = useSuspenseQuery(

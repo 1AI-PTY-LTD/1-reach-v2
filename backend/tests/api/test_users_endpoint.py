@@ -9,6 +9,8 @@ Tests:
 - POST /api/users/invite/ — invite new member by email (admin only)
 """
 
+import json
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +18,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
+from app.models import OrganisationMembership
 from tests.factories import OrganisationFactory, OrganisationMembershipFactory, UserFactory
 
 
@@ -199,6 +202,98 @@ class TestUserStatus:
         finally:
             APIView.dispatch = original
         assert response.status_code == status.HTTP_502_BAD_GATEWAY
+
+
+# ---------------------------------------------------------------------------
+# "Make Admin" round-trip: role endpoint → Clerk → membership.updated webhook
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestRoleChangeWebhookRoundTrip:
+    """The role endpoint only tells Clerk; the local membership role is flipped by
+    the organizationMembership.updated webhook Clerk fires back.
+
+    Clerk sends Clerk-format role strings ('org:admin' / 'org:member'), and
+    _handle_membership_created stores data['role'] VERBATIM (no normalisation,
+    field default 'member'). So after a real "Make Admin" the STORED role is
+    'org:admin' — not 'admin'. These tests pin that exact stored string.
+    """
+
+    def setup_method(self):
+        self.org = OrganisationFactory(clerk_org_id='org_roundtrip')
+        self.admin = UserFactory(clerk_id='admin_roundtrip')
+        OrganisationMembershipFactory(user=self.admin, organisation=self.org, role='admin')
+        self.target = UserFactory(clerk_id='target_roundtrip')
+        OrganisationMembershipFactory(user=self.target, organisation=self.org, role='member')
+
+    def teardown_method(self):
+        APIView.dispatch = APIView.dispatch.__wrapped__ if hasattr(APIView.dispatch, '__wrapped__') else APIView.dispatch
+
+    def _post_membership_webhook(self, api_client, role):
+        """Simulate the organizationMembership.updated webhook Clerk fires.
+
+        TEST mode skips Svix signature verification, so a plain JSON POST works.
+        """
+        payload = {
+            'type': 'organizationMembership.updated',
+            'data': {
+                'organization': {'id': self.org.clerk_org_id},
+                'public_user_data': {'user_id': self.target.clerk_id},
+                'role': role,
+            },
+        }
+        return api_client.post(
+            '/api/webhooks/clerk/',
+            data=json.dumps(payload),
+            content_type='application/json',
+        )
+
+    def test_make_admin_roundtrip_flips_stored_role_to_org_admin(self, api_client):
+        """role endpoint → Clerk (mocked) → membership.updated webhook → role='org:admin'."""
+        membership = OrganisationMembership.objects.get(user=self.target, organisation=self.org)
+        assert membership.role == 'member'
+
+        # 1) Admin promotes the target. The endpoint forwards 'org:admin' to Clerk
+        #    and does NOT change the local role itself.
+        mock_result = MagicMock()
+        mock_result.role = 'org:admin'
+        client, original = make_admin_client(self.admin, self.org)
+        try:
+            with patch('clerk_backend_api.Clerk') as MockClerk:
+                MockClerk.return_value.organization_memberships.update.return_value = mock_result
+                response = client.patch(
+                    f'/api/users/{self.target.pk}/role/',
+                    {'role': 'org:admin'},
+                    format='json',
+                )
+        finally:
+            APIView.dispatch = original
+        assert response.status_code == status.HTTP_200_OK
+        MockClerk.return_value.organization_memberships.update.assert_called_once()
+        # Endpoint alone has not flipped the local role yet.
+        membership.refresh_from_db()
+        assert membership.role == 'member'
+
+        # 2) Clerk fires organizationMembership.updated with role='org:admin'.
+        webhook_response = self._post_membership_webhook(api_client, 'org:admin')
+        assert webhook_response.status_code == status.HTTP_200_OK
+
+        # 3) The webhook handler stores the Clerk role string VERBATIM.
+        membership.refresh_from_db()
+        assert membership.role == 'org:admin'
+        assert membership.is_active is True
+
+    def test_demote_roundtrip_flips_stored_role_to_org_member(self, api_client):
+        """Demotion stores 'org:member' verbatim (again, not 'member')."""
+        OrganisationMembership.objects.filter(
+            user=self.target, organisation=self.org,
+        ).update(role='org:admin')
+
+        webhook_response = self._post_membership_webhook(api_client, 'org:member')
+        assert webhook_response.status_code == status.HTTP_200_OK
+
+        membership = OrganisationMembership.objects.get(user=self.target, organisation=self.org)
+        assert membership.role == 'org:member'
 
 
 # ---------------------------------------------------------------------------

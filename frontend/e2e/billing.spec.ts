@@ -5,7 +5,12 @@ import {
   deleteSchedule,
   apiRequest,
   setOrgBalance,
+  E2E_FREE_PHONE,
 } from './helpers'
+
+// Per-spec token so fixtures (contacts, messages) can't collide with other
+// specs and retries stay idempotent (stable string, NOT Date.now()).
+const TOKEN = 'BILL'
 
 let contact: { id: number }
 const scheduleIds: number[] = []
@@ -19,10 +24,10 @@ test.beforeAll(async ({ browser }) => {
   await setOrgBalance(page, 50)
 
   // Create a contact and send an SMS to generate a transaction
-  contact = await ensureContact(page, { first_name: 'Billing', last_name: 'Test', phone: '0416111111' })
+  contact = await ensureContact(page, { first_name: `${TOKEN}-Billing`, last_name: 'Test', phone: '0419111111' })
   const res = await apiRequest(page, 'POST', '/api/sms/send/', {
-    message: 'Billing test message',
-    recipients: [{ phone: '0416111111', contact_id: contact.id }],
+    message: `${TOKEN} Billing test message`,
+    recipients: [{ phone: E2E_FREE_PHONE, contact_id: contact.id }],
   })
   if (res?.schedule_id) scheduleIds.push(res.schedule_id)
 

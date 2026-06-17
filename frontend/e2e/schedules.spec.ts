@@ -5,19 +5,26 @@ import {
   deleteContact, ensureContact,
   createGroup, addMembers, deleteGroup,
   apiRequest, forceStatus, deleteSchedule,
+  waitForProviderMessageId,
+  E2E_FREE_PHONE,
 } from './helpers'
+
+// Per-spec token so fixtures (contacts, messages) can't collide with other
+// specs and retries stay idempotent (stable string, NOT Date.now()).
+const TOKEN = 'SCHED'
 
 const scheduleIds: number[] = []
 let contact: { id: number }
 
+// All sends target the free Welcorp number; rows stay distinguishable by message.
 const SCHEDULES = [
-  { message: 'Hello Alice',   status: 'pending',   phone: '0414111111' },
-  { message: 'Hello Bob',     status: 'sent',      phone: '0414222222' },
-  { message: 'Hello Charlie', status: 'queued',    phone: '0414333333' },
-  { message: 'Hello Diana',   status: 'retrying',  phone: '0414444444' },
-  { message: 'Hello Eve',     status: 'delivered', phone: '0414555555' },
-  { message: 'Hello Frank',   status: 'failed',    phone: '0414666666' },
-  { message: 'Hello Grace',   status: 'cancelled', phone: '0414777777' },
+  { message: `${TOKEN} Hello Alice`,   status: 'pending',   phone: E2E_FREE_PHONE },
+  { message: `${TOKEN} Hello Bob`,     status: 'sent',      phone: E2E_FREE_PHONE },
+  { message: `${TOKEN} Hello Charlie`, status: 'queued',    phone: E2E_FREE_PHONE },
+  { message: `${TOKEN} Hello Diana`,   status: 'retrying',  phone: E2E_FREE_PHONE },
+  { message: `${TOKEN} Hello Eve`,     status: 'delivered', phone: E2E_FREE_PHONE },
+  { message: `${TOKEN} Hello Frank`,   status: 'failed',    phone: E2E_FREE_PHONE },
+  { message: `${TOKEN} Hello Grace`,   status: 'cancelled', phone: E2E_FREE_PHONE },
 ]
 
 test.beforeAll(async ({ browser }) => {
@@ -25,7 +32,7 @@ test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage()
   await authenticatePage(page)
 
-  contact = await ensureContact(page, { first_name: 'Schedule', last_name: 'Test', phone: '0414000000' })
+  contact = await ensureContact(page, { first_name: `${TOKEN}-Schedule`, last_name: 'Test', phone: '0414000000' })
 
   const results = await Promise.all(
     SCHEDULES.map(s => apiRequest(page, 'POST', '/api/sms/send/', {
@@ -34,9 +41,12 @@ test.beforeAll(async ({ browser }) => {
   )
   results.forEach(r => scheduleIds.push(r.schedule_id))
 
-  // Wait for the Celery worker to finish processing all dispatched tasks
-  // before overriding statuses — otherwise the worker may change them back.
-  await page.waitForTimeout(3000)
+  // Wait deterministically for the Celery worker to finish its real send (each
+  // schedule gets a provider_message_id) before overriding statuses — otherwise
+  // the worker may change them back. Replaces a racy fixed sleep.
+  await Promise.all(
+    results.map(r => waitForProviderMessageId(page, r.schedule_id))
+  )
 
   await Promise.all(
     SCHEDULES.map((s, i) => forceStatus(page, results[i].schedule_id, s.status))
@@ -61,8 +71,8 @@ test.beforeEach(async ({ page }) => {
 test.describe('Schedule Page', () => {
   test('displays schedule table with messages', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
-    await expect(page.getByText('Hello Bob').first()).toBeVisible()
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Bob`).first()).toBeVisible()
   })
 
   test('shows current date', async ({ page }) => {
@@ -97,14 +107,14 @@ test.describe('Schedule Page', () => {
 
   test('shows message status badges', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/pending/i).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/sent/i).first()).toBeVisible({ timeout: 10000 })
   })
 
   test('shows async pipeline status badges — queued, retrying, delivered, failed', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Charlie').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Charlie`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/queued/i).first()).toBeVisible({ timeout: 5000 })
     await expect(page.getByText(/retrying/i).first()).toBeVisible({ timeout: 5000 })
     await expect(page.getByText(/delivered/i).first()).toBeVisible({ timeout: 5000 })
@@ -113,16 +123,16 @@ test.describe('Schedule Page', () => {
 
   test('can expand a row to see message details', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
     // Click the row to expand
-    await page.getByText('Hello Alice').first().click()
+    await page.getByText(`${TOKEN} Hello Alice`).first().click()
     // Expanded detail row should appear with a colspan cell
     await expect(page.locator('td[colspan]').first()).toBeVisible({ timeout: 5000 })
   })
 
   test('shows cancelled status badge', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Grace').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Grace`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/cancelled/i).first()).toBeVisible()
   })
 
@@ -130,10 +140,10 @@ test.describe('Schedule Page', () => {
     // Re-force to pending immediately before the test in case beat dispatched it
     await forceStatus(page, scheduleIds[0], 'pending')
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
 
     // Expand the pending schedule row
-    await page.getByText('Hello Alice').first().click()
+    await page.getByText(`${TOKEN} Hello Alice`).first().click()
     await expect(page.locator('td[colspan]').first()).toBeVisible({ timeout: 5000 })
 
     // Click the Cancel button to open confirmation alert
@@ -144,14 +154,20 @@ test.describe('Schedule Page', () => {
     await page.getByRole('button', { name: /yes, cancel/i }).click()
 
     // The message should still be visible with cancelled status
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(/cancelled/i).first()).toBeVisible()
+
+    // Reload to prove the cancellation persisted server-side (not just optimistic UI):
+    // the row + cancelled badge must survive a fresh fetch.
+    await page.reload()
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/cancelled/i).first()).toBeVisible()
   })
 
   test('shows Contact Support button when expanding a failed message', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Frank').first()).toBeVisible({ timeout: 10000 })
-    await page.getByText('Hello Frank').first().click()
+    await expect(page.getByText(`${TOKEN} Hello Frank`).first()).toBeVisible({ timeout: 10000 })
+    await page.getByText(`${TOKEN} Hello Frank`).first().click()
     const expandedRow = page.locator('td[colspan]').first()
     await expect(expandedRow).toBeVisible({ timeout: 5000 })
     await expect(expandedRow.getByRole('button', { name: /contact support/i })).toBeVisible()
@@ -160,7 +176,7 @@ test.describe('Schedule Page', () => {
 
   test('shows Support button in toolbar', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
     const supportBtn = page.locator('button[aria-label="Contact Support"]').first()
     await expect(supportBtn).toBeVisible()
     await expect(supportBtn).toHaveAttribute('title', 'Contact Support')
@@ -168,7 +184,7 @@ test.describe('Schedule Page', () => {
 
   test('shows pagination info text', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('Hello Alice').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/Showing .* of .* results/i).first()).toBeVisible()
   })
 })
@@ -189,16 +205,16 @@ test.describe('Schedule Page — group send', () => {
 
     // Create a group with two members so the batch path is used (single recipient skips group)
     const [c1, c2] = await Promise.all([
-      ensureContact(page, { first_name: 'GroupName', last_name: 'Tester1', phone: '0414888881' }),
-      ensureContact(page, { first_name: 'GroupName', last_name: 'Tester2', phone: '0414888882' }),
+      ensureContact(page, { first_name: `${TOKEN}-GroupName`, last_name: 'Tester1', phone: '0414888881' }),
+      ensureContact(page, { first_name: `${TOKEN}-GroupName`, last_name: 'Tester2', phone: '0414888882' }),
     ])
     groupContacts = [c1, c2]
-    schedGroup = await createGroup(page, { name: 'E2E Schedule Group' })
+    schedGroup = await createGroup(page, { name: `${TOKEN} E2E Schedule Group` })
     await addMembers(page, schedGroup.id, groupContacts.map(c => c.id))
 
     const result = await apiRequest(page, 'POST', '/api/sms/send/', {
-      message: 'Group name test',
-      recipients: groupContacts.map(c => ({ phone: c.id === c1.id ? '0414888881' : '0414888882', contact_id: c.id })),
+      message: `${TOKEN} Group name test`,
+      recipients: groupContacts.map(c => ({ phone: E2E_FREE_PHONE, contact_id: c.id })),
       group_id: schedGroup.id,
     })
     parentScheduleId = result.parent_schedule_id
@@ -218,6 +234,6 @@ test.describe('Schedule Page — group send', () => {
 
   test('group send shows group name in Name column on schedule page', async ({ page }) => {
     await page.goto('/app/schedule')
-    await expect(page.getByText('E2E Schedule Group').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText(`${TOKEN} E2E Schedule Group`).first()).toBeVisible({ timeout: 10000 })
   })
 })

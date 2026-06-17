@@ -204,6 +204,81 @@ class TestSendSMS:
 
 
 # ---------------------------------------------------------------------------
+# _post_job network errors (Timeout / ConnectionError)
+# ---------------------------------------------------------------------------
+
+class TestPostJobNetworkErrors:
+    """session.post raising network exceptions → retryable SERVER_ERROR result.
+
+    These exercise the _post_job try/except directly (welcorp.py:65-88) and
+    across send paths, asserting the normalised SendResult shape.
+    """
+
+    def test_post_job_timeout_returns_retryable_server_error(self, provider):
+        provider.session.post.side_effect = requests.Timeout('timed out')
+
+        result = provider._post_job({'job_type': 'sms', 'message': 'Hi', 'recipients': []})
+
+        assert result.success is False
+        assert result.message_id is None
+        assert result.retryable is True
+        assert result.error_code == 'TIMEOUT'
+        assert 'timed out' in result.error.lower()
+        assert result.failure_category == FailureCategory.SERVER_ERROR.value
+
+    def test_post_job_connection_error_returns_retryable_server_error(self, provider):
+        provider.session.post.side_effect = requests.ConnectionError('connection refused')
+
+        result = provider._post_job({'job_type': 'sms', 'message': 'Hi', 'recipients': []})
+
+        assert result.success is False
+        assert result.message_id is None
+        assert result.retryable is True
+        assert result.error_code == 'CONN_ERROR'
+        assert 'connection error' in result.error.lower()
+        assert result.failure_category == FailureCategory.SERVER_ERROR.value
+
+    def test_mms_timeout_is_retryable(self, provider):
+        provider.session.post.side_effect = requests.Timeout('timed out')
+
+        result = provider._send_mms_impl(
+            '0412345678', 'Look', 'https://example.com/img.jpg', 'Photo'
+        )
+
+        assert result.success is False
+        assert result.retryable is True
+        assert result.error_code == 'TIMEOUT'
+        assert result.failure_category == FailureCategory.SERVER_ERROR.value
+
+    def test_mms_connection_error_is_retryable(self, provider):
+        provider.session.post.side_effect = requests.ConnectionError('refused')
+
+        result = provider._send_mms_impl(
+            '0412345678', 'Look', 'https://example.com/img.jpg', 'Photo'
+        )
+
+        assert result.success is False
+        assert result.retryable is True
+        assert result.error_code == 'CONN_ERROR'
+        assert result.failure_category == FailureCategory.SERVER_ERROR.value
+
+    def test_bulk_sms_timeout_marks_all_recipients_failed_retryable(self, provider):
+        provider.session.post.side_effect = requests.Timeout('timed out')
+
+        recipients = [
+            {'to': '0412345678', 'message': 'Hi', 'message_parts': 1},
+            {'to': '0400000000', 'message': 'Hi', 'message_parts': 1},
+        ]
+        result = provider._send_bulk_sms_impl(recipients)
+
+        assert result['success'] is False
+        assert result['retryable'] is True
+        assert result['failure_category'] == FailureCategory.SERVER_ERROR.value
+        assert len(result['results']) == 2
+        assert all(not r['success'] for r in result['results'])
+
+
+# ---------------------------------------------------------------------------
 # MMS sending
 # ---------------------------------------------------------------------------
 
@@ -353,6 +428,56 @@ class TestSendBulkSMS:
 # ---------------------------------------------------------------------------
 # Integration with base class (send_sms calls validate + _send_sms_impl)
 # ---------------------------------------------------------------------------
+
+class TestManualSenderId:
+    """manual_sender_id (custom alphanumeric sender) is included only when set."""
+
+    def test_sms_includes_manual_sender_id_when_set(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi', alphanumeric_sender='MyBrand')
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['manual_sender_id'] == 'MyBrand'
+
+    def test_sms_omits_manual_sender_id_when_none(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi')
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert 'manual_sender_id' not in payload
+
+    def test_mms_includes_manual_sender_id_when_set(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_mms_impl(
+            '0412345678', 'Look', 'https://example.com/img.jpg', 'Subject',
+            alphanumeric_sender='MyBrand',
+        )
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['manual_sender_id'] == 'MyBrand'
+
+    def test_mms_omits_manual_sender_id_when_none(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_mms_impl(
+            '0412345678', 'Look', 'https://example.com/img.jpg', 'Subject',
+        )
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert 'manual_sender_id' not in payload
+
+    def test_bulk_sms_includes_manual_sender_id_when_set(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        recipients = [{'to': '0412345678', 'message': 'Hi', 'message_parts': 1}]
+        provider._send_bulk_sms_impl(recipients, alphanumeric_sender='MyBrand')
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['manual_sender_id'] == 'MyBrand'
+
 
 class TestBaseClassIntegration:
     def test_send_sms_validates_then_calls_impl(self, provider):

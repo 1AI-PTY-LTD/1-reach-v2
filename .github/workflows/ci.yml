@@ -47,6 +47,20 @@ jobs:
           # (current backend coverage sits around 86%).
           docker compose run --rm -e CONTAINER_ROLE= backend sh -c "pip install uv -q && uv sync -q && uv run python -m pytest tests/ -q --cov-fail-under=80"
 
+      - name: Check for missing migrations
+        run: |
+          # Fails if a model change isn't captured in a migration file (the test
+          # suite runs with --no-migrations, so schema drift is otherwise invisible).
+          # makemigrations --check needs no DB connection.
+          docker compose run --rm --entrypoint "" \
+            backend sh -c "pip install uv -q && uv sync -q && uv run python manage.py makemigrations --check --dry-run"
+
+      - name: Dependency audit — pip (report-only)
+        continue-on-error: true  # report-only until the existing advisory backlog is triaged; flip to blocking once clean
+        run: |
+          docker compose run --rm --entrypoint "" \
+            backend sh -c "pip install uv -q && uv sync -q && uv run --with pip-audit pip-audit || true"
+
       - name: Django deployment checklist
         run: |
           # Production-like env so security-setting regressions fail the build.
@@ -78,9 +92,19 @@ jobs:
         working-directory: frontend
         run: npm run typecheck
 
-      - name: Run frontend tests
+      - name: Lint (report-only)
         working-directory: frontend
-        run: npx vitest run
+        continue-on-error: true  # ~190 pre-existing eslint errors; report-only until the backlog is cleared, then flip to blocking
+        run: npm run lint
+
+      - name: Run frontend tests (with coverage gate)
+        working-directory: frontend
+        run: npm run test:coverage
+
+      - name: Dependency audit — npm (report-only)
+        working-directory: frontend
+        continue-on-error: true  # report-only until the existing advisory backlog is triaged; flip to blocking once clean
+        run: npm audit --audit-level=high
 
   e2e:
     runs-on: ubuntu-latest
@@ -112,6 +136,12 @@ jobs:
           MMS_RATE=0.20
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          WELCORP_USERNAME=${{ vars.WELCORP_USERNAME }}
+          WELCORP_PASSWORD=${{ secrets.WELCORP_PASSWORD }}
+          WELCORP_CALLBACK_SECRET=${{ secrets.WELCORP_CALLBACK_SECRET }}
+          E2E_WELCORP_PASS_PHONE=+61447119283
+          DISPATCH_INTERVAL_SECONDS=5
+          MESSAGE_RETRY_BASE_DELAY=2
           DB_CONN_MAX_AGE=0
           EOF
 
@@ -123,7 +153,7 @@ jobs:
           EOF
 
       - name: Start services
-        run: docker compose up -d db redis backend frontend --wait --wait-timeout 180
+        run: docker compose up -d db redis backend celery_worker celery_beat frontend --wait --wait-timeout 180
 
       - name: Run migrations
         run: docker compose exec -T backend uv run python manage.py migrate --noinput
@@ -136,6 +166,24 @@ jobs:
             [ "$STATUS" = "200" ] && break
             sleep 3
           done
+
+      - name: Wait for Celery worker + beat
+        # The real-pipeline E2E specs assert QUEUED->SENT through the worker, so a
+        # dead/misconfigured worker (the gunicorn-instead-of-celery incident) must
+        # fail here, not pass silently via forced statuses.
+        run: |
+          for i in $(seq 1 20); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health/worker/ 2>/dev/null) || true
+            echo "Worker health attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && break
+            sleep 3
+          done
+          curl -sf http://localhost:8000/api/health/worker/ > /dev/null || {
+            echo "::error::Celery worker/beat never became healthy"
+            curl -s http://localhost:8000/api/health/worker/ || true
+            docker compose logs celery_worker celery_beat --tail=200 || true
+            exit 1
+          }
 
       - name: Pre-warm Vite dev server
         run: |
@@ -183,6 +231,9 @@ jobs:
           # clerkSetup() reads CLERK_PUBLISHABLE_KEY (not VITE_CLERK_PUBLISHABLE_KEY)
           CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_VITE_CLERK_PUBLISHABLE_KEY }}
           CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
+          # Real-Welcorp specs: free test number + the shared secret the DLR helper signs with
+          WELCORP_CALLBACK_SECRET: ${{ secrets.WELCORP_CALLBACK_SECRET }}
+          E2E_WELCORP_PASS_PHONE: '+61447119283'
         run: npx playwright test
 
       - name: Dump backend logs

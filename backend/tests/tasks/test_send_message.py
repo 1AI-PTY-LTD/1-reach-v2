@@ -59,7 +59,9 @@ class TestSendMessageSuccess:
         schedule_queued.refresh_from_db()
         assert schedule_queued.status == ScheduleStatus.SENT
         assert schedule_queued.sent_time is not None
-        assert schedule_queued.provider_message_id == 'mock-sms-123'
+        # Provider returns a unique id per call; the task must persist whatever it returned.
+        assert schedule_queued.provider_message_id
+        assert schedule_queued.provider_message_id.startswith('mock-sms-')
         assert schedule_queued.error is None
 
     def test_opted_out_recipient_fails_with_refund_at_send_time(

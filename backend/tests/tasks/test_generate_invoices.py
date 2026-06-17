@@ -6,6 +6,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from freezegun import freeze_time
 
 from app.celery import (
     generate_monthly_invoices,
@@ -17,6 +18,22 @@ from app.utils.metered_billing import MockMeteredBillingProvider
 
 
 ADELAIDE_TZ = zoneinfo.ZoneInfo('Australia/Adelaide')
+
+# Freeze the task at a year-end boundary so real date math runs and the
+# previous calendar month is December 2025. This exercises the year-rollover
+# branch in _previous_month_boundaries (now.month == 1 -> previous year).
+FROZEN_NOW = '2026-01-15'
+
+
+def _backdate_into_previous_month(qs):
+    """Move auto_now_add created_at timestamps into the frozen previous month.
+
+    CreditTransaction.created_at is auto_now_add, so under @freeze_time(FROZEN_NOW)
+    rows would be stamped 2026-01-15 — outside the Dec 2025 invoice period that
+    _previous_month_boundaries computes. QuerySet.update() bypasses auto_now_add,
+    letting the rows land inside the period build_line_items filters on.
+    """
+    qs.update(created_at=datetime(2025, 12, 15, tzinfo=ADELAIDE_TZ))
 
 
 @pytest.fixture
@@ -62,6 +79,20 @@ class TestPreviousMonthBoundaries:
         else:
             assert end.month == start.month + 1
             assert end.year == start.year
+
+    @freeze_time(FROZEN_NOW)
+    def test_year_end_rollover(self):
+        """In January the previous month is December of the prior year."""
+        start, end = _previous_month_boundaries(ADELAIDE_TZ)
+        assert (start.year, start.month, start.day) == (2025, 12, 1)
+        assert (end.year, end.month, end.day) == (2026, 1, 1)
+
+    @freeze_time('2026-06-17')
+    def test_mid_year_boundary(self):
+        """Mid-year, previous month stays within the same year."""
+        start, end = _previous_month_boundaries(ADELAIDE_TZ)
+        assert (start.year, start.month, start.day) == (2026, 5, 1)
+        assert (end.year, end.month, end.day) == (2026, 6, 1)
 
 
 def _wide_period():
@@ -135,24 +166,28 @@ class TestBuildLineItems:
 
 
 @pytest.mark.django_db
+@freeze_time(FROZEN_NOW)
 class TestGenerateMonthlyInvoices:
-    @patch('app.celery.get_billing_provider')
-    @patch('app.celery._previous_month_boundaries')
-    def test_creates_invoice_for_subscribed_org(self, mock_boundaries, mock_get_provider, subscribed_org):
-        period_start, period_end = _wide_period()
-        mock_boundaries.return_value = (period_start, period_end)
+    # Previous-month period under FROZEN_NOW (2026-01-15): Dec 2025 -> Jan 2026.
+    EXPECTED_PERIOD_START = datetime(2025, 12, 1, tzinfo=ADELAIDE_TZ)
+    EXPECTED_PERIOD_END = datetime(2026, 1, 1, tzinfo=ADELAIDE_TZ)
 
+    @patch('app.celery.get_billing_provider')
+    def test_creates_invoice_for_subscribed_org(self, mock_get_provider, subscribed_org):
         mock_provider = MockMeteredBillingProvider()
         mock_get_provider.return_value = mock_provider
 
-        # Create usage in the period
-        CreditTransaction.objects.create(
+        # Create usage in the previous month (Dec 2025)
+        usage = CreditTransaction.objects.create(
             organisation=subscribed_org,
             transaction_type=CreditTransaction.USAGE,
             amount=Decimal('2.50'),
             balance_after=Decimal('0'),
             description='SMS usage',
             format='sms',
+        )
+        _backdate_into_previous_month(
+            CreditTransaction.objects.filter(pk=usage.pk)
         )
 
         result = generate_monthly_invoices()
@@ -163,15 +198,13 @@ class TestGenerateMonthlyInvoices:
 
         invoice = Invoice.objects.get(organisation=subscribed_org)
         assert invoice.amount == Decimal('2.50')
-        assert invoice.period_start == period_start
-        assert invoice.period_end == period_end
+        assert invoice.period_start == self.EXPECTED_PERIOD_START
+        assert invoice.period_end == self.EXPECTED_PERIOD_END
         assert invoice.status == 'open'
 
     @patch('app.celery.get_billing_provider')
-    @patch('app.celery._previous_month_boundaries')
-    def test_skips_org_without_billing_customer_id(self, mock_boundaries, mock_get_provider, db):
+    def test_skips_org_without_billing_customer_id(self, mock_get_provider, db):
         """Orgs without billing_customer_id are filtered out by the queryset."""
-        mock_boundaries.return_value = _wide_period()
         mock_get_provider.return_value = MockMeteredBillingProvider()
 
         Organisation.objects.create(
@@ -185,38 +218,36 @@ class TestGenerateMonthlyInvoices:
         assert result['created'] == 0
 
     @patch('app.celery.get_billing_provider')
-    @patch('app.celery._previous_month_boundaries')
-    def test_skips_trial_orgs(self, mock_boundaries, mock_get_provider, trial_org):
-        mock_boundaries.return_value = _wide_period()
+    def test_skips_trial_orgs(self, mock_get_provider, trial_org):
         mock_get_provider.return_value = MockMeteredBillingProvider()
 
         result = generate_monthly_invoices()
         assert result['created'] == 0
 
     @patch('app.celery.get_billing_provider')
-    @patch('app.celery._previous_month_boundaries')
-    def test_idempotent_skips_existing_invoice(self, mock_boundaries, mock_get_provider, subscribed_org):
-        period_start, period_end = _wide_period()
-        mock_boundaries.return_value = (period_start, period_end)
+    def test_idempotent_skips_existing_invoice(self, mock_get_provider, subscribed_org):
         mock_get_provider.return_value = MockMeteredBillingProvider()
 
-        # Pre-existing invoice
+        # Pre-existing invoice for the previous month
         Invoice.objects.create(
             organisation=subscribed_org,
             provider_invoice_id='inv_existing',
             status=Invoice.STATUS_OPEN,
             amount=Decimal('5.00'),
-            period_start=period_start,
-            period_end=period_end,
+            period_start=self.EXPECTED_PERIOD_START,
+            period_end=self.EXPECTED_PERIOD_END,
         )
 
-        CreditTransaction.objects.create(
+        usage = CreditTransaction.objects.create(
             organisation=subscribed_org,
             transaction_type=CreditTransaction.USAGE,
             amount=Decimal('1.00'),
             balance_after=Decimal('0'),
             description='SMS',
             format='sms',
+        )
+        _backdate_into_previous_month(
+            CreditTransaction.objects.filter(pk=usage.pk)
         )
 
         result = generate_monthly_invoices()
@@ -225,29 +256,29 @@ class TestGenerateMonthlyInvoices:
         assert Invoice.objects.filter(organisation=subscribed_org).count() == 1
 
     @patch('app.celery.get_billing_provider')
-    @patch('app.celery._previous_month_boundaries')
-    def test_allows_recreation_after_void(self, mock_boundaries, mock_get_provider, subscribed_org):
-        period_start, period_end = _wide_period()
-        mock_boundaries.return_value = (period_start, period_end)
+    def test_allows_recreation_after_void(self, mock_get_provider, subscribed_org):
         mock_get_provider.return_value = MockMeteredBillingProvider()
 
-        # Voided invoice
+        # Voided invoice for the previous month
         Invoice.objects.create(
             organisation=subscribed_org,
             provider_invoice_id='inv_voided',
             status=Invoice.STATUS_VOID,
             amount=Decimal('5.00'),
-            period_start=period_start,
-            period_end=period_end,
+            period_start=self.EXPECTED_PERIOD_START,
+            period_end=self.EXPECTED_PERIOD_END,
         )
 
-        CreditTransaction.objects.create(
+        usage = CreditTransaction.objects.create(
             organisation=subscribed_org,
             transaction_type=CreditTransaction.USAGE,
             amount=Decimal('1.00'),
             balance_after=Decimal('0'),
             description='SMS',
             format='sms',
+        )
+        _backdate_into_previous_month(
+            CreditTransaction.objects.filter(pk=usage.pk)
         )
 
         result = generate_monthly_invoices()
@@ -256,9 +287,7 @@ class TestGenerateMonthlyInvoices:
         assert Invoice.objects.filter(organisation=subscribed_org).count() == 2
 
     @patch('app.celery.get_billing_provider')
-    @patch('app.celery._previous_month_boundaries')
-    def test_skips_org_with_no_usage(self, mock_boundaries, mock_get_provider, subscribed_org):
-        mock_boundaries.return_value = _wide_period()
+    def test_skips_org_with_no_usage(self, mock_get_provider, subscribed_org):
         mock_get_provider.return_value = MockMeteredBillingProvider()
 
         result = generate_monthly_invoices()

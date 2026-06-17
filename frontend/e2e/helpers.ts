@@ -262,6 +262,59 @@ export async function sendMms(
   return apiRequest(page, 'POST', '/api/sms/send-mms/', data)
 }
 
+// Welcorp test number Welcorp provided for E2E (free / not charged).
+export const E2E_PASS_PHONE = process.env.E2E_WELCORP_PASS_PHONE || '+61447119283'
+
+// Same free number in local 04XXXXXXXX form. ALL E2E sends must target this so
+// real Welcorp sends are never billed / never reach a real handset. Note: this
+// is the RECIPIENT phone in send payloads, independent of contact_id — the
+// backend resolves the contact by id and sends to this number, so contacts can
+// keep distinct phones (avoiding the (org, phone) unique constraint).
+export const E2E_FREE_PHONE = '0447119283'
+
+/**
+ * Simulate a Welcorp delivery receipt (DLR) by POSTing the exact form-encoded
+ * payload Welcorp would send (fields per WelcorpSMSProvider.parse_delivery_callback)
+ * to the REAL /api/webhooks/sms-delivery/ endpoint with the shared-secret token.
+ *
+ * The outbound send is a real Welcorp job; only the async DLR is simulated, because
+ * Welcorp can't reach the non-public CI/local backend. This runs the genuine
+ * validate_callback_request → parse_delivery_callback → process_delivery_event →
+ * refund code. status_code: 'SENT' → delivered, 'FAIL'/'OPTO'/… → failed.
+ */
+export async function postDeliveryReceipt(
+  page: Page,
+  opts: { provider_message_id: string; status_code: string; destination?: string },
+) {
+  const token = process.env.WELCORP_CALLBACK_SECRET || ''
+  const body = new URLSearchParams({
+    BroadcastID: opts.provider_message_id,
+    Destination: opts.destination || E2E_PASS_PHONE,
+    Status: opts.status_code,
+    Timestamp: new Date().toISOString(),
+  }).toString()
+  const res = await page.request.fetch(
+    `${API_BASE}/api/webhooks/sms-delivery/?token=${encodeURIComponent(token)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: body,
+    },
+  )
+  if (!res.ok()) throw new Error(`delivery-receipt → ${res.status()}: ${await res.text()}`)
+}
+
+/** Poll a schedule until it has a provider_message_id (i.e. the worker really sent it). */
+export async function waitForProviderMessageId(page: Page, scheduleId: number, timeoutMs = 25000): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const s = await apiRequest(page, 'GET', `/api/schedules/${scheduleId}/`)
+    if (s.provider_message_id) return s.provider_message_id
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  throw new Error(`schedule ${scheduleId} never got a provider_message_id (worker not sending?)`)
+}
+
 // Retry-safe helpers — on duplicate key (retry scenario), fetch the existing record instead
 export async function ensureContact(page: Page, data: { phone: string; first_name: string; last_name: string }) {
   try {

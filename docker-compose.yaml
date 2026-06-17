@@ -71,6 +71,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      backend:
+        # Start after backend so the shared backend_venv volume is populated once
+        # (concurrent first-mount of the empty volume races on the lib64 symlink).
+        condition: service_healthy
 
   celery_beat:
     build:
@@ -90,6 +94,10 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      backend:
+        # Start after backend so the shared backend_venv volume is populated once
+        # (concurrent first-mount of the empty volume races on the lib64 symlink).
         condition: service_healthy
 
   frontend:

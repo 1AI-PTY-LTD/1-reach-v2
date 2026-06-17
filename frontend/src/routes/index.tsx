@@ -9,7 +9,7 @@ export const Route = createFileRoute('/')({
   notFoundComponent: NotFound,
 })
 
-function IndexPage() {
+export function IndexPage() {
   const navigate = useNavigate()
   const { organization } = useOrganization()
   const { userMemberships, setActive, isLoaded } = useOrganizationList({ userMemberships: true })

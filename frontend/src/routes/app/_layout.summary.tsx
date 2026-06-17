@@ -20,7 +20,7 @@ export const Route = createFileRoute('/app/_layout/summary')({
   errorComponent: RouteErrorComponent,
 })
 
-function SummaryContent() {
+export function SummaryContent() {
   const client = useApiClient()
   const { data } = useSuspenseQuery(getSummaryQueryOptions(client))
 

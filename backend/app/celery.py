@@ -36,6 +36,7 @@ import zoneinfo
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 
 import django
+import redis
 from celery import Celery, shared_task
 from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
@@ -64,6 +65,7 @@ from app.utils.failure_classifier import classify_failure
 from app.utils.segments import estimate_sms_segments
 from app.utils.metered_billing import get_billing_provider
 from app.utils.sms import SendResult, get_sms_provider
+from app.health import _get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -729,6 +731,23 @@ def _fail_unknown_outcome(individual_pks: list, parent_pks: list) -> int:
 # Beat task: dispatch due PENDING schedules
 # ---------------------------------------------------------------------------
 
+def _write_dispatch_heartbeat() -> None:
+    """Record that beat fired dispatch_due_messages on a worker.
+
+    Read by /api/health/worker/ to detect a dead/misconfigured worker+beat (the
+    gunicorn-instead-of-celery incident). Stored in the broker Redis — NOT django
+    cache — because the api container that serves the health probe is a separate
+    process/replica from the worker. Best-effort: a Redis blip must never fail
+    dispatch.
+    """
+    try:
+        interval = float(getattr(settings, 'DISPATCH_INTERVAL_SECONDS', 60))
+        ttl = max(60, int(5 * interval))
+        _get_redis_client().set(settings.WORKER_HEARTBEAT_KEY, timezone.now().isoformat(), ex=ttl)
+    except redis.RedisError:
+        logger.warning('Failed to write dispatch heartbeat', exc_info=True)
+
+
 @shared_task(name='app.celery.dispatch_due_messages')
 def dispatch_due_messages() -> dict:
     """Find PENDING/RETRYING leaf schedules that are due and dispatch them.
@@ -737,6 +756,7 @@ def dispatch_due_messages() -> dict:
     Uses select_for_update(skip_locked=True) to prevent double-dispatch in clustered
     deployments. Processes in batches of 500 per tick.
     """
+    _write_dispatch_heartbeat()
     now = timezone.now()
     batch_size = 500
     has_children = Schedule.objects.filter(parent_id=OuterRef('pk'))

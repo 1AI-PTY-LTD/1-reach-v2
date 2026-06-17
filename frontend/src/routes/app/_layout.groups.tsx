@@ -12,7 +12,7 @@ export const Route = createFileRoute('/app/_layout/groups')({
   errorComponent: RouteErrorComponent,
 })
 
-function GroupsLayout() {
+export function GroupsLayout() {
   Logger.debug('Rendering GroupsLayout', { component: 'GroupsLayout' })
   const client = useApiClient()
   const allGroupsQuery = useQuery(getAllGroupsQueryOptions(client))

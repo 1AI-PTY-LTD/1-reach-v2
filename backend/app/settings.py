@@ -348,10 +348,21 @@ MESSAGE_RETRY_JITTER = float(os.environ.get('MESSAGE_RETRY_JITTER', '0.25'))    
 MESSAGE_PROCESSING_TIMEOUT_MINUTES = int(os.environ.get('MESSAGE_PROCESSING_TIMEOUT_MINUTES', '10'))
 MESSAGE_QUEUED_TIMEOUT_MINUTES = int(os.environ.get('MESSAGE_QUEUED_TIMEOUT_MINUTES', '5'))
 
+# How often the beat scheduler runs dispatch_due_messages. Env-tunable so E2E
+# can shrink it (real-pipeline specs would otherwise wait a full tick for a send).
+DISPATCH_INTERVAL_SECONDS = float(os.environ.get('DISPATCH_INTERVAL_SECONDS', '60'))
+
+# Worker liveness: dispatch_due_messages writes a heartbeat to Redis each tick;
+# /api/health/worker/ reports it stale if older than STALE_FACTOR x the interval.
+# Redis (the broker), NOT django cache — api and worker/beat are separate
+# containers and LocMemCache is per-process.
+WORKER_HEARTBEAT_KEY = os.environ.get('WORKER_HEARTBEAT_KEY', 'celery:dispatch_heartbeat')
+WORKER_HEARTBEAT_STALE_FACTOR = int(os.environ.get('WORKER_HEARTBEAT_STALE_FACTOR', '2'))
+
 CELERY_BEAT_SCHEDULE = {
     'dispatch-due-messages': {
         'task': 'app.celery.dispatch_due_messages',
-        'schedule': 60.0,  # every 60 seconds
+        'schedule': DISPATCH_INTERVAL_SECONDS,
     },
     'cleanup-stale-media-blobs': {
         'task': 'app.celery.cleanup_stale_media_blobs',
@@ -405,8 +416,13 @@ if CELERY_BROKER_URL and CELERY_BROKER_URL.startswith('rediss://'):
 CACHES = {'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}}
 
 
-# SMS Provider
-SMS_PROVIDER_CLASS = 'app.utils.welcorp.WelcorpSMSProvider'
+# SMS Provider — env-overridable (mirrors STORAGE_PROVIDER_CLASS) so backend
+# tests can select a mock. Prod and E2E both default to real Welcorp.
+SMS_PROVIDER_CLASS = os.environ.get('SMS_PROVIDER_CLASS', 'app.utils.welcorp.WelcorpSMSProvider')
+
+# Forces ConfigurableMockSMSProvider to fail every send ('transient'|'permanent'|'').
+# Per-message failure is also available via reserved phone suffixes (see provider).
+MOCK_SMS_FAIL_MODE = os.environ.get('MOCK_SMS_FAIL_MODE', '')
 
 # Welcorp SMS provider settings
 WELCORP_BASE_URL = os.environ.get('WELCORP_BASE_URL', 'https://api.message-service.org/api/v1')

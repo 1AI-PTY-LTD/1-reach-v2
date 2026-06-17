@@ -10,9 +10,11 @@ This module provides:
 """
 
 import json
+import logging
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 import pytest
 from django.utils import timezone
@@ -390,21 +392,33 @@ _MMS_SUCCESS = SendResult(
 
 @pytest.fixture
 def mock_sms_provider():
-    """Mock the SMS provider (patched at app.celery where it is imported)."""
+    """Mock the SMS provider (patched at app.celery where it is imported).
+
+    Each send returns a UNIQUE provider message_id (uuid4) rather than a
+    constant, so tests can exercise Schedule.provider_message_id uniqueness
+    and delivery-callback idempotency. Still a Mock so call-count assertions
+    (send_sms.assert_called_once()/assert_not_called()) keep working.
+    """
     with patch('app.celery.get_sms_provider') as mock:
         provider = Mock()
-        provider.send_sms.return_value = SendResult(
-            success=True, message_id='mock-sms-123', message_parts=1,
-        )
-        provider.send_mms.return_value = SendResult(
-            success=True, message_id='mock-mms-123', message_parts=1,
-        )
+
+        def mock_send_sms(*args, **kwargs):
+            return SendResult(
+                success=True, message_id=f'mock-sms-{uuid4().hex[:12]}', message_parts=1,
+            )
+        provider.send_sms.side_effect = mock_send_sms
+
+        def mock_send_mms(*args, **kwargs):
+            return SendResult(
+                success=True, message_id=f'mock-mms-{uuid4().hex[:12]}', message_parts=1,
+            )
+        provider.send_mms.side_effect = mock_send_mms
 
         def mock_bulk_send(recipients, **kwargs):
             return {
                 'success': True,
                 'results': [
-                    {'success': True, 'message_id': 'mock-sms-123', 'to': r['to']}
+                    {'success': True, 'message_id': f'mock-sms-{uuid4().hex[:12]}', 'to': r['to']}
                     for r in recipients
                 ],
                 'error': None,
@@ -415,7 +429,7 @@ def mock_sms_provider():
             return {
                 'success': True,
                 'results': [
-                    {'success': True, 'message_id': 'mock-mms-123', 'to': r['to']}
+                    {'success': True, 'message_id': f'mock-mms-{uuid4().hex[:12]}', 'to': r['to']}
                     for r in recipients
                 ],
                 'error': None,
@@ -492,17 +506,20 @@ def mock_storage_provider():
 
 
 @pytest.fixture
-def mock_check_sms_limit():
-    """Mock billing check to allow sending."""
-    with patch('app.views.check_can_send', return_value=(True, None)) as mock:
-        yield mock
+def propagate_app_logs():
+    """Let pytest's caplog see records from the 'app.*' loggers.
 
-
-@pytest.fixture
-def mock_check_mms_limit():
-    """Mock billing check to allow sending."""
-    with patch('app.views.check_can_send', return_value=(True, None)) as mock:
-        yield mock
+    settings.LOGGING sets propagate=False on the 'app' logger (records go to its
+    own console handler, not the root where caplog attaches). Tests that assert
+    on real log output via caplog enable propagation for their duration.
+    """
+    app_logger = logging.getLogger('app')
+    original = app_logger.propagate
+    app_logger.propagate = True
+    try:
+        yield
+    finally:
+        app_logger.propagate = original
 
 
 # ============================================================================

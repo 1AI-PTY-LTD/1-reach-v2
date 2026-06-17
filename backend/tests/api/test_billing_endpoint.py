@@ -11,14 +11,15 @@ Tests:
 
 import pytest
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.conf import settings
+from django.test import override_settings
 
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from app.models import Invoice, Organisation, User, OrganisationMembership
+from app.models import CreditTransaction, Invoice, Organisation, OrganisationMembership, User
 from app.utils.billing import grant_credits, record_usage
 from app.utils.metered_billing import PdfResult
 from tests.factories import ConfigFactory, OrganisationFactory, UserFactory
@@ -553,3 +554,169 @@ class TestInvoiceDownload:
         # Only one succeeded, so returns a single PDF (not zip)
         assert response.status_code == status.HTTP_200_OK
         assert response['Content-Type'] == 'application/pdf'
+
+
+# ---------------------------------------------------------------------------
+# TEST-only billing endpoints — gated by settings.TEST
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestBillingTestOnlyEndpointsGated:
+    """The five TEST-only billing actions are E2E affordances only.
+
+    Outside TEST mode every one must return 403 'Not available.' and mutate
+    nothing; inside TEST mode (positive control) each performs its action.
+
+    settings.TEST is flipped ONLY via @override_settings — never assigned —
+    because make_admin_client monkey-patches APIView.dispatch and a leaked flag
+    would corrupt other tests. The admin client is used so the gate's 403 is
+    distinguishable from an IsOrgAdmin permission 403.
+    """
+
+    def setup_method(self):
+        self._original_dispatch = None
+
+    def teardown_method(self):
+        if self._original_dispatch:
+            from rest_framework.views import APIView
+            APIView.dispatch = self._original_dispatch
+
+    def _admin_client(self, user, organisation):
+        client, original_dispatch = make_admin_client(user, organisation)
+        self._original_dispatch = original_dispatch
+        return client
+
+    # --- test-set-balance (PATCH) -----------------------------------------
+
+    @override_settings(TEST=False)
+    def test_set_balance_forbidden_outside_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        before = organisation.credit_balance
+        response = client.patch(
+            '/api/billing/test-set-balance/',
+            {'balance': '999.99'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data['detail'] == 'Not available.'
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == before
+
+    def test_set_balance_works_in_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        response = client.patch(
+            '/api/billing/test-set-balance/',
+            {'balance': '42.50'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_200_OK
+        organisation.refresh_from_db()
+        assert organisation.credit_balance == Decimal('42.50')
+
+    # --- test-seed-usage (POST) -------------------------------------------
+
+    @override_settings(TEST=False)
+    def test_seed_usage_forbidden_outside_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        response = client.post(
+            '/api/billing/test-seed-usage/',
+            {'format': 'sms', 'amount': '2.50'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data['detail'] == 'Not available.'
+        assert not CreditTransaction.objects.filter(organisation=organisation).exists()
+
+    def test_seed_usage_works_in_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        response = client.post(
+            '/api/billing/test-seed-usage/',
+            {'format': 'sms', 'amount': '2.50'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert CreditTransaction.objects.filter(
+            organisation=organisation,
+            transaction_type=CreditTransaction.USAGE,
+            amount=Decimal('2.50'),
+        ).exists()
+
+    # --- test-generate-invoices (POST) ------------------------------------
+
+    @override_settings(TEST=False)
+    def test_generate_invoices_forbidden_outside_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        with patch('app.views.generate_monthly_invoices') as mock_gen:
+            response = client.post('/api/billing/test-generate-invoices/', {}, format='json')
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data['detail'] == 'Not available.'
+        # Gate short-circuits before the generator runs.
+        mock_gen.assert_not_called()
+
+    def test_generate_invoices_works_in_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        with patch('app.views.generate_monthly_invoices', return_value={'created': 0}) as mock_gen:
+            response = client.post('/api/billing/test-generate-invoices/', {}, format='json')
+        assert response.status_code == status.HTTP_200_OK
+        mock_gen.assert_called_once()
+
+    # --- test-create-invoice (POST) ---------------------------------------
+
+    @override_settings(TEST=False)
+    def test_create_invoice_forbidden_outside_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        response = client.post(
+            '/api/billing/test-create-invoice/',
+            {
+                'amount': '3.50',
+                'period_start': '2026-03-01T00:00:00+10:30',
+                'period_end': '2026-04-01T00:00:00+10:30',
+            },
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data['detail'] == 'Not available.'
+        assert not Invoice.objects.filter(organisation=organisation).exists()
+
+    def test_create_invoice_works_in_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        response = client.post(
+            '/api/billing/test-create-invoice/',
+            {
+                'amount': '3.50',
+                'period_start': '2026-03-01T00:00:00+10:30',
+                'period_end': '2026-04-01T00:00:00+10:30',
+            },
+            format='json',
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert Invoice.objects.filter(
+            organisation=organisation, amount=Decimal('3.50'),
+        ).exists()
+
+    # --- test-link-billing-customer (POST) --------------------------------
+
+    @override_settings(TEST=False)
+    def test_link_billing_customer_forbidden_outside_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        with patch('app.views.get_billing_provider') as mock_provider:
+            response = client.post('/api/billing/test-link-billing-customer/', {}, format='json')
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.data['detail'] == 'Not available.'
+        # Gate short-circuits before touching the billing provider.
+        mock_provider.assert_not_called()
+        organisation.refresh_from_db()
+        assert not organisation.billing_customer_id
+
+    def test_link_billing_customer_works_in_test_mode(self, user, organisation, org_membership):
+        client = self._admin_client(user, organisation)
+        provider = MagicMock()
+        provider.find_customer_by_org.return_value = MagicMock(
+            success=True, customer_id='cus_mock123',
+        )
+        with patch('app.views.get_billing_provider', return_value=provider):
+            response = client.post('/api/billing/test-link-billing-customer/', {}, format='json')
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['billing_customer_id'] == 'cus_mock123'
+        organisation.refresh_from_db()
+        assert organisation.billing_customer_id == 'cus_mock123'

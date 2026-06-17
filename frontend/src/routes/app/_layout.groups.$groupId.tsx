@@ -24,7 +24,7 @@ export const Route = createFileRoute('/app/_layout/groups/$groupId')({
   errorComponent: RouteErrorComponent,
 })
 
-function GroupsComponent() {
+export function GroupsComponent() {
   const { groupId } = Route.useParams()
   const client = useApiClient()
   const groupsQuery = useQuery(getAllGroupsQueryOptions(client))

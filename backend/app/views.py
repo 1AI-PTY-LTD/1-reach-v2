@@ -384,8 +384,28 @@ class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
                 updated_by=request.user,
             ))
 
-        # Bulk create all valid records
-        Contact.objects.bulk_create(to_create)
+        # Bulk create all valid records. A concurrent import of the same
+        # (organisation, phone) can land between the existing_phones snapshot above
+        # and here; rather than 500 on the IntegrityError, fall back to per-row
+        # inserts and report any rows that still collide in error_records.
+        try:
+            with transaction.atomic():
+                Contact.objects.bulk_create(to_create)
+        except IntegrityError:
+            created = []
+            for contact in to_create:
+                try:
+                    with transaction.atomic():
+                        contact.save()
+                    created.append(contact)
+                except IntegrityError:
+                    error_records.append({
+                        'phone': contact.phone,
+                        'first_name': contact.first_name,
+                        'last_name': contact.last_name,
+                        'error': 'Contact already exists.',
+                    })
+            to_create = created
 
         record_count = len(to_create) + len(error_records)
         success_count = len(to_create)

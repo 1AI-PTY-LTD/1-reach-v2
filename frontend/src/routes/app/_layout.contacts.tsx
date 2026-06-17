@@ -12,7 +12,7 @@ export const Route = createFileRoute('/app/_layout/contacts')({
   errorComponent: RouteErrorComponent,
 })
 
-function ContactsLayout() {
+export function ContactsLayout() {
   Logger.debug('Rendering ContactsLayout', { component: 'ContactsLayout' })
   const client = useApiClient()
   const allContactsQuery = useQuery(getAllContactsQueryOptions(client))

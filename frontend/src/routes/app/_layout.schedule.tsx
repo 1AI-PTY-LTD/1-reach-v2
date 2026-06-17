@@ -18,7 +18,7 @@ export const Route = createFileRoute('/app/_layout/schedule')({
   errorComponent: RouteErrorComponent,
 })
 
-function ScheduleContent() {
+export function ScheduleContent() {
   Logger.debug('Rendering ScheduleLayout', { component: 'ScheduleLayout' })
   const client = useApiClient()
 
@@ -112,7 +112,7 @@ function ScheduleContent() {
   )
 }
 
-function ScheduleLayout() {
+export function ScheduleLayout() {
   return (
     <Suspense fallback={<LoadingSpinner />}>
       <div className="border rounded-lg p-4 border-zinc-950/10 dark:border-white/10 max-h-[85vh] bg-white dark:bg-zinc-900 shadow-lg flex flex-col">

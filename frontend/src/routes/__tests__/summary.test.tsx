@@ -5,163 +5,150 @@ import { server } from '../../test/handlers'
 import { createSummaryData, createMonthlyStats } from '../../test/factories'
 import { Suspense } from 'react'
 
-// Mock TanStack Router
+// `_layout.summary.tsx` calls `createFileRoute(...)({ ... })` at module load,
+// so we mock the router. The real SummaryContent never passes `to` to a row,
+// so `Link` is never rendered — a stub keeps `ui/link` importable.
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: () => () => ({ component: undefined }),
+  Link: ({ children, ...props }: { children?: React.ReactNode }) => (
+    <a {...props}>{children}</a>
+  ),
 }))
 
-// Re-create SummaryContent for testing (original is not exported)
-import { useSuspenseQuery } from '@tanstack/react-query'
-import { getSummaryQueryOptions } from '../../api/statsApi'
-import { useApiClient } from '../../lib/ApiClientProvider'
+// Render the REAL component (now exported from the route module).
+import { SummaryContent } from '../app/_layout.summary'
 
-function SummaryContentTest() {
-  const client = useApiClient()
-  const { data } = useSuspenseQuery(getSummaryQueryOptions(client))
+const SUMMARY_URL = 'http://localhost:8000/api/stats/monthly/'
 
-  return (
-    <div>
-      <div data-testid="limits-info">
-        Monthly spend: ${data.total_monthly_spend}
-        {data.monthly_limit ? ` / $${data.monthly_limit} limit` : ' (no limit set)'}
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Month</th>
-            <th>SMS Sent</th>
-            <th>SMS Message Parts</th>
-            <th>MMS Total</th>
-            <th>Pending</th>
-            <th>Errored</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.monthly_stats.map(
-            ({ month, sms_sent, sms_message_parts, mms_sent, pending, errored }, index) => (
-              <tr key={index} data-testid={`stats-row-${index}`}>
-                <td>{month}</td>
-                <td>{sms_sent}</td>
-                <td>{sms_message_parts}</td>
-                <td>{mms_sent}</td>
-                <td>{pending}</td>
-                <td>{errored}</td>
-              </tr>
-            ),
-          )}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function SummaryWithSuspense() {
-  return (
+// SummaryContent uses useSuspenseQuery, so it must be rendered inside a
+// Suspense boundary (the route normally provides one via RouteComponent).
+function renderSummary() {
+  return renderWithProviders(
     <Suspense fallback={<div>Loading summary...</div>}>
-      <SummaryContentTest />
-    </Suspense>
+      <SummaryContent />
+    </Suspense>,
   )
 }
 
-describe('SummaryLayout', () => {
-  it('shows loading state via Suspense fallback', () => {
+describe('SummaryContent', () => {
+  it('shows a loading fallback while the summary request is in flight', () => {
     server.use(
-      http.get('http://localhost:8000/api/stats/monthly/', async () => {
+      http.get(SUMMARY_URL, async () => {
         await new Promise((resolve) => setTimeout(resolve, 100))
         return HttpResponse.json(createSummaryData())
-      })
+      }),
     )
 
-    renderWithProviders(<SummaryWithSuspense />)
+    renderSummary()
+
     expect(screen.getByText('Loading summary...')).toBeInTheDocument()
   })
 
-  it('renders monthly stats table', async () => {
-    renderWithProviders(<SummaryWithSuspense />)
+  it('displays the monthly spend with the configured limit', async () => {
+    // Default handler returns total_monthly_spend '12.50' and monthly_limit '50.00'.
+    renderSummary()
 
     await waitFor(() => {
-      expect(screen.getByText('January 2026')).toBeInTheDocument()
-    })
-    expect(screen.getByText('February 2026')).toBeInTheDocument()
-  })
-
-  it('displays monthly spend info', async () => {
-    renderWithProviders(<SummaryWithSuspense />)
-
-    await waitFor(() => {
-      const limitsInfo = screen.getByTestId('limits-info')
-      expect(limitsInfo).toHaveTextContent('Monthly spend: $12.50')
-      expect(limitsInfo).toHaveTextContent('/ $50.00 limit')
+      expect(
+        screen.getByText('Monthly spend: $12.50 / $50.00 limit'),
+      ).toBeInTheDocument()
     })
   })
 
-  it('renders correct stat values', async () => {
-    renderWithProviders(<SummaryWithSuspense />)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('stats-row-0')).toBeInTheDocument()
-    })
-
-    // January 2026 stats: sms_sent=150, sms_message_parts=200, mms_sent=10, pending=5, errored=2
-    const firstRow = screen.getByTestId('stats-row-0')
-    expect(firstRow).toHaveTextContent('150')
-    expect(firstRow).toHaveTextContent('200')
-    expect(firstRow).toHaveTextContent('10')
-    expect(firstRow).toHaveTextContent('5')
-    expect(firstRow).toHaveTextContent('2')
-  })
-
-  it('renders all table headers', async () => {
-    renderWithProviders(<SummaryWithSuspense />)
-
-    await waitFor(() => {
-      expect(screen.getByText('Month')).toBeInTheDocument()
-    })
-    expect(screen.getByText('SMS Sent')).toBeInTheDocument()
-    expect(screen.getByText('SMS Message Parts')).toBeInTheDocument()
-    expect(screen.getByText('MMS Total')).toBeInTheDocument()
-    expect(screen.getByText('Pending')).toBeInTheDocument()
-    expect(screen.getByText('Errored')).toBeInTheDocument()
-  })
-
-  it('renders multiple months of data', async () => {
+  it('shows "(no limit set)" when monthly_limit is null', async () => {
     server.use(
-      http.get('http://localhost:8000/api/stats/monthly/', () => {
-        return HttpResponse.json(
-          createSummaryData({
-            monthly_stats: [
-              createMonthlyStats({ month: 'January 2026' }),
-              createMonthlyStats({ month: 'February 2026' }),
-              createMonthlyStats({ month: 'March 2026' }),
-            ],
-          })
-        )
-      })
+      http.get(SUMMARY_URL, () =>
+        HttpResponse.json(
+          createSummaryData({ monthly_limit: null, total_monthly_spend: '7.50' }),
+        ),
+      ),
     )
 
-    renderWithProviders(<SummaryWithSuspense />)
+    renderSummary()
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Monthly spend: $7.50 (no limit set)'),
+      ).toBeInTheDocument()
+    })
+    // The limit branch must not render when no limit is set.
+    expect(screen.queryByText(/limit$/)).not.toBeInTheDocument()
+  })
+
+  it('renders the stats table headers', async () => {
+    renderSummary()
+
+    await waitFor(() => {
+      expect(screen.getByRole('columnheader', { name: 'Month' })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('columnheader', { name: 'SMS Sent' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('columnheader', { name: 'SMS Message Parts' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'MMS Total' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Pending' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Errored' })).toBeInTheDocument()
+  })
+
+  it('renders a row per month with its stat values', async () => {
+    server.use(
+      http.get(SUMMARY_URL, () =>
+        HttpResponse.json(
+          createSummaryData({
+            monthly_stats: [
+              createMonthlyStats({
+                month: 'January 2026',
+                sms_sent: 150,
+                sms_message_parts: 200,
+                mms_sent: 10,
+                pending: 5,
+                errored: 2,
+              }),
+              createMonthlyStats({ month: 'February 2026', sms_sent: 180 }),
+              createMonthlyStats({ month: 'March 2026', sms_sent: 99 }),
+            ],
+          }),
+        ),
+      ),
+    )
+
+    renderSummary()
 
     await waitFor(() => {
       expect(screen.getByText('January 2026')).toBeInTheDocument()
     })
     expect(screen.getByText('February 2026')).toBeInTheDocument()
     expect(screen.getByText('March 2026')).toBeInTheDocument()
-    expect(screen.getAllByTestId(/^stats-row-/)).toHaveLength(3)
+
+    // The January row must surface its individual stat cells.
+    const januaryRow = screen.getByText('January 2026').closest('tr')!
+    expect(januaryRow).toHaveTextContent('150')
+    expect(januaryRow).toHaveTextContent('200')
+    expect(januaryRow).toHaveTextContent('10')
+    expect(januaryRow).toHaveTextContent('5')
+    expect(januaryRow).toHaveTextContent('2')
+
+    // 3 data rows + 1 header row.
+    expect(screen.getAllByRole('row')).toHaveLength(4)
   })
 
-  it('shows no limit set when monthly_limit is null', async () => {
+  it('shows an empty-state message when there are no monthly stats', async () => {
     server.use(
-      http.get('http://localhost:8000/api/stats/monthly/', () => {
-        return HttpResponse.json(createSummaryData({ monthly_limit: null, total_monthly_spend: '7.50' }))
-      })
+      http.get(SUMMARY_URL, () =>
+        HttpResponse.json(createSummaryData({ monthly_stats: [] })),
+      ),
     )
 
-    renderWithProviders(<SummaryWithSuspense />)
+    renderSummary()
 
     await waitFor(() => {
-      const limitsInfo = screen.getByTestId('limits-info')
-      expect(limitsInfo).toHaveTextContent('Monthly spend: $7.50')
-      expect(limitsInfo).toHaveTextContent('(no limit set)')
+      expect(
+        screen.getByText(
+          'No data yet. Stats will appear after your first message is sent.',
+        ),
+      ).toBeInTheDocument()
     })
+    // Header row only — no data rows are rendered.
+    expect(screen.queryByText('January 2026')).not.toBeInTheDocument()
   })
 })

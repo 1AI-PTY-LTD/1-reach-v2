@@ -244,7 +244,7 @@ function GroupedDataView({ data, existingGroups }: { data: GroupedData; existing
   )
 }
 
-function ImportIndex() {
+export function ImportIndex() {
   const client = useApiClient()
   const [state, setState] = useState<ExcelProcessingState>({
     isProcessing: false,

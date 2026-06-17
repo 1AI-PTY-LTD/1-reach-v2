@@ -2,110 +2,68 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderWithProviders, screen, waitFor } from '../../test/test-utils'
 import { http, HttpResponse } from 'msw'
 import { server } from '../../test/handlers'
-import { createGroup, paginate } from '../../test/factories'
-import { Suspense } from 'react'
+import { paginate } from '../../test/factories'
 
-// Mock TanStack Router
-const mockNavigate = vi.fn()
-vi.mock('@tanstack/react-router', () => ({
-  createFileRoute: () => () => ({ component: undefined }),
-  Outlet: () => <div data-testid="outlet">Outlet Content</div>,
-  useNavigate: () => mockNavigate,
+// Mock TanStack Router. The real GroupsLayout renders GroupsWidget which relies
+// on useRouterState, useNavigate and router-aware <Link>s (via TableRow), so the
+// mock supplies those primitives instead of re-creating the component.
+const { mockNavigate, mockLocation } = vi.hoisted(() => ({
+  mockNavigate: vi.fn(),
+  mockLocation: { current: { pathname: '/app/groups' } },
 }))
 
-// Re-create GroupsLayout for testing (original is not exported)
-import { useSuspenseQuery } from '@tanstack/react-query'
-import { getAllGroupsQueryOptions } from '../../api/groupsApi'
-import { useApiClient } from '../../lib/ApiClientProvider'
-import { useEffect } from 'react'
+vi.mock('@tanstack/react-router', () => ({
+  createFileRoute: () => (options: Record<string, unknown>) => options,
+  Outlet: () => <div data-testid="outlet">Outlet Content</div>,
+  Link: ({ children }: { children?: React.ReactNode } & Record<string, unknown>) => <a>{children}</a>,
+  useNavigate: () => mockNavigate,
+  useRouterState: ({ select }: { select?: (s: { location: { pathname: string } }) => unknown }) =>
+    select ? select({ location: mockLocation.current }) : mockLocation.current,
+}))
 
-function GroupsLayoutTest() {
-  const client = useApiClient()
-  const allGroupsQuery = useSuspenseQuery(getAllGroupsQueryOptions(client))
-  const navigate = mockNavigate
+// Import the REAL exported layout after the router mock is set up.
+import { GroupsLayout } from '../app/_layout.groups'
 
-  useEffect(() => {
-    const currentPath = window.location.pathname
-    const isGroupsIndexRoute = currentPath === '/app/groups' || currentPath === '/app/groups/'
-
-    if (isGroupsIndexRoute && allGroupsQuery.data.length > 0) {
-      const firstGroupId = allGroupsQuery.data[0].id
-      navigate({
-        to: '/app/groups/$groupId',
-        params: { groupId: firstGroupId },
-      })
-    }
-  }, [allGroupsQuery.data, navigate])
-
-  return (
-    <div className="flex">
-      <div className="w-1/4">
-        <div data-testid="groups-widget">
-          {allGroupsQuery.data.map((g) => (
-            <div key={g.id} data-testid={`group-${g.id}`}>
-              {g.name} ({g.member_count})
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="w-3/4" data-testid="outlet-container">
-        <div data-testid="outlet">Outlet Content</div>
-      </div>
-    </div>
-  )
-}
-
-function GroupsLayoutWithSuspense() {
-  return (
-    <Suspense fallback={<div>Loading groups...</div>}>
-      <GroupsLayoutTest />
-    </Suspense>
-  )
+function setPathname(pathname: string) {
+  mockLocation.current = { pathname }
+  Object.defineProperty(window, 'location', {
+    value: { pathname },
+    writable: true,
+  })
 }
 
 describe('GroupsLayout', () => {
   beforeEach(() => {
     mockNavigate.mockClear()
+    setPathname('/app/groups/5') // default: not the index, so no auto-navigate
   })
 
-  it('shows loading state via Suspense fallback', () => {
-    // Use a handler that delays response
-    server.use(
-      http.get('http://localhost:8000/api/groups/', async () => {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-        return HttpResponse.json(paginate([createGroup({ id: 1 })]))
-      })
-    )
-
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+  it('shows loading state initially', () => {
+    renderWithProviders(<GroupsLayout />)
     expect(screen.getByText('Loading groups...')).toBeInTheDocument()
   })
 
   it('renders groups after loading', async () => {
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+    renderWithProviders(<GroupsLayout />)
 
     await waitFor(() => {
-      expect(screen.getByText(/VIP Customers/)).toBeInTheDocument()
+      expect(screen.getByText('VIP Customers')).toBeInTheDocument()
     })
-    expect(screen.getByText(/New Customers/)).toBeInTheDocument()
+    expect(screen.getByText('New Customers')).toBeInTheDocument()
   })
 
-  it('shows member counts', async () => {
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+  it('renders the Groups widget heading', async () => {
+    renderWithProviders(<GroupsLayout />)
 
     await waitFor(() => {
-      expect(screen.getByText('VIP Customers (3)')).toBeInTheDocument()
+      expect(screen.getByText('Groups')).toBeInTheDocument()
     })
-    expect(screen.getByText('New Customers (2)')).toBeInTheDocument()
   })
 
   it('auto-navigates to first group when on /app/groups', async () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/app/groups' },
-      writable: true,
-    })
+    setPathname('/app/groups')
 
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+    renderWithProviders(<GroupsLayout />)
 
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith({
@@ -116,33 +74,41 @@ describe('GroupsLayout', () => {
   })
 
   it('does not auto-navigate when already on a group detail page', async () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/app/groups/5' },
-      writable: true,
-    })
+    setPathname('/app/groups/5')
 
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+    renderWithProviders(<GroupsLayout />)
 
     await waitFor(() => {
-      expect(screen.getByText(/VIP Customers/)).toBeInTheDocument()
+      expect(screen.getByText('VIP Customers')).toBeInTheDocument()
     })
 
     expect(mockNavigate).not.toHaveBeenCalled()
   })
 
-  it('renders outlet container for nested routes', async () => {
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+  it('renders outlet for nested routes', async () => {
+    renderWithProviders(<GroupsLayout />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('outlet-container')).toBeInTheDocument()
+      expect(screen.getByTestId('outlet')).toBeInTheDocument()
+    })
+  })
+
+  it('shows error state when API fails', async () => {
+    server.use(
+      http.get('http://localhost:8000/api/groups/', () => {
+        return HttpResponse.json({ error: 'Server error' }, { status: 500 })
+      })
+    )
+
+    renderWithProviders(<GroupsLayout />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Error loading groups')).toBeInTheDocument()
     })
   })
 
   it('handles empty groups list without auto-navigate', async () => {
-    Object.defineProperty(window, 'location', {
-      value: { pathname: '/app/groups' },
-      writable: true,
-    })
+    setPathname('/app/groups')
 
     server.use(
       http.get('http://localhost:8000/api/groups/', () => {
@@ -150,10 +116,10 @@ describe('GroupsLayout', () => {
       })
     )
 
-    renderWithProviders(<GroupsLayoutWithSuspense />)
+    renderWithProviders(<GroupsLayout />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('groups-widget')).toBeInTheDocument()
+      expect(screen.getByText('No groups yet')).toBeInTheDocument()
     })
 
     expect(mockNavigate).not.toHaveBeenCalled()

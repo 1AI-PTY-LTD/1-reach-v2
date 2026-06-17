@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch
 from django.db import DatabaseError
 from django.test import override_settings
 from redis import RedisError
@@ -96,6 +98,60 @@ class TestSmokeCheck:
         assert response.data['status'] == 'degraded'
         assert response.data['checks']['redis_write'] != 'ok'
         assert response.data['checks']['db_write'] == 'ok'
+
+
+@pytest.mark.django_db
+class TestWorkerHealthCheck:
+    """/api/health/worker/ — would have caught the gunicorn-instead-of-celery incident."""
+
+    def setup_method(self):
+        self.client = APIClient()
+
+    def _fake_redis(self, heartbeat_iso=None, ping_ok=True):
+        r = MagicMock()
+        if not ping_ok:
+            r.ping.side_effect = RedisError('broker down')
+        r.get.return_value = heartbeat_iso.encode() if heartbeat_iso else None
+        return r
+
+    @staticmethod
+    def _iso(seconds_ago=0):
+        return (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).isoformat()
+
+    def test_200_when_broker_ok_and_heartbeat_fresh(self):
+        with patch('app.health._get_redis_client', return_value=self._fake_redis(self._iso(0))):
+            response = self.client.get('/api/health/worker/')
+        assert response.status_code == 200
+        assert response.data['status'] == 'ok'
+        assert response.data['checks']['broker'] == 'ok'
+        assert response.data['checks']['heartbeat'] == 'ok'
+
+    @override_settings(DISPATCH_INTERVAL_SECONDS=60, WORKER_HEARTBEAT_STALE_FACTOR=2)
+    def test_503_when_heartbeat_stale(self):
+        # 600s old > 2 x 60s
+        with patch('app.health._get_redis_client', return_value=self._fake_redis(self._iso(600))):
+            response = self.client.get('/api/health/worker/')
+        assert response.status_code == 503
+        assert response.data['status'] == 'degraded'
+        assert 'stale' in response.data['checks']['heartbeat']
+
+    def test_503_when_heartbeat_missing(self):
+        """No heartbeat key — worker/beat never ran (the incident)."""
+        with patch('app.health._get_redis_client', return_value=self._fake_redis(None)):
+            response = self.client.get('/api/health/worker/')
+        assert response.status_code == 503
+        assert response.data['checks']['heartbeat'] == 'missing'
+
+    def test_503_when_broker_unreachable(self):
+        with patch('app.health._get_redis_client', return_value=self._fake_redis(ping_ok=False)):
+            response = self.client.get('/api/health/worker/')
+        assert response.status_code == 503
+        assert response.data['checks']['broker'] != 'ok'
+
+    def test_no_auth_required(self):
+        with patch('app.health._get_redis_client', return_value=self._fake_redis(self._iso(0))):
+            response = self.client.get('/api/health/worker/')
+        assert response.status_code == 200
 
 
 class TestSwaggerGating:

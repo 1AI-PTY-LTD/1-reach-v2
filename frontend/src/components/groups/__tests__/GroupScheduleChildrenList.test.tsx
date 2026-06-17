@@ -151,4 +151,82 @@ describe('GroupScheduleChildrenList', () => {
     expect(screen.queryByText('Remove')).not.toBeInTheDocument()
     expect(screen.queryByText('Edit')).not.toBeInTheDocument()
   })
+
+  it('renders the Status/Contact/Scheduled/Sent column headers', async () => {
+    mockDetailEndpoint({
+      id: 1,
+      schedules: [
+        { id: 10, contact_detail: { id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' }, phone: '0412111111', status: 'sent' },
+      ],
+    })
+
+    renderInTable(<GroupScheduleChildrenList groupScheduleId={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Alice Smith')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Status')).toBeInTheDocument()
+    expect(screen.getByText('Contact')).toBeInTheDocument()
+    expect(screen.getByText('Scheduled Time')).toBeInTheDocument()
+    expect(screen.getByText('Sent Time')).toBeInTheDocument()
+  })
+
+  it('formats the scheduled time and shows the sent time when present', async () => {
+    mockDetailEndpoint({
+      id: 1,
+      schedules: [
+        {
+          id: 10,
+          contact_detail: { id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' },
+          phone: '0412111111',
+          status: 'sent',
+          // Fixed timestamps so the dayjs format ('hh:mmA DD/MM/YYYY') is deterministic.
+          scheduled_time: '2026-03-15T09:30:00',
+          sent_time: '2026-03-15T09:31:00',
+        },
+      ],
+    })
+
+    renderInTable(<GroupScheduleChildrenList groupScheduleId={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('09:30AM 15/03/2026')).toBeInTheDocument()
+    })
+    expect(screen.getByText('09:31AM 15/03/2026')).toBeInTheDocument()
+  })
+
+  it('shows "N/A" for the sent time when a child has not been sent', async () => {
+    mockDetailEndpoint({
+      id: 1,
+      schedules: [
+        {
+          id: 10,
+          contact_detail: { id: 1, first_name: 'Alice', last_name: 'Smith', phone: '0412111111' },
+          phone: '0412111111',
+          status: 'pending',
+          scheduled_time: '2026-03-15T09:30:00',
+          sent_time: null,
+        },
+      ],
+    })
+
+    renderInTable(<GroupScheduleChildrenList groupScheduleId={1} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Alice Smith')).toBeInTheDocument()
+    })
+    expect(screen.getByText('N/A')).toBeInTheDocument()
+  })
+
+  it('shows a loading spinner row while the detail query is pending', () => {
+    server.use(
+      http.get(`${BASE_URL}/api/group-schedules/:id/`, () => new Promise(() => {})),
+    )
+
+    const { container } = renderInTable(<GroupScheduleChildrenList groupScheduleId={1} />)
+
+    // LoadingSpinner renders a spinning element; no contact rows present yet.
+    expect(container.querySelector('.animate-spin')).toBeTruthy()
+    expect(screen.queryByText('Alice Smith')).not.toBeInTheDocument()
+  })
 })

@@ -3,6 +3,31 @@ import { cleanup } from '@testing-library/react'
 import { afterEach, vi } from 'vitest'
 import { server } from './handlers'
 
+// Mock IntersectionObserver (not implemented in jsdom). Components that use
+// useInfiniteScroll construct one in an effect; without this they throw.
+// Per-file stubs (e.g. useInfiniteScroll.test.tsx) override this as needed.
+const MockIntersectionObserver = class {
+  root = null
+  rootMargin = ''
+  thresholds = []
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
+  takeRecords = vi.fn(() => [])
+}
+vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+
+// Mock ResizeObserver (not implemented in jsdom). Headless UI's Combobox
+// constructs one during open/close transitions; without this it throws an
+// async "ResizeObserver is not defined" that vitest reports as an unhandled
+// error and fails the run even when every test passes.
+const MockResizeObserver = class {
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
+}
+vi.stubGlobal('ResizeObserver', MockResizeObserver)
+
 // Mock window.matchMedia (not available in jsdom)
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
