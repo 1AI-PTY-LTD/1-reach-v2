@@ -40,7 +40,14 @@ const PUBLIC_ROUTES = ['/privacy', '/terms']
 function Root() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
 
-  if (E2E_TEST_MODE || PUBLIC_ROUTES.includes(pathname)) {
+  // Public legal pages are plain long documents — render them WITHOUT the app
+  // shell's `max-h-screen overflow-hidden` wrapper so the page scrolls normally.
+  // (Inside that wrapper, anything past the viewport is clipped with no scrollbar.)
+  if (PUBLIC_ROUTES.includes(pathname)) {
+    return <Outlet />
+  }
+
+  if (E2E_TEST_MODE) {
     return (
       <div className="md:max-h-screen overflow-hidden">
         <Outlet />
