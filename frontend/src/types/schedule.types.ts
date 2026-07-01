@@ -19,6 +19,13 @@ export function hasTransientSchedule(schedules: Array<{ status: ScheduleStatus }
   return schedules.some(s => TRANSIENT_STATUSES.has(s.status))
 }
 
+/** Poll cadence (ms) for a list of schedules, based on the most "active" one present. */
+export function pollIntervalFor(schedules: Array<{ status: ScheduleStatus }>): number {
+  if (hasTransientSchedule(schedules)) return 2000          // dispatch in progress — snappy
+  if (schedules.some(s => s.status === 'sent')) return 5000 // awaiting delivery receipt
+  return 60000                                              // all terminal — idle fallback
+}
+
 export type Schedule = {
   id: number
   name?: string | null

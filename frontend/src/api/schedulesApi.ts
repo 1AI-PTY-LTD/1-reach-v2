@@ -1,6 +1,6 @@
 import { queryOptions, infiniteQueryOptions, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Schedule, CreateSchedule, UpdateSchedule } from '../types/schedule.types'
-import { hasTransientSchedule } from '../types/schedule.types'
+import { pollIntervalFor } from '../types/schedule.types'
 import type { PaginatedResponse } from '../types/pagination.types'
 import type { ApiClient } from '../lib/helper'
 import Logger from '../utils/logger'
@@ -33,11 +33,9 @@ export function getAllSchedulesQueryOptions(client: ApiClient, date: string, pag
       })
       return data
     },
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (!data) return 60000
-      return hasTransientSchedule(data.results) ? 2000 : 60000
-    },
+    refetchInterval: (query) =>
+      query.state.data ? pollIntervalFor(query.state.data.results) : 60000,
+    refetchIntervalInBackground: true,
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
@@ -73,11 +71,9 @@ export function getSchedulesByContactIdQueryOptions(
       })
       return data
     },
-    refetchInterval: (query) => {
-      const data = query.state.data
-      if (!data) return 60000
-      return hasTransientSchedule(data.results) ? 2000 : 60000
-    },
+    refetchInterval: (query) =>
+      query.state.data ? pollIntervalFor(query.state.data.results) : 60000,
+    refetchIntervalInBackground: true,
     staleTime: page === 1 ? 0 : 30000,
     refetchOnWindowFocus: true,
   })
@@ -104,10 +100,9 @@ export function getAllSchedulesInfiniteOptions(client: ApiClient, date: string, 
       lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
     refetchInterval: (query) => {
       const pages = query.state.data?.pages
-      if (!pages) return 60000
-      const allSchedules = pages.flatMap(p => p.results)
-      return hasTransientSchedule(allSchedules) ? 2000 : 60000
+      return pages ? pollIntervalFor(pages.flatMap(p => p.results)) : 60000
     },
+    refetchIntervalInBackground: true,
     staleTime: 0,
     refetchOnMount: true,
     refetchOnWindowFocus: true,
@@ -139,10 +134,9 @@ export function getSchedulesByContactIdInfiniteOptions(
       lastPage.pagination.hasNext ? lastPage.pagination.page + 1 : undefined,
     refetchInterval: (query) => {
       const pages = query.state.data?.pages
-      if (!pages) return 60000
-      const allSchedules = pages.flatMap(p => p.results)
-      return hasTransientSchedule(allSchedules) ? 2000 : 60000
+      return pages ? pollIntervalFor(pages.flatMap(p => p.results)) : 60000
     },
+    refetchIntervalInBackground: true,
     staleTime: 0,
     refetchOnWindowFocus: true,
   })
@@ -157,8 +151,10 @@ export function getScheduleRecipientsQueryOptions(client: ApiClient, scheduleId:
     refetchInterval: (query) => {
       const data = query.state.data
       if (!data) return false
-      return hasTransientSchedule(data) ? 2000 : false
+      const interval = pollIntervalFor(data)
+      return interval === 60000 ? false : interval
     },
+    refetchIntervalInBackground: true,
   })
 }
 
