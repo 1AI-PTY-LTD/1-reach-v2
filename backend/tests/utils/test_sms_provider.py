@@ -119,6 +119,28 @@ class TestSMSProviderNormalization:
         result = provider._normalise_phone('+614 1234 5678')
         assert result == '0412345678'
 
+    def test_normalise_phone_converts_61_without_plus(self):
+        """61XXXXXXXXX (Welcorp callback/report format) converted to 04XXXXXXXX."""
+        provider = MockSMSProvider()
+        assert provider._normalise_phone('61401104191') == '0401104191'
+        assert provider._normalise_phone('61 401 104 191') == '0401104191'
+
+    def test_normalise_phone_converts_0061_prefix(self):
+        """International dial prefix 0061 converted to 04XXXXXXXX."""
+        provider = MockSMSProvider()
+        assert provider._normalise_phone('0061412345678') == '0412345678'
+
+    def test_normalise_phone_leaves_non_mobile_unchanged(self):
+        """Non-mobile or wrong-length numbers are not rewritten."""
+        provider = MockSMSProvider()
+        assert provider._normalise_phone('61212345678') == '61212345678'  # landline shape
+        assert provider._normalise_phone('6141234567') == '6141234567'  # too short
+        assert provider._normalise_phone('614123456789') == '614123456789'  # too long
+
+    def test_validate_phone_accepts_welcorp_international(self):
+        provider = MockSMSProvider()
+        assert provider._validate_phone('61412345678') is True
+
     @pytest.mark.parametrize('input_phone,expected', [
         ('0400000000', '0400000000'),
         ('+61400000000', '0400000000'),
@@ -126,6 +148,8 @@ class TestSMSProviderNormalization:
         ('+614 0000 0000', '0400000000'),
         ('0499999999', '0499999999'),
         ('+61499999999', '0499999999'),
+        ('61401104191', '0401104191'),
+        ('0061401104191', '0401104191'),
     ])
     def test_normalise_phone_variations(self, input_phone, expected):
         """Test normalization of various phone formats."""

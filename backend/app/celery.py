@@ -17,8 +17,9 @@ process_delivery_event(event_data)
     status to DELIVERED or FAILED based on provider-reported delivery outcome.
 
 reconcile_stale_sent()
-    Beat task. Logs warnings for schedules stuck in SENT status for >24h without
-    a delivery callback.
+    Beat task (every 15m). Polls the provider for schedules stuck in SENT longer
+    than RECONCILE_STALE_AFTER_HOURS without a delivery callback and dispatches
+    the resulting delivery events.
 
 cleanup_stale_media_blobs()
     Beat task (daily). Deletes media blobs for failed MMS schedules older than
@@ -41,7 +42,7 @@ from celery import Celery, shared_task
 from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
 from django.db import OperationalError, transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, Min, OuterRef, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.db import connections
@@ -1056,8 +1057,22 @@ def process_delivery_event(event_data: dict) -> dict:
     with transaction.atomic():
         schedule = _find_schedule(provider_message_id, recipient_phone)
         if not schedule:
-            logger.info(
-                'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
+            # A schedule that exists but no longer matches the SENT/PROCESSING
+            # filter has already reached a terminal status — expected for
+            # callback+poll duplicates and for re-polls of a job whose other
+            # recipients are still unresolved. Only a schedule that matches
+            # nothing at all means an event was genuinely dropped.
+            candidates = Schedule.objects.filter(provider_message_id=provider_message_id)
+            if recipient_phone:
+                candidates = candidates.filter(phone=recipient_phone)
+            if candidates.exists():
+                logger.info(
+                    'process_delivery_event: schedule for provider_message_id=%s phone=%s already resolved',
+                    provider_message_id, recipient_phone,
+                )
+                return {'skipped': True, 'reason': 'already_terminal'}
+            logger.warning(
+                'process_delivery_event: no schedule for provider_message_id=%s phone=%s',
                 provider_message_id, recipient_phone,
             )
             return {'skipped': True, 'reason': 'schedule_not_found'}
@@ -1085,22 +1100,27 @@ def process_delivery_event(event_data: dict) -> dict:
 def reconcile_stale_sent() -> dict:
     """Poll provider for delivery status of schedules stuck in SENT.
 
-    Finds schedules that have been SENT for >24h without a delivery callback,
-    polls the provider for their status, and dispatches any failure events
-    through the normal process_delivery_event pipeline.
+    Finds schedules that have been SENT for longer than
+    RECONCILE_STALE_AFTER_HOURS without a delivery callback, polls the provider
+    for their status, and dispatches any failure events through the normal
+    process_delivery_event pipeline.
     """
-    cutoff = timezone.now() - timedelta(hours=24)
+    cutoff = timezone.now() - timedelta(hours=settings.RECONCILE_STALE_AFTER_HOURS)
 
-    # Get distinct job IDs from stale non-child schedules (one job = one API call)
+    # Get distinct job IDs from stale schedules, oldest job first (one job =
+    # one API call). GROUP BY rather than order_by+distinct: PostgreSQL adds
+    # ordering columns to DISTINCT, so the same job id could occupy several
+    # of the 50 slots.
     stale_ids = list(
         Schedule.objects.filter(
             status=ScheduleStatus.SENT,
             sent_time__lte=cutoff,
             provider_message_id__isnull=False,
         )
-        .order_by('sent_time')
-        .values_list('provider_message_id', flat=True)
-        .distinct()[:50]
+        .values('provider_message_id')
+        .annotate(oldest_sent=Min('sent_time'))
+        .order_by('oldest_sent')
+        .values_list('provider_message_id', flat=True)[:50]
     )
 
     if not stale_ids:

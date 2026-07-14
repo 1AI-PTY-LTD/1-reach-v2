@@ -59,6 +59,12 @@ class WelcorpSMSProvider(SMSProvider):
         if callback_url:
             payload['callback_url'] = callback_url
             payload['callback_on_sms_status_update'] = True
+        else:
+            logger.warning(
+                'Welcorp job submitted without delivery callback '
+                '(BASE_URL or WELCORP_CALLBACK_SECRET unset); '
+                'delivery status will rely on reconciliation polling',
+            )
 
         url = urljoin(self.base_url.rstrip('/') + '/', 'jobs')
 
@@ -275,6 +281,9 @@ class WelcorpSMSProvider(SMSProvider):
         secret = getattr(settings, 'WELCORP_CALLBACK_SECRET', '')
         if not base_url or not secret:
             return None
+        if '://' not in base_url:
+            logger.warning('BASE_URL %r has no scheme; assuming https://', base_url)
+            base_url = f'https://{base_url}'
         return f'{base_url.rstrip("/")}/api/webhooks/sms-delivery/?token={quote(secret)}'
 
     def poll_job_status(self, provider_message_id: str) -> list[DeliveryEvent]:
@@ -303,10 +312,12 @@ class WelcorpSMSProvider(SMSProvider):
 
         reports = data.get('data', {}).get('reports', [])
         events = []
+        skipped_unconfirmed = 0
 
         for report in reports:
             stage = (report.get('stage') or '').lower()
             if stage != 'confirmed':
+                skipped_unconfirmed += 1
                 continue
 
             raw_status = (report.get('status') or '').upper()
@@ -337,6 +348,12 @@ class WelcorpSMSProvider(SMSProvider):
                     raw_status=raw_status,
                     raw_data=report,
                 ))
+
+        if skipped_unconfirmed:
+            logger.info(
+                'Welcorp poll job %s: %d report(s) skipped (stage not Confirmed)',
+                provider_message_id, skipped_unconfirmed,
+            )
 
         return events
 

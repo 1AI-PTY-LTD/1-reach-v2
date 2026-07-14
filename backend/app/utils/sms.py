@@ -63,17 +63,21 @@ class SMSProvider(ABC):
     """
 
     def _validate_phone(self, phone: str) -> bool:
-        """Validate phone number format (04XXXXXXXX or +614XXXXXXXX)."""
-        cleaned = re.sub(r'\s+', '', phone)
-        if cleaned.startswith('+614'):
-            cleaned = '0' + cleaned[3:]
-        return bool(re.match(r'^04\d{8}$', cleaned))
+        """Validate phone number format (04XXXXXXXX or international AU mobile)."""
+        return bool(re.match(r'^04\d{8}$', self._normalise_phone(phone)))
 
     def _normalise_phone(self, phone: str) -> str:
-        """Normalise phone to 04XXXXXXXX format."""
+        """Normalise an AU mobile to 04XXXXXXXX format.
+
+        Accepts +614XXXXXXXX, 00614XXXXXXXX, and 614XXXXXXXX — the last is how
+        Welcorp reports destinations in delivery callbacks and job reports
+        (international format without the plus). Anything else is returned
+        whitespace-stripped but unchanged.
+        """
         cleaned = re.sub(r'\s+', '', phone)
-        if cleaned.startswith('+614'):
-            cleaned = '0' + cleaned[3:]
+        match = re.match(r'^(?:\+61|0061|61)(4\d{8})$', cleaned)
+        if match:
+            return '0' + match.group(1)
         return cleaned
 
     @staticmethod
