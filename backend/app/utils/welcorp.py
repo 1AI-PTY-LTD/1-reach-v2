@@ -7,6 +7,9 @@ Endpoint: POST /jobs with job_type "sms" or "mms"
 
 Implemented:
 - Delivery status callbacks (callback_url + callback_on_sms_status_update)
+- Callback registration verified after job creation: Welcorp has been observed
+  silently discarding the per-job callback_url (July 2026), so SendResult
+  reports what Welcorp STORED, and reconcile polling cadence follows that
 - Carrier failure detection via callbacks (FAIL, INVN, BARR, OPTO, etc. → FAILED + refund)
 - Job status polling (GET /jobs/{job_id}) as reconciliation fallback
 - Welcorp SENT = carrier accepted (best available confirmation) → mapped to DELIVERED
@@ -120,7 +123,7 @@ class WelcorpSMSProvider(SMSProvider):
                 success=True,
                 message_id=job_id,
                 http_status=api_status,
-                callback_registered=bool(callback_url),
+                callback_registered=bool(callback_url) and self._verify_callback_registered(job_id),
             )
 
         errors = data.get('errors')
@@ -287,6 +290,41 @@ class WelcorpSMSProvider(SMSProvider):
             logger.warning('BASE_URL %r has no scheme; assuming https://', base_url)
             base_url = f'https://{base_url}'
         return f'{base_url.rstrip("/")}/api/webhooks/sms-delivery/?token={quote(secret)}'
+
+    def _verify_callback_registered(self, job_id: str) -> bool:
+        """Check whether Welcorp actually stored the callback on the job.
+
+        Welcorp has been observed accepting a job while silently discarding
+        the callback_url in its payload (verified July 2026: stored value
+        empty, flag false). The STORED value — not what we sent — determines
+        whether delivery callbacks will ever arrive, and reconcile polling
+        cadence must follow it. Returns False on any verification failure so
+        an unverifiable job gets the aggressive polling window (harmless).
+        """
+        url = urljoin(self.base_url.rstrip('/') + '/', f'jobs/{job_id}')
+        try:
+            response = self.session.get(url, timeout=30)
+            data = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning('Could not verify callback registration for job %s: %s', job_id, exc)
+            return False
+
+        if data.get('status') != 200:
+            logger.warning(
+                'Could not verify callback registration for job %s: %s',
+                job_id, data.get('errors', 'unknown'),
+            )
+            return False
+
+        job = data.get('data') or {}
+        registered = bool(job.get('callback_url')) and bool(job.get('callback_on_sms_status_update'))
+        if not registered:
+            logger.warning(
+                'Welcorp discarded the delivery callback for job %s; '
+                'delivery status will rely on reconciliation polling',
+                job_id,
+            )
+        return registered
 
     def poll_job_status(self, provider_message_id: str) -> list[DeliveryEvent]:
         """Poll Welcorp GET /jobs/{job_id} for delivery reports.

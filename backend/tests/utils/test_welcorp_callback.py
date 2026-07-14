@@ -298,43 +298,84 @@ class TestPostJobCallbackInjection:
             assert 'callback_url' not in payload
             assert 'callback_on_sms_status_update' not in payload
 
-    def test_callback_registered_true_when_configured(self, provider):
+    @staticmethod
+    def _session_with_job(job_id, stored_callback=True):
+        """Mock session: POST creates the job, GET returns its stored detail.
+
+        stored_callback controls what Welcorp claims to have kept — the
+        provider must report the STORED state, not what it sent (Welcorp has
+        been observed silently discarding per-job callbacks).
+        """
+        session = Mock()
+        create_response = Mock()
+        create_response.json.return_value = {'status': 200, 'data': job_id}
+        create_response.status_code = 200
+        session.post.return_value = create_response
+
+        detail_response = Mock()
+        detail_response.json.return_value = {
+            'status': 200,
+            'data': {
+                'job_id': job_id,
+                'callback_url': 'https://myapp.example.com/api/webhooks/sms-delivery/?token=x' if stored_callback else '',
+                'callback_on_sms_status_update': stored_callback,
+            },
+        }
+        session.get.return_value = detail_response
+        return session
+
+    def test_callback_registered_true_when_stored_by_welcorp(self, provider):
         with override_settings(**WELCORP_SETTINGS):
-            mock_session = Mock()
-            mock_response = Mock()
-            mock_response.json.return_value = {'status': 200, 'data': '99999'}
-            mock_response.status_code = 200
-            mock_session.post.return_value = mock_response
-            provider.session = mock_session
+            provider.session = self._session_with_job('99999', stored_callback=True)
 
             result = provider._send_sms_impl('0412111111', 'Hello')
 
         assert result.success is True
         assert result.callback_registered is True
 
+    def test_callback_registered_false_when_welcorp_discards(
+        self, provider, caplog, propagate_app_logs,
+    ):
+        """Job accepted but stored callback empty (observed Welcorp behaviour,
+        July 2026) → flag False so reconcile polls on the short window."""
+        with override_settings(**WELCORP_SETTINGS):
+            provider.session = self._session_with_job('99999', stored_callback=False)
+
+            with caplog.at_level('WARNING', logger='app.utils.welcorp'):
+                result = provider._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is False
+        assert any('discarded the delivery callback' in r.message for r in caplog.records)
+
+    def test_callback_verification_failure_defaults_false(self, provider):
+        """A failed verification GET must not fail the send — just poll sooner."""
+        with override_settings(**WELCORP_SETTINGS):
+            session = self._session_with_job('99999')
+            session.get.side_effect = requests.ConnectionError('refused')
+            provider.session = session
+
+            result = provider._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is False
+
     def test_callback_registered_false_without_config(self):
+        """No callback attached → no verification GET at all."""
         with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
             p = WelcorpSMSProvider()
-            mock_session = Mock()
-            mock_response = Mock()
-            mock_response.json.return_value = {'status': 200, 'data': '99999'}
-            mock_response.status_code = 200
-            mock_session.post.return_value = mock_response
-            p.session = mock_session
+            session = self._session_with_job('99999')
+            p.session = session
 
             result = p._send_sms_impl('0412111111', 'Hello')
 
         assert result.success is True
         assert result.callback_registered is False
+        session.get.assert_not_called()
 
     def test_bulk_sms_dict_carries_callback_registered_true(self, provider):
         with override_settings(**WELCORP_SETTINGS):
-            mock_session = Mock()
-            mock_response = Mock()
-            mock_response.json.return_value = {'status': 200, 'data': '88888'}
-            mock_response.status_code = 200
-            mock_session.post.return_value = mock_response
-            provider.session = mock_session
+            provider.session = self._session_with_job('88888', stored_callback=True)
 
             result = provider._send_bulk_sms_impl(
                 [{'to': '0412111111', 'message': 'Hi'}],
@@ -346,12 +387,7 @@ class TestPostJobCallbackInjection:
     def test_bulk_sms_dict_callback_registered_false_without_config(self):
         with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
             p = WelcorpSMSProvider()
-            mock_session = Mock()
-            mock_response = Mock()
-            mock_response.json.return_value = {'status': 200, 'data': '88888'}
-            mock_response.status_code = 200
-            mock_session.post.return_value = mock_response
-            p.session = mock_session
+            p.session = self._session_with_job('88888')
 
             result = p._send_bulk_sms_impl(
                 [{'to': '0412111111', 'message': 'Hi'}],
@@ -362,12 +398,7 @@ class TestPostJobCallbackInjection:
 
     def test_bulk_mms_dict_carries_callback_registered_true(self, provider):
         with override_settings(**WELCORP_SETTINGS):
-            mock_session = Mock()
-            mock_response = Mock()
-            mock_response.json.return_value = {'status': 200, 'data': '77777'}
-            mock_response.status_code = 200
-            mock_session.post.return_value = mock_response
-            provider.session = mock_session
+            provider.session = self._session_with_job('77777', stored_callback=True)
 
             result = provider._send_bulk_mms_impl(
                 [{'to': '0412111111', 'message': 'Hi', 'media_url': 'https://x.example/pic.png'}],
