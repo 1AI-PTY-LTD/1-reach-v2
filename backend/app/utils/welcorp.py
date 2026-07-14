@@ -120,6 +120,7 @@ class WelcorpSMSProvider(SMSProvider):
                 success=True,
                 message_id=job_id,
                 http_status=api_status,
+                callback_registered=bool(callback_url),
             )
 
         errors = data.get('errors')
@@ -189,6 +190,7 @@ class WelcorpSMSProvider(SMSProvider):
                 'success': True,
                 'results': per_recipient,
                 'error': None,
+                'callback_registered': result.callback_registered,
             }
 
         # On failure the whole batch failed
@@ -445,6 +447,7 @@ class WelcorpSMSProvider(SMSProvider):
                 'success': True,
                 'results': per_recipient,
                 'error': None,
+                'callback_registered': result.callback_registered,
             }
 
         per_recipient = [

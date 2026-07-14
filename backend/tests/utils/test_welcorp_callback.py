@@ -298,6 +298,84 @@ class TestPostJobCallbackInjection:
             assert 'callback_url' not in payload
             assert 'callback_on_sms_status_update' not in payload
 
+    def test_callback_registered_true_when_configured(self, provider):
+        with override_settings(**WELCORP_SETTINGS):
+            mock_session = Mock()
+            mock_response = Mock()
+            mock_response.json.return_value = {'status': 200, 'data': '99999'}
+            mock_response.status_code = 200
+            mock_session.post.return_value = mock_response
+            provider.session = mock_session
+
+            result = provider._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is True
+
+    def test_callback_registered_false_without_config(self):
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
+            p = WelcorpSMSProvider()
+            mock_session = Mock()
+            mock_response = Mock()
+            mock_response.json.return_value = {'status': 200, 'data': '99999'}
+            mock_response.status_code = 200
+            mock_session.post.return_value = mock_response
+            p.session = mock_session
+
+            result = p._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is False
+
+    def test_bulk_sms_dict_carries_callback_registered_true(self, provider):
+        with override_settings(**WELCORP_SETTINGS):
+            mock_session = Mock()
+            mock_response = Mock()
+            mock_response.json.return_value = {'status': 200, 'data': '88888'}
+            mock_response.status_code = 200
+            mock_session.post.return_value = mock_response
+            provider.session = mock_session
+
+            result = provider._send_bulk_sms_impl(
+                [{'to': '0412111111', 'message': 'Hi'}],
+            )
+
+        assert result['success'] is True
+        assert result['callback_registered'] is True
+
+    def test_bulk_sms_dict_callback_registered_false_without_config(self):
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
+            p = WelcorpSMSProvider()
+            mock_session = Mock()
+            mock_response = Mock()
+            mock_response.json.return_value = {'status': 200, 'data': '88888'}
+            mock_response.status_code = 200
+            mock_session.post.return_value = mock_response
+            p.session = mock_session
+
+            result = p._send_bulk_sms_impl(
+                [{'to': '0412111111', 'message': 'Hi'}],
+            )
+
+        assert result['success'] is True
+        assert result['callback_registered'] is False
+
+    def test_bulk_mms_dict_carries_callback_registered_true(self, provider):
+        with override_settings(**WELCORP_SETTINGS):
+            mock_session = Mock()
+            mock_response = Mock()
+            mock_response.json.return_value = {'status': 200, 'data': '77777'}
+            mock_response.status_code = 200
+            mock_session.post.return_value = mock_response
+            provider.session = mock_session
+
+            result = provider._send_bulk_mms_impl(
+                [{'to': '0412111111', 'message': 'Hi', 'media_url': 'https://x.example/pic.png'}],
+            )
+
+        assert result['success'] is True
+        assert result['callback_registered'] is True
+
     def test_missing_callback_logs_warning(self, caplog, propagate_app_logs):
         """Sending without a callback must be loud — silence hid a prod outage."""
         with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):

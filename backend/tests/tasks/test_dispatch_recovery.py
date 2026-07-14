@@ -312,13 +312,14 @@ class TestReconcileStaleSent:
         assert result == {'polled': 1, 'events': 1}
 
     def test_fresh_sent_schedules_not_polled(self, db, organisation, user):
-        """A schedule SENT recently (<24h) is not polled."""
+        """A callback-backed schedule SENT recently (within the long window) is not polled."""
         sched = _make_individual(
             organisation, user, ScheduleStatus.SENT,
             provider_message_id='job-fresh-1',
         )
         Schedule.objects.filter(pk=sched.pk).update(
             sent_time=timezone.now() - timedelta(hours=1),
+            callback_registered=True,
         )
 
         provider = Mock()

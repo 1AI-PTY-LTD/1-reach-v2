@@ -33,6 +33,7 @@ class TestSendResult:
         assert result.http_status is None
         assert result.retryable is False
         assert result.failure_category is None
+        assert result.callback_registered is False
 
     def test_all_fields_settable(self):
         result = SendResult(
@@ -44,6 +45,7 @@ class TestSendResult:
             http_status=400,
             retryable=True,
             failure_category='invalid_number',
+            callback_registered=True,
         )
         assert result.success is False
         assert result.message_id == 'msg-1'
@@ -53,6 +55,7 @@ class TestSendResult:
         assert result.http_status == 400
         assert result.retryable is True
         assert result.failure_category == 'invalid_number'
+        assert result.callback_registered is True
 
 
 class TestPhoneInternationalConversion:
@@ -411,3 +414,41 @@ class TestConfigurableMockSMSProvider:
         result = ConfigurableMockSMSProvider().send_sms(to='0412345678', message='hi')
         assert result.success is False
         assert result.failure_category == 'invalid_number'
+
+
+class TestBulkCallbackRegistered:
+    """The base-class bulk loops derive the top-level callback_registered flag
+    from the per-send SendResults (all sends share one provider config)."""
+
+    class _CallbackProvider(MockSMSProvider):
+        def _send_sms_impl(self, to, message, alphanumeric_sender=None):
+            result = super()._send_sms_impl(to, message, alphanumeric_sender=alphanumeric_sender)
+            result.callback_registered = True
+            return result
+
+        def _send_mms_impl(self, to, message, media_url, subject=None, alphanumeric_sender=None):
+            result = super()._send_mms_impl(to, message, media_url, subject,
+                                            alphanumeric_sender=alphanumeric_sender)
+            result.callback_registered = True
+            return result
+
+    def test_default_bulk_sms_derives_flag_from_sends(self):
+        result = self._CallbackProvider().send_bulk_sms(
+            [{'to': '0412345678', 'message': 'Hi'}],
+        )
+        assert result['success'] is True
+        assert result['callback_registered'] is True
+
+    def test_default_bulk_mms_derives_flag_from_sends(self):
+        result = self._CallbackProvider().send_bulk_mms(
+            [{'to': '0412345678', 'message': 'Hi', 'media_url': 'https://x.example/pic.png'}],
+        )
+        assert result['success'] is True
+        assert result['callback_registered'] is True
+
+    def test_mock_provider_bulk_flag_false(self):
+        result = MockSMSProvider().send_bulk_sms(
+            [{'to': '0412345678', 'message': 'Hi'}],
+        )
+        assert result['success'] is True
+        assert result['callback_registered'] is False

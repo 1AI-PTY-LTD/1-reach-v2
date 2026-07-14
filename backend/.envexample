@@ -88,5 +88,9 @@ WELCORP_CALLBACK_SECRET=
 BASE_URL=
 
 # Hours a schedule may sit in SENT before reconcile_stale_sent polls the
-# provider for its delivery status (default 2)
+# provider for its delivery status (default 2). Applies to sends that
+# registered a delivery callback — polling is just the safety net there.
 RECONCILE_STALE_AFTER_HOURS=2
+# Minutes before polling a send that registered NO callback (default 5) —
+# polling is the only status path for those.
+RECONCILE_NO_CALLBACK_AFTER_MINUTES=5

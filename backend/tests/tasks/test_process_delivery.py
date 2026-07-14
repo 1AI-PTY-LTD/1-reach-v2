@@ -663,9 +663,11 @@ class TestReconcileStaleSent:
         provider.poll_job_status.assert_called_once_with('welcorp-job-999')
 
     def test_default_cutoff_polls_after_two_hours(self, schedule_sent):
-        """The cutoff is RECONCILE_STALE_AFTER_HOURS (default 2), not the old
-        hardcoded 24h — a 3h-old SENT schedule must already be polled."""
+        """The long-window cutoff is RECONCILE_STALE_AFTER_HOURS (default 2),
+        not the old hardcoded 24h — a 3h-old callback-backed SENT schedule
+        must already be polled."""
         schedule_sent.sent_time = timezone.now() - timedelta(hours=3)
+        schedule_sent.callback_registered = True
         schedule_sent.save()
 
         with patch('app.celery.get_sms_provider') as mock_get, \
@@ -682,8 +684,10 @@ class TestReconcileStaleSent:
         )
 
     def test_cutoff_respects_settings_override(self, schedule_sent):
-        """Raising RECONCILE_STALE_AFTER_HOURS must widen the quiet window."""
+        """Raising RECONCILE_STALE_AFTER_HOURS must widen the quiet window
+        for callback-backed schedules."""
         schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
+        schedule_sent.callback_registered = True
         schedule_sent.save()
 
         with override_settings(RECONCILE_STALE_AFTER_HOURS=48), \
@@ -692,6 +696,87 @@ class TestReconcileStaleSent:
 
         assert result == {'polled': 0, 'events': 0}
         mock_get.assert_not_called()
+
+    def test_no_callback_schedule_polled_after_short_window(self, schedule_sent):
+        """A send with no callback registered is polled after
+        RECONCILE_NO_CALLBACK_AFTER_MINUTES (default 5) — polling is its only
+        status path, so it must not wait for the hours-long window."""
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=20)
+        schedule_sent.callback_registered = False
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with(
+            schedule_sent.provider_message_id,
+        )
+
+    def test_no_callback_schedule_not_polled_before_short_window(self, schedule_sent):
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=2)
+        schedule_sent.callback_registered = False
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_callback_registered_schedule_ignores_short_window(self, schedule_sent):
+        """A callback-backed send past the short window but inside the long
+        window is left alone — the callback is expected to resolve it."""
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=20)
+        schedule_sent.callback_registered = True
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_short_window_respects_settings_override(self, schedule_sent):
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=20)
+        schedule_sent.callback_registered = False
+        schedule_sent.save()
+
+        with override_settings(RECONCILE_NO_CALLBACK_AFTER_MINUTES=60), \
+             patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_mixed_flags_same_job_polled_once(self, organisation, user, contacts):
+        """The window filter runs before the job-id GROUP BY: a job is polled
+        once as soon as any of its schedules qualifies."""
+        for i, flag in enumerate((False, True)):
+            Schedule.objects.create(
+                organisation=organisation, contact=contacts[i],
+                phone=f'041233333{i}', text='Mixed', scheduled_time=timezone.now(),
+                status=ScheduleStatus.SENT, format='sms', message_parts=1,
+                provider_message_id='job-mixed', callback_registered=flag,
+                sent_time=timezone.now() - timedelta(minutes=20),
+                created_by=user, updated_by=user,
+            )
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with('job-mixed')
 
     def test_duplicate_job_id_with_different_sent_times_polled_once(
         self, organisation, user, contacts,

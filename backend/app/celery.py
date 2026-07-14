@@ -17,8 +17,9 @@ process_delivery_event(event_data)
     status to DELIVERED or FAILED based on provider-reported delivery outcome.
 
 reconcile_stale_sent()
-    Beat task (every 15m). Polls the provider for schedules stuck in SENT longer
-    than RECONCILE_STALE_AFTER_HOURS without a delivery callback and dispatches
+    Beat task (every 15m). Polls the provider for schedules stuck in SENT past
+    their stale window (RECONCILE_NO_CALLBACK_AFTER_MINUTES for sends with no
+    callback registered, RECONCILE_STALE_AFTER_HOURS otherwise) and dispatches
     the resulting delivery events.
 
 cleanup_stale_media_blobs()
@@ -189,11 +190,12 @@ def _handle_success(schedule: Schedule, result: SendResult) -> None:
         locked.status = ScheduleStatus.SENT
         locked.sent_time = timezone.now()
         locked.provider_message_id = result.message_id
+        locked.callback_registered = result.callback_registered
         locked.error = None
         locked.failure_category = None
         locked.save(update_fields=[
             'status', 'sent_time', 'provider_message_id',
-            'error', 'failure_category', 'updated_at',
+            'callback_registered', 'error', 'failure_category', 'updated_at',
         ])
 
         # Subscribed orgs: record usage on SENT (optimistic).
@@ -562,6 +564,8 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
     now = timezone.now()
     org = parent.organisation
     per_recipient = result.get('results', [])
+    # Job-level: one provider job per batch, so all children share the flag.
+    callback_registered = result.get('callback_registered', False)
 
     for i, child in enumerate(children):
         child_result = per_recipient[i] if i < len(per_recipient) else {}
@@ -576,11 +580,12 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
             locked.status = ScheduleStatus.SENT
             locked.sent_time = now
             locked.provider_message_id = child_result.get('message_id')
+            locked.callback_registered = callback_registered
             locked.error = None
             locked.failure_category = None
             locked.save(update_fields=[
                 'status', 'sent_time', 'provider_message_id',
-                'error', 'failure_category', 'updated_at',
+                'callback_registered', 'error', 'failure_category', 'updated_at',
             ])
 
             if org.billing_mode == org.BILLING_SUBSCRIBED:
@@ -1100,12 +1105,15 @@ def process_delivery_event(event_data: dict) -> dict:
 def reconcile_stale_sent() -> dict:
     """Poll provider for delivery status of schedules stuck in SENT.
 
-    Finds schedules that have been SENT for longer than
-    RECONCILE_STALE_AFTER_HOURS without a delivery callback, polls the provider
-    for their status, and dispatches any failure events through the normal
-    process_delivery_event pipeline.
+    Two stale windows, chosen per schedule by whether the send registered a
+    delivery callback: callback-less sends (polling is their only status path)
+    are polled after RECONCILE_NO_CALLBACK_AFTER_MINUTES; callback-backed
+    sends (polling is just the safety net) after RECONCILE_STALE_AFTER_HOURS.
+    Resulting events go through the normal process_delivery_event pipeline.
     """
-    cutoff = timezone.now() - timedelta(hours=settings.RECONCILE_STALE_AFTER_HOURS)
+    now = timezone.now()
+    short_cutoff = now - timedelta(minutes=settings.RECONCILE_NO_CALLBACK_AFTER_MINUTES)
+    long_cutoff = now - timedelta(hours=settings.RECONCILE_STALE_AFTER_HOURS)
 
     # Get distinct job IDs from stale schedules, oldest job first (one job =
     # one API call). GROUP BY rather than order_by+distinct: PostgreSQL adds
@@ -1114,8 +1122,11 @@ def reconcile_stale_sent() -> dict:
     stale_ids = list(
         Schedule.objects.filter(
             status=ScheduleStatus.SENT,
-            sent_time__lte=cutoff,
             provider_message_id__isnull=False,
+        )
+        .filter(
+            Q(callback_registered=False, sent_time__lte=short_cutoff)
+            | Q(callback_registered=True, sent_time__lte=long_cutoff)
         )
         .values('provider_message_id')
         .annotate(oldest_sent=Min('sent_time'))
