@@ -5,12 +5,16 @@ Tests:
 - POST /api/webhooks/sms-delivery/ with valid callback → 200, task dispatched
 - Invalid token → 401
 - Parse failure → 400
+- Real Welcorp provider + real form body end-to-end (no provider mock)
 """
 
 from unittest.mock import Mock, patch
 
 import pytest
+from django.test import override_settings
 from rest_framework import status
+
+from app.utils.welcorp import WelcorpSMSProvider
 
 
 @pytest.mark.django_db
@@ -90,6 +94,42 @@ class TestDeliveryWebhookEndpoint:
 
         assert response.status_code == 200
         mock_task.delay.assert_not_called()
+
+    @patch('app.views.process_delivery_event')
+    @patch('app.views.get_sms_provider')
+    def test_real_welcorp_callback_end_to_end(self, mock_get_provider, mock_task, api_client):
+        """Real provider + verbatim Welcorp form body (job 92840458 shape).
+
+        Every other test here mocks the provider, which is how the
+        61XXXXXXXXX-destination normalisation gap stayed invisible: the
+        webhook accepted the callback but the dispatched event carried an
+        unmatchable phone. This pins the URL-decode → parse → normalise chain.
+        """
+        with override_settings(
+            WELCORP_USERNAME='test-user',
+            WELCORP_PASSWORD='test-pass',
+            WELCORP_CALLBACK_SECRET='test-secret-123',
+            BASE_URL='https://myapp.example.com',
+        ):
+            mock_get_provider.return_value = WelcorpSMSProvider()
+
+            response = api_client.post(
+                self.URL + '?token=test-secret-123',
+                data=(
+                    'BroadcastID=92840458&Destination=61401104191&Status=EXPD'
+                    '&Timestamp=2026-07-02T12%3A02%3A40%2B10%3A00'
+                    '&Reference=1&Recipient=Recipient+1&BroadcastName=Rest+API+SMS'
+                ),
+                content_type='application/x-www-form-urlencoded',
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.delay.assert_called_once()
+        event_data = mock_task.delay.call_args[0][0]
+        assert event_data['provider_message_id'] == '92840458'
+        assert event_data['status'] == 'failed'
+        assert event_data['error_code'] == 'EXPD'
+        assert event_data['recipient_phone'] == '0401104191'
 
     @patch('app.views.process_delivery_event')
     @patch('app.views.get_sms_provider')

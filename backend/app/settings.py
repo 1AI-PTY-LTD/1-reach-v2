@@ -377,6 +377,14 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(day_of_month=1, hour=2, minute=0),  # 1st of month, 2:00 AM
     },
 }
+
+# How long a schedule may sit in SENT before reconcile_stale_sent polls the
+# provider for its delivery status. Two windows, chosen per schedule by
+# whether the send registered a delivery callback:
+# - callback registered: polling is only a safety net → the long hours window
+# - no callback: polling is the ONLY status path → the short minutes window
+RECONCILE_STALE_AFTER_HOURS = float(os.environ.get('RECONCILE_STALE_AFTER_HOURS', '2'))
+RECONCILE_NO_CALLBACK_AFTER_MINUTES = float(os.environ.get('RECONCILE_NO_CALLBACK_AFTER_MINUTES', '5'))
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # Redis SSL — required for Azure Cache for Redis (rediss:// URLs).

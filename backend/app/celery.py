@@ -17,8 +17,10 @@ process_delivery_event(event_data)
     status to DELIVERED or FAILED based on provider-reported delivery outcome.
 
 reconcile_stale_sent()
-    Beat task. Logs warnings for schedules stuck in SENT status for >24h without
-    a delivery callback.
+    Beat task (every 15m). Polls the provider for schedules stuck in SENT past
+    their stale window (RECONCILE_NO_CALLBACK_AFTER_MINUTES for sends with no
+    callback registered, RECONCILE_STALE_AFTER_HOURS otherwise) and dispatches
+    the resulting delivery events.
 
 cleanup_stale_media_blobs()
     Beat task (daily). Deletes media blobs for failed MMS schedules older than
@@ -41,7 +43,7 @@ from celery import Celery, shared_task
 from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
 from django.db import OperationalError, transaction
-from django.db.models import Exists, OuterRef, Q
+from django.db.models import Exists, Min, OuterRef, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.db import connections
@@ -188,11 +190,12 @@ def _handle_success(schedule: Schedule, result: SendResult) -> None:
         locked.status = ScheduleStatus.SENT
         locked.sent_time = timezone.now()
         locked.provider_message_id = result.message_id
+        locked.callback_registered = result.callback_registered
         locked.error = None
         locked.failure_category = None
         locked.save(update_fields=[
             'status', 'sent_time', 'provider_message_id',
-            'error', 'failure_category', 'updated_at',
+            'callback_registered', 'error', 'failure_category', 'updated_at',
         ])
 
         # Subscribed orgs: record usage on SENT (optimistic).
@@ -561,6 +564,8 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
     now = timezone.now()
     org = parent.organisation
     per_recipient = result.get('results', [])
+    # Job-level: one provider job per batch, so all children share the flag.
+    callback_registered = result.get('callback_registered', False)
 
     for i, child in enumerate(children):
         child_result = per_recipient[i] if i < len(per_recipient) else {}
@@ -575,11 +580,12 @@ def _handle_batch_success(parent: Schedule, children: list[Schedule], result: di
             locked.status = ScheduleStatus.SENT
             locked.sent_time = now
             locked.provider_message_id = child_result.get('message_id')
+            locked.callback_registered = callback_registered
             locked.error = None
             locked.failure_category = None
             locked.save(update_fields=[
                 'status', 'sent_time', 'provider_message_id',
-                'error', 'failure_category', 'updated_at',
+                'callback_registered', 'error', 'failure_category', 'updated_at',
             ])
 
             if org.billing_mode == org.BILLING_SUBSCRIBED:
@@ -1056,8 +1062,22 @@ def process_delivery_event(event_data: dict) -> dict:
     with transaction.atomic():
         schedule = _find_schedule(provider_message_id, recipient_phone)
         if not schedule:
-            logger.info(
-                'process_delivery_event: no SENT schedule for provider_message_id=%s phone=%s',
+            # A schedule that exists but no longer matches the SENT/PROCESSING
+            # filter has already reached a terminal status — expected for
+            # callback+poll duplicates and for re-polls of a job whose other
+            # recipients are still unresolved. Only a schedule that matches
+            # nothing at all means an event was genuinely dropped.
+            candidates = Schedule.objects.filter(provider_message_id=provider_message_id)
+            if recipient_phone:
+                candidates = candidates.filter(phone=recipient_phone)
+            if candidates.exists():
+                logger.info(
+                    'process_delivery_event: schedule for provider_message_id=%s phone=%s already resolved',
+                    provider_message_id, recipient_phone,
+                )
+                return {'skipped': True, 'reason': 'already_terminal'}
+            logger.warning(
+                'process_delivery_event: no schedule for provider_message_id=%s phone=%s',
                 provider_message_id, recipient_phone,
             )
             return {'skipped': True, 'reason': 'schedule_not_found'}
@@ -1085,22 +1105,33 @@ def process_delivery_event(event_data: dict) -> dict:
 def reconcile_stale_sent() -> dict:
     """Poll provider for delivery status of schedules stuck in SENT.
 
-    Finds schedules that have been SENT for >24h without a delivery callback,
-    polls the provider for their status, and dispatches any failure events
-    through the normal process_delivery_event pipeline.
+    Two stale windows, chosen per schedule by whether the send registered a
+    delivery callback: callback-less sends (polling is their only status path)
+    are polled after RECONCILE_NO_CALLBACK_AFTER_MINUTES; callback-backed
+    sends (polling is just the safety net) after RECONCILE_STALE_AFTER_HOURS.
+    Resulting events go through the normal process_delivery_event pipeline.
     """
-    cutoff = timezone.now() - timedelta(hours=24)
+    now = timezone.now()
+    short_cutoff = now - timedelta(minutes=settings.RECONCILE_NO_CALLBACK_AFTER_MINUTES)
+    long_cutoff = now - timedelta(hours=settings.RECONCILE_STALE_AFTER_HOURS)
 
-    # Get distinct job IDs from stale non-child schedules (one job = one API call)
+    # Get distinct job IDs from stale schedules, oldest job first (one job =
+    # one API call). GROUP BY rather than order_by+distinct: PostgreSQL adds
+    # ordering columns to DISTINCT, so the same job id could occupy several
+    # of the 50 slots.
     stale_ids = list(
         Schedule.objects.filter(
             status=ScheduleStatus.SENT,
-            sent_time__lte=cutoff,
             provider_message_id__isnull=False,
         )
-        .order_by('sent_time')
-        .values_list('provider_message_id', flat=True)
-        .distinct()[:50]
+        .filter(
+            Q(callback_registered=False, sent_time__lte=short_cutoff)
+            | Q(callback_registered=True, sent_time__lte=long_cutoff)
+        )
+        .values('provider_message_id')
+        .annotate(oldest_sent=Min('sent_time'))
+        .order_by('oldest_sent')
+        .values_list('provider_message_id', flat=True)[:50]
     )
 
     if not stale_ids:

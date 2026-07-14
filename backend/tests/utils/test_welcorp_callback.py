@@ -80,6 +80,27 @@ class TestParseDeliveryCallback:
         events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
         assert events[0].recipient_phone == '0412345678'
 
+    def test_real_welcorp_destination_without_plus(self, provider):
+        """Welcorp actually sends Destination as 61XXXXXXXXX (no plus).
+
+        Regression for job 92840458: this format went unnormalised, so every
+        batch-child event failed the phone match and was dropped.
+        """
+        data = {
+            'BroadcastID': '92840458',
+            'Destination': '61401104191',
+            'Status': 'EXPD',
+            'Timestamp': '2026-07-02T12:02:40+10:00',
+            'Reference': '1',
+            'Recipient': 'Recipient 1',
+            'BroadcastName': 'Rest API SMS',
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].status == 'failed'
+        assert events[0].error_code == 'EXPD'
+        assert events[0].recipient_phone == '0401104191'
+
     def test_case_insensitive_sent_delivered(self, provider):
         data = {'BroadcastID': '1', 'Destination': '+61412111111', 'Status': 'sent'}
         events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
@@ -125,7 +146,7 @@ class TestWelcorpStatusFailureCategory:
         ('OPTO', 'opt_out', False),
         ('BADS', 'account_error', False),
         ('SVRE', 'server_error', True),
-        ('EXPD', 'unknown_transient', True),
+        ('EXPD', 'unknown_permanent', False),
         ('FAIL', 'unknown_transient', True),
     ])
     def test_failure_code_maps_to_category(
@@ -201,6 +222,21 @@ class TestGetCallbackUrl:
             assert p.get_callback_url() == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=test-secret-123'
 
 
+    def test_scheme_less_base_url_gets_https(self):
+        """A BASE_URL without a scheme must not produce a malformed callback URL."""
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': 'onereach-api-dev.example.io'}):
+            p = WelcorpSMSProvider()
+            assert p.get_callback_url() == (
+                'https://onereach-api-dev.example.io/api/webhooks/sms-delivery/?token=test-secret-123'
+            )
+
+    def test_explicit_http_scheme_is_preserved(self):
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': 'http://localhost:8000'}):
+            p = WelcorpSMSProvider()
+            assert p.get_callback_url() == (
+                'http://localhost:8000/api/webhooks/sms-delivery/?token=test-secret-123'
+            )
+
     def test_secret_with_percent_is_url_encoded(self):
         """Secrets containing % must be URL-encoded so Django QueryDict decodes them back correctly."""
         with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': 'WWRL%164gRfs'}):
@@ -261,6 +297,135 @@ class TestPostJobCallbackInjection:
             payload = call_args[1]['json'] if 'json' in call_args[1] else call_args[0][1]
             assert 'callback_url' not in payload
             assert 'callback_on_sms_status_update' not in payload
+
+    @staticmethod
+    def _session_with_job(job_id, stored_callback=True):
+        """Mock session: POST creates the job, GET returns its stored detail.
+
+        stored_callback controls what Welcorp claims to have kept — the
+        provider must report the STORED state, not what it sent (Welcorp has
+        been observed silently discarding per-job callbacks).
+        """
+        session = Mock()
+        create_response = Mock()
+        create_response.json.return_value = {'status': 200, 'data': job_id}
+        create_response.status_code = 200
+        session.post.return_value = create_response
+
+        detail_response = Mock()
+        detail_response.json.return_value = {
+            'status': 200,
+            'data': {
+                'job_id': job_id,
+                'callback_url': 'https://myapp.example.com/api/webhooks/sms-delivery/?token=x' if stored_callback else '',
+                'callback_on_sms_status_update': stored_callback,
+            },
+        }
+        session.get.return_value = detail_response
+        return session
+
+    def test_callback_registered_true_when_stored_by_welcorp(self, provider):
+        with override_settings(**WELCORP_SETTINGS):
+            provider.session = self._session_with_job('99999', stored_callback=True)
+
+            result = provider._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is True
+
+    def test_callback_registered_false_when_welcorp_discards(
+        self, provider, caplog, propagate_app_logs,
+    ):
+        """Job accepted but stored callback empty (observed Welcorp behaviour,
+        July 2026) → flag False so reconcile polls on the short window."""
+        with override_settings(**WELCORP_SETTINGS):
+            provider.session = self._session_with_job('99999', stored_callback=False)
+
+            with caplog.at_level('WARNING', logger='app.utils.welcorp'):
+                result = provider._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is False
+        assert any('discarded the delivery callback' in r.message for r in caplog.records)
+
+    def test_callback_verification_failure_defaults_false(self, provider):
+        """A failed verification GET must not fail the send — just poll sooner."""
+        with override_settings(**WELCORP_SETTINGS):
+            session = self._session_with_job('99999')
+            session.get.side_effect = requests.ConnectionError('refused')
+            provider.session = session
+
+            result = provider._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is False
+
+    def test_callback_registered_false_without_config(self):
+        """No callback attached → no verification GET at all."""
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
+            p = WelcorpSMSProvider()
+            session = self._session_with_job('99999')
+            p.session = session
+
+            result = p._send_sms_impl('0412111111', 'Hello')
+
+        assert result.success is True
+        assert result.callback_registered is False
+        session.get.assert_not_called()
+
+    def test_bulk_sms_dict_carries_callback_registered_true(self, provider):
+        with override_settings(**WELCORP_SETTINGS):
+            provider.session = self._session_with_job('88888', stored_callback=True)
+
+            result = provider._send_bulk_sms_impl(
+                [{'to': '0412111111', 'message': 'Hi'}],
+            )
+
+        assert result['success'] is True
+        assert result['callback_registered'] is True
+
+    def test_bulk_sms_dict_callback_registered_false_without_config(self):
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
+            p = WelcorpSMSProvider()
+            p.session = self._session_with_job('88888')
+
+            result = p._send_bulk_sms_impl(
+                [{'to': '0412111111', 'message': 'Hi'}],
+            )
+
+        assert result['success'] is True
+        assert result['callback_registered'] is False
+
+    def test_bulk_mms_dict_carries_callback_registered_true(self, provider):
+        with override_settings(**WELCORP_SETTINGS):
+            provider.session = self._session_with_job('77777', stored_callback=True)
+
+            result = provider._send_bulk_mms_impl(
+                [{'to': '0412111111', 'message': 'Hi', 'media_url': 'https://x.example/pic.png'}],
+            )
+
+        assert result['success'] is True
+        assert result['callback_registered'] is True
+
+    def test_missing_callback_logs_warning(self, caplog, propagate_app_logs):
+        """Sending without a callback must be loud — silence hid a prod outage."""
+        with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
+            p = WelcorpSMSProvider()
+
+            mock_session = Mock()
+            mock_response = Mock()
+            mock_response.json.return_value = {'status': 200, 'data': '99999'}
+            mock_response.status_code = 200
+            mock_session.post.return_value = mock_response
+            p.session = mock_session
+
+            with caplog.at_level('WARNING', logger='app.utils.welcorp'):
+                result = p._send_sms_impl('0412111111', 'Hello')
+
+            assert result.success is True
+            assert any(
+                'without delivery callback' in r.message for r in caplog.records
+            )
 
 
 class TestPollJobStatus:
@@ -353,6 +518,44 @@ class TestPollJobStatus:
 
         events = provider.poll_job_status('12345')
         assert events[0].recipient_phone == '0412345678'
+
+    def test_real_report_shape_expired(self, provider):
+        """Verbatim shape of a real GET /jobs/{id} report (job 92840458).
+
+        Destinations come back as 614XXXXXXXX (no plus) — regression test for
+        the normalisation gap that stranded all batch children in SENT.
+        """
+        self._mock_poll_response(provider, [{
+            'report_id': 195366580,
+            'reference': '1',
+            'recipient': 'Recipient 1',
+            'destination': '61401104191',
+            'status': 'EXPD',
+            'duration': 2,
+            'message_cost': 0.042,
+            'stage': 'Confirmed',
+            'notes': 'SenderID: 1Solution',
+            'send_date_time': '2026-07-02T12:02:40+10:00',
+        }])
+
+        events = provider.poll_job_status('92840458')
+        assert len(events) == 1
+        assert events[0].status == 'failed'
+        assert events[0].error_code == 'EXPD'
+        assert events[0].recipient_phone == '0401104191'
+        assert events[0].timestamp == '2026-07-02T12:02:40+10:00'
+
+    def test_unconfirmed_skips_are_logged(self, provider, caplog, propagate_app_logs):
+        self._mock_poll_response(provider, [
+            {'status': 'FAIL', 'stage': 'Initial', 'destination': '+61412111111'},
+            {'status': 'SENT', 'stage': 'Confirmed', 'destination': '+61412222222'},
+        ])
+
+        with caplog.at_level('INFO', logger='app.utils.welcorp'):
+            events = provider.poll_job_status('12345')
+
+        assert len(events) == 1
+        assert any('1 report(s) skipped' in r.message for r in caplog.records)
 
     def test_api_timeout_returns_empty(self, provider):
         mock_session = Mock()

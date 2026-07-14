@@ -47,7 +47,9 @@ _KNOWN_ERROR_CODES: dict[str, tuple[FailureCategory, bool]] = {
     'BADS': (FailureCategory.ACCOUNT_ERROR, False),     # Invalid sender ID
     'RECE': (FailureCategory.INVALID_NUMBER, False),    # Invalid destination
     'SVRE': (FailureCategory.SERVER_ERROR, True),       # SMS delivery pathway error
-    'EXPD': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Could not deliver in time
+    # Validity period expired — terminal for this message; the number itself
+    # may still be valid (handset off / out of coverage for the whole window).
+    'EXPD': (FailureCategory.UNKNOWN_PERMANENT, False),
     'FAIL': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Destination unavailable
     'QUED': (FailureCategory.UNKNOWN_TRANSIENT, True),  # Still queued (not terminal)
     # Network-level errors (provider-agnostic)

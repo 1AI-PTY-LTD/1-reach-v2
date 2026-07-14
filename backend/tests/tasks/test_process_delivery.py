@@ -20,12 +20,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 from django.conf import settings
+from django.test import override_settings
 from django.utils import timezone
 
 from app.celery import process_delivery_event, reconcile_stale_sent
 from app.models import Contact, CreditTransaction, Organisation, Schedule, ScheduleStatus
 from app.utils.billing import grant_credits, record_usage
 from app.utils.sms import DeliveryEvent
+from app.utils.welcorp import WelcorpSMSProvider
 
 
 @pytest.mark.django_db
@@ -179,7 +181,28 @@ class TestProcessDeliveryEventSingleSend:
         })
 
         assert result['skipped'] is True
-        assert result['reason'] == 'schedule_not_found'
+        assert result['reason'] == 'already_terminal'
+
+    def test_already_terminal_duplicate_logs_info_not_warning(
+        self, schedule_sent, caplog, propagate_app_logs,
+    ):
+        """Duplicate events for resolved schedules are routine (callback+poll
+        races, re-polls of jobs with unresolved siblings) — they must not fire
+        the dropped-event WARNING or it becomes permanently noisy."""
+        schedule_sent.status = ScheduleStatus.DELIVERED
+        schedule_sent.delivered_time = timezone.now()
+        schedule_sent.save()
+
+        with caplog.at_level('INFO', logger='app.celery'):
+            result = process_delivery_event({
+                'provider_message_id': schedule_sent.provider_message_id,
+                'status': 'delivered',
+                'recipient_phone': schedule_sent.phone,
+            })
+
+        assert result['reason'] == 'already_terminal'
+        assert not any(r.levelname == 'WARNING' for r in caplog.records)
+        assert any('already resolved' in r.message for r in caplog.records)
 
     def test_schedule_not_found(self):
         result = process_delivery_event({
@@ -254,7 +277,7 @@ class TestProcessDeliveryEventFailureCodes:
         ('BARR', 'blacklisted'),
         ('BADS', 'account_error'),
         ('SVRE', 'server_error'),
-        ('EXPD', 'unknown_transient'),
+        ('EXPD', 'unknown_permanent'),
         ('FAIL', 'unknown_transient'),
         ('OPTO', 'opt_out'),
     ])
@@ -411,6 +434,121 @@ class TestProcessDeliveryEventBatchSend:
         assert parent.status == ScheduleStatus.SENT
 
 
+def _welcorp_provider_with_reports(reports):
+    """A real WelcorpSMSProvider whose HTTP session returns the given reports.
+
+    Uses the genuine parse path (poll_job_status) so tests exercise the exact
+    JSON shape Welcorp serves, not a hand-built DeliveryEvent.
+    """
+    with override_settings(WELCORP_USERNAME='test-user', WELCORP_PASSWORD='test-pass'):
+        provider = WelcorpSMSProvider()
+    response = Mock()
+    response.json.return_value = {'status': 200, 'data': {'reports': reports}}
+    provider.session = Mock()
+    provider.session.get.return_value = response
+    return provider
+
+
+@pytest.mark.django_db
+class TestRealWelcorpReportFormats:
+    """Regression: Welcorp reports destinations as 614XXXXXXXX (no plus).
+
+    Job 92840458 (June 2026): every poll/callback event for batch children was
+    dropped as schedule_not_found because _normalise_phone left the
+    international-without-plus format unconverted, so the phone match in
+    _find_schedule never hit and all 57 recipients stayed SENT forever.
+    """
+
+    # Verbatim shape of a real GET /jobs/{id} report entry.
+    EXPD_REPORT = {
+        'report_id': 195366580,
+        'reference': '1',
+        'recipient': 'Recipient 1',
+        'destination': '61401104191',
+        'status': 'EXPD',
+        'duration': 2,
+        'message_cost': 0.042,
+        'stage': 'Confirmed',
+        'notes': 'SenderID: 1Solution',
+        'send_date_time': '2026-07-02T12:02:40+10:00',
+    }
+
+    @pytest.fixture
+    def batch_with_real_phones(self, organisation, contacts, user):
+        """Production-accurate batch: parent has NO provider_message_id."""
+        parent = Schedule.objects.create(
+            organisation=organisation,
+            name='Porting notices',
+            text='Hello batch',
+            scheduled_time=timezone.now(),
+            status=ScheduleStatus.SENT,
+            format='sms',
+            message_parts=1,
+            sent_time=timezone.now(),
+            created_by=user,
+            updated_by=user,
+        )
+        children = []
+        for i, phone in enumerate(['0401104191', '0412111111']):
+            children.append(Schedule.objects.create(
+                organisation=organisation,
+                parent=parent,
+                contact=contacts[i],
+                phone=phone,
+                text='Hello batch',
+                scheduled_time=timezone.now(),
+                status=ScheduleStatus.SENT,
+                format='sms',
+                message_parts=1,
+                provider_message_id='92840458',
+                sent_time=timezone.now(),
+                created_by=user,
+                updated_by=user,
+            ))
+        return parent, children
+
+    def test_expd_report_fails_matching_child_with_refund(
+        self, batch_with_real_phones, organisation,
+    ):
+        parent, (expired_child, other_child) = batch_with_real_phones
+        grant_credits(organisation, Decimal('10.00'), 'test')
+        record_usage(organisation, 1, 'sms', 'test send', schedule=expired_child)
+
+        provider = _welcorp_provider_with_reports([self.EXPD_REPORT])
+        events = provider.poll_job_status('92840458')
+        assert len(events) == 1
+        assert events[0].recipient_phone == '0401104191'
+
+        result = process_delivery_event(events[0].__dict__)
+
+        assert result == {'schedule_id': expired_child.pk, 'status': 'failed'}
+        expired_child.refresh_from_db()
+        assert expired_child.status == ScheduleStatus.FAILED
+        assert expired_child.failure_category == 'unknown_permanent'
+        assert CreditTransaction.objects.filter(
+            schedule=expired_child, transaction_type=CreditTransaction.REFUND,
+        ).count() == 1
+        other_child.refresh_from_db()
+        assert other_child.status == ScheduleStatus.SENT
+
+    def test_sent_report_delivers_matching_child(self, batch_with_real_phones):
+        parent, (child, other_child) = batch_with_real_phones
+        report = {**self.EXPD_REPORT, 'status': 'SENT',
+                  'send_date_time': '2026-06-30T12:02:41+10:00'}
+
+        provider = _welcorp_provider_with_reports([report])
+        events = provider.poll_job_status('92840458')
+
+        result = process_delivery_event(events[0].__dict__)
+
+        assert result == {'schedule_id': child.pk, 'status': 'delivered'}
+        child.refresh_from_db()
+        assert child.status == ScheduleStatus.DELIVERED
+        assert child.delivered_time is not None
+        other_child.refresh_from_db()
+        assert other_child.status == ScheduleStatus.SENT
+
+
 @pytest.mark.django_db
 class TestReconcileStaleSent:
     """Tests for the reconcile_stale_sent beat task (polls provider for status)."""
@@ -504,11 +642,9 @@ class TestReconcileStaleSent:
         parent, children = batch_sent_schedules
         stale_time = timezone.now() - timedelta(hours=25)
 
-        # Make children stale — parent has no provider_message_id in real usage
-        # but in this fixture it does; clear it to simulate real batch sends
-        parent.provider_message_id = None
+        # Make everything stale (parent has no provider_message_id, as in prod)
         parent.sent_time = stale_time
-        parent.save(update_fields=['provider_message_id', 'sent_time'])
+        parent.save(update_fields=['sent_time'])
 
         for child in children:
             child.sent_time = stale_time
@@ -525,6 +661,164 @@ class TestReconcileStaleSent:
         # Children's provider_message_id should be found (deduplicated to 1 poll)
         assert result['polled'] == 1
         provider.poll_job_status.assert_called_once_with('welcorp-job-999')
+
+    def test_default_cutoff_polls_after_two_hours(self, schedule_sent):
+        """The long-window cutoff is RECONCILE_STALE_AFTER_HOURS (default 2),
+        not the old hardcoded 24h — a 3h-old callback-backed SENT schedule
+        must already be polled."""
+        schedule_sent.sent_time = timezone.now() - timedelta(hours=3)
+        schedule_sent.callback_registered = True
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with(
+            schedule_sent.provider_message_id,
+        )
+
+    def test_cutoff_respects_settings_override(self, schedule_sent):
+        """Raising RECONCILE_STALE_AFTER_HOURS must widen the quiet window
+        for callback-backed schedules."""
+        schedule_sent.sent_time = timezone.now() - timedelta(hours=25)
+        schedule_sent.callback_registered = True
+        schedule_sent.save()
+
+        with override_settings(RECONCILE_STALE_AFTER_HOURS=48), \
+             patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_no_callback_schedule_polled_after_short_window(self, schedule_sent):
+        """A send with no callback registered is polled after
+        RECONCILE_NO_CALLBACK_AFTER_MINUTES (default 5) — polling is its only
+        status path, so it must not wait for the hours-long window."""
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=20)
+        schedule_sent.callback_registered = False
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with(
+            schedule_sent.provider_message_id,
+        )
+
+    def test_no_callback_schedule_not_polled_before_short_window(self, schedule_sent):
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=2)
+        schedule_sent.callback_registered = False
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_callback_registered_schedule_ignores_short_window(self, schedule_sent):
+        """A callback-backed send past the short window but inside the long
+        window is left alone — the callback is expected to resolve it."""
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=20)
+        schedule_sent.callback_registered = True
+        schedule_sent.save()
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_short_window_respects_settings_override(self, schedule_sent):
+        schedule_sent.sent_time = timezone.now() - timedelta(minutes=20)
+        schedule_sent.callback_registered = False
+        schedule_sent.save()
+
+        with override_settings(RECONCILE_NO_CALLBACK_AFTER_MINUTES=60), \
+             patch('app.celery.get_sms_provider') as mock_get:
+            result = reconcile_stale_sent()
+
+        assert result == {'polled': 0, 'events': 0}
+        mock_get.assert_not_called()
+
+    def test_mixed_flags_same_job_polled_once(self, organisation, user, contacts):
+        """The window filter runs before the job-id GROUP BY: a job is polled
+        once as soon as any of its schedules qualifies."""
+        for i, flag in enumerate((False, True)):
+            Schedule.objects.create(
+                organisation=organisation, contact=contacts[i],
+                phone=f'041233333{i}', text='Mixed', scheduled_time=timezone.now(),
+                status=ScheduleStatus.SENT, format='sms', message_parts=1,
+                provider_message_id='job-mixed', callback_registered=flag,
+                sent_time=timezone.now() - timedelta(minutes=20),
+                created_by=user, updated_by=user,
+            )
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with('job-mixed')
+
+    def test_duplicate_job_id_with_different_sent_times_polled_once(
+        self, organisation, user, contacts,
+    ):
+        """One job id must occupy one poll slot even when its schedules have
+        different sent_times (order_by+distinct used to DISTINCT over both
+        columns, letting a single job eat several of the 50 slots)."""
+        for i, hours in enumerate((25, 30)):
+            Schedule.objects.create(
+                organisation=organisation, contact=contacts[i],
+                phone=f'041211111{i}', text='Dup', scheduled_time=timezone.now(),
+                status=ScheduleStatus.SENT, format='sms', message_parts=1,
+                provider_message_id='job-dup',
+                sent_time=timezone.now() - timedelta(hours=hours),
+                created_by=user, updated_by=user,
+            )
+
+        with patch('app.celery.get_sms_provider') as mock_get, \
+             patch('app.celery.process_delivery_event'):
+            provider = Mock()
+            provider.poll_job_status.return_value = []
+            mock_get.return_value = provider
+
+            result = reconcile_stale_sent()
+
+        assert result['polled'] == 1
+        provider.poll_job_status.assert_called_once_with('job-dup')
+
+    def test_schedule_not_found_logs_warning(self, caplog, propagate_app_logs):
+        """Dropped delivery events must be loud — INFO hid a prod outage."""
+        with caplog.at_level('WARNING', logger='app.celery'):
+            result = process_delivery_event({
+                'provider_message_id': 'nonexistent-id',
+                'status': 'failed',
+                'recipient_phone': '0412345678',
+            })
+
+        assert result['reason'] == 'schedule_not_found'
+        assert any(
+            'no schedule' in r.message and r.levelname == 'WARNING'
+            for r in caplog.records
+        )
 
     def test_oldest_schedules_polled_first(self, organisation, user, contact):
         """Schedules are polled oldest-first so old backlog doesn't get stuck."""

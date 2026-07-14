@@ -211,6 +211,9 @@ class Schedule(TenantModel, AuditMixin):
     alphanumeric_sender = models.CharField(max_length=11, blank=True, null=True)
     # Retry / delivery tracking fields
     provider_message_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    # True if the provider send registered a delivery-callback URL. False means
+    # no callback will ever arrive — reconcile_stale_sent polls these sooner.
+    callback_registered = models.BooleanField(default=False)
     retry_count = models.PositiveSmallIntegerField(default=0)
     max_retries = models.PositiveSmallIntegerField(default=3)
     next_retry_at = models.DateTimeField(blank=True, null=True, db_index=True)

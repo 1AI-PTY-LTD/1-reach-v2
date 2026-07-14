@@ -28,6 +28,9 @@ class SendResult:
     http_status: int | None = None
     retryable: bool = False
     failure_category: str | None = None
+    # True if the send registered a delivery-callback URL with the provider.
+    # False → no callback will arrive; reconcile polling is the only status path.
+    callback_registered: bool = False
 
 
 @dataclass
@@ -63,17 +66,21 @@ class SMSProvider(ABC):
     """
 
     def _validate_phone(self, phone: str) -> bool:
-        """Validate phone number format (04XXXXXXXX or +614XXXXXXXX)."""
-        cleaned = re.sub(r'\s+', '', phone)
-        if cleaned.startswith('+614'):
-            cleaned = '0' + cleaned[3:]
-        return bool(re.match(r'^04\d{8}$', cleaned))
+        """Validate phone number format (04XXXXXXXX or international AU mobile)."""
+        return bool(re.match(r'^04\d{8}$', self._normalise_phone(phone)))
 
     def _normalise_phone(self, phone: str) -> str:
-        """Normalise phone to 04XXXXXXXX format."""
+        """Normalise an AU mobile to 04XXXXXXXX format.
+
+        Accepts +614XXXXXXXX, 00614XXXXXXXX, and 614XXXXXXXX — the last is how
+        Welcorp reports destinations in delivery callbacks and job reports
+        (international format without the plus). Anything else is returned
+        whitespace-stripped but unchanged.
+        """
         cleaned = re.sub(r'\s+', '', phone)
-        if cleaned.startswith('+614'):
-            cleaned = '0' + cleaned[3:]
+        match = re.match(r'^(?:\+61|0061|61)(4\d{8})$', cleaned)
+        if match:
+            return '0' + match.group(1)
         return cleaned
 
     @staticmethod
@@ -190,8 +197,10 @@ class SMSProvider(ABC):
         """
         results = []
         first_failure: SendResult | None = None
+        callback_registered = False
         for r in recipients:
             result = self._send_sms_impl(r['to'], r['message'], alphanumeric_sender=alphanumeric_sender)
+            callback_registered = callback_registered or result.callback_registered
             results.append({
                 'to': r['to'],
                 'message_parts': r.get('message_parts', self._calculate_sms_parts(r['message'])),
@@ -207,6 +216,7 @@ class SMSProvider(ABC):
             'success': failed == 0,
             'results': results,
             'error': f'{failed} messages failed' if failed > 0 else None,
+            'callback_registered': callback_registered,
         }
         if first_failure:
             result_dict['retryable'] = first_failure.retryable
@@ -230,9 +240,11 @@ class SMSProvider(ABC):
         """
         results = []
         first_failure: SendResult | None = None
+        callback_registered = False
         for r in recipients:
             result = self._send_mms_impl(r['to'], r['message'], r['media_url'], r.get('subject'),
                                          alphanumeric_sender=alphanumeric_sender)
+            callback_registered = callback_registered or result.callback_registered
             results.append({
                 'to': r['to'],
                 'message_parts': 1,
@@ -248,6 +260,7 @@ class SMSProvider(ABC):
             'success': failed == 0,
             'results': results,
             'error': f'{failed} messages failed' if failed > 0 else None,
+            'callback_registered': callback_registered,
         }
         if first_failure:
             result_dict['retryable'] = first_failure.retryable

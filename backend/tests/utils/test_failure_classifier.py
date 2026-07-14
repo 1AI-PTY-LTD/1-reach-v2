@@ -109,7 +109,7 @@ class TestWelcorpErrorCodes:
         ('BADS', FailureCategory.ACCOUNT_ERROR, False),
         ('RECE', FailureCategory.INVALID_NUMBER, False),
         ('SVRE', FailureCategory.SERVER_ERROR, True),
-        ('EXPD', FailureCategory.UNKNOWN_TRANSIENT, True),
+        ('EXPD', FailureCategory.UNKNOWN_PERMANENT, False),
         ('FAIL', FailureCategory.UNKNOWN_TRANSIENT, True),
         ('QUED', FailureCategory.UNKNOWN_TRANSIENT, True),
     ])

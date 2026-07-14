@@ -266,7 +266,12 @@ def schedule_sent(db, schedule_queued):
 
 @pytest.fixture
 def batch_sent_schedules(db, organisation, contacts, user):
-    """A batch parent + 3 children, all SENT with the same provider_message_id."""
+    """A batch parent + 3 children, all SENT; children share a provider_message_id.
+
+    Production-accurate: the parent has NO provider_message_id (only children
+    get the Welcorp job id). Giving the parent one would let _find_schedule's
+    parent__isnull fallback match the parent and mask child phone-match bugs.
+    """
     parent = Schedule.objects.create(
         organisation=organisation,
         name='Batch Campaign',
@@ -275,7 +280,6 @@ def batch_sent_schedules(db, organisation, contacts, user):
         status=ScheduleStatus.SENT,
         format=MessageFormat.SMS,
         message_parts=1,
-        provider_message_id='welcorp-job-999',
         sent_time=timezone.now(),
         created_by=user,
         updated_by=user,

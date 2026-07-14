@@ -64,6 +64,30 @@ class TestSendMessageSuccess:
         assert schedule_queued.provider_message_id.startswith('mock-sms-')
         assert schedule_queued.error is None
 
+    def test_callback_registered_true_persisted_on_send(self, schedule_queued):
+        """The provider's callback_registered flag lands on the schedule —
+        reconcile_stale_sent uses it to pick the stale window."""
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = mock_get.return_value
+            provider.send_sms.return_value = SendResult(
+                success=True, message_id='job-cb-1', message_parts=1,
+                callback_registered=True,
+            )
+            send_message(schedule_queued.pk)
+
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.status == ScheduleStatus.SENT
+        assert schedule_queued.callback_registered is True
+
+    def test_callback_registered_false_by_default(
+        self, schedule_queued, mock_sms_provider
+    ):
+        """A provider that doesn't set the flag (e.g. the mock) → False."""
+        send_message(schedule_queued.pk)
+
+        schedule_queued.refresh_from_db()
+        assert schedule_queued.callback_registered is False
+
     def test_opted_out_recipient_fails_with_refund_at_send_time(
         self, schedule_queued, organisation, contact, user
     ):

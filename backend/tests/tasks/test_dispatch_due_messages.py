@@ -831,3 +831,55 @@ class TestDispatchHeartbeat:
         # Dispatch still proceeds despite the heartbeat write failing.
         assert result['dispatched'] == 1
         mock_send.delay.assert_called_once_with(individual.pk)
+
+
+# ---------------------------------------------------------------------------
+# callback_registered persistence on batch sends
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestBatchCallbackRegistered:
+    """The top-level callback_registered flag from the bulk-send dict lands on
+    every batch child — reconcile_stale_sent uses it to pick the stale window."""
+
+    def test_children_persist_flag_from_top_level_dict(
+        self, db, organisation, user, celery_eager
+    ):
+        parent = _make_parent(organisation, user)
+        child_a = _make_child(organisation, user, parent)
+        child_b = _make_child(organisation, user, parent)
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = mock_get.return_value
+            provider.send_bulk_sms.return_value = {
+                'success': True,
+                'results': [
+                    {'success': True, 'message_id': 'job-cb-batch', 'to': c.phone}
+                    for c in (child_a, child_b)
+                ],
+                'error': None,
+                'callback_registered': True,
+            }
+            dispatch_due_messages()
+
+        parent.refresh_from_db()
+        child_a.refresh_from_db()
+        child_b.refresh_from_db()
+        assert child_a.callback_registered is True
+        assert child_b.callback_registered is True
+        # Parent is never polled: no provider_message_id, flag untouched.
+        assert parent.provider_message_id is None
+        assert parent.callback_registered is False
+
+    def test_children_default_false_when_key_missing(
+        self, db, organisation, user, celery_eager, mock_sms_provider
+    ):
+        """mock_sms_provider's bulk dict has no flag key → .get default False."""
+        parent = _make_parent(organisation, user)
+        child = _make_child(organisation, user, parent)
+
+        dispatch_due_messages()
+
+        child.refresh_from_db()
+        assert child.status == ScheduleStatus.SENT
+        assert child.callback_registered is False
