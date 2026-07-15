@@ -527,6 +527,18 @@ However, there are gaps:
 
 - **ACA deployment slots** — ACA does not currently support deployment slots like App Service. Traffic splitting between revisions is possible with `Multiple` revision mode, but adds complexity. The current `Single` mode is simpler and sufficient for most cases.
 
+### 5. Email to SMS (Investigated — Future Work)
+
+Welcorp offers an email-to-SMS feature branded **"Email to Broadcast" (EtoB)**: a registered sender emails `{number}@sms.message-service.org` and Welcorp converts it to an SMS. Documented at [welcorp.com/public/information/email-to-broadcast](https://welcorp.com/public/information/email-to-broadcast/) and as `etob_*` fields on the `/users` resource in the [REST API docs](https://api.message-service.org/api/v1/). Investigated July 2026; not implemented.
+
+**Why Welcorp's native EtoB was rejected:** sends would go user → Welcorp directly, bypassing 1Reach entirely — no billing gates (`check_can_send`, prepaid balance, monthly limit, past_due block), no opt-out enforcement, no `Schedule` rows or delivery-status pipeline. There is also no job-origin field on Welcorp jobs to import email-originated sends after the fact, whether EtoB jobs fire delivery callbacks is undocumented, EtoB config requires agent/admin rights on the Welcorp account (unconfirmed for ours), and Welcorp's own docs describe FROM-address-only auth as "easily spoofed".
+
+**Recommended design instead (agreed, fully specced):** replicate the EtoB UX at the 1Reach layer. Users email `{phone}@sms.1reach.net`; Mailgun Routes receives it via MX and POSTs an HMAC-signed webhook to a new `/api/webhooks/inbound-email/` endpoint (same conventions as the existing Clerk/Stripe/Welcorp webhooks); a Celery task authenticates the sender via SPF/DKIM alignment (spoofing defence), maps the FROM address to an active org member (`{phone}+{orgslug}@` subaddress tiebreak for multi-org users), then feeds the **existing** send pipeline — so billing, opt-out, retries, refunds, and delivery status are all enforced unchanged, billed as normal SMS. Key elements: `Schedule.source` (`app`/`email`) field, an `InboundEmail` audit model, extracting `SMSViewSet._dispatch_single`'s atomic block into a shared `create_queued_message()` helper, truncate-at-306-chars (no bounce channel in MVP), validation/billing failures materialised as FAILED schedules so they're visible in the UI, and a per-org `email_to_sms_enabled` Config toggle.
+
+**Prerequisites when picked up:** Mailgun account (inbound routing needs the ~US$35/mo Foundation plan for prod; the free plan's single route covers dev; Postmark is a one-class fallback behind the planned `InboundEmailProvider` ABC), MX records on `sms.1reach.net` / `sms.dev.1reach.net` (manual DNS, runbook territory), and two new secrets (`INBOUND_EMAIL_WEBHOOK_SECRET`, `INBOUND_EMAIL_SIGNING_KEY`) threaded through Bicep/GitHub envs.
+
+**Phasing:** MVP (single recipient per email) → group/`#`-multi-recipient addressing → outbound acknowledgement/bounce emails → two-way SMS-reply-to-email (depends on Welcorp inbound capability).
+
 ---
 
 ## Azure Deployment
