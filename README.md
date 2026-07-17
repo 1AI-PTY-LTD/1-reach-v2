@@ -939,7 +939,9 @@ If you scale beyond 3 API replicas, reduce `DB_POOL_MAX_SIZE` proportionally via
 
 #### Sentry
 
-**Backend:** Set `SENTRY_DSN` on all container apps (via Bicep env vars). `settings.py` initialises `sentry_sdk` with `DjangoIntegration()` (request context, unhandled exceptions) and `CeleryIntegration()` (task failures with task name, args, retry count). A `task_failure` Celery signal handler also logs all task failures at ERROR level. Optional env vars: `SENTRY_ENVIRONMENT` (default `production`), `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`).
+**Backend:** Set `SENTRY_DSN` on all container apps (via Bicep env vars). `settings.py` initialises `sentry_sdk` with `DjangoIntegration()` (request context, unhandled exceptions) and `CeleryIntegration()` (task failures with task name, args, retry count). A `task_failure` Celery signal handler also logs all task failures at ERROR level. Optional env vars: `SENTRY_ENVIRONMENT` (default `local`; deploys must set `development`/`production` explicitly — the default is deliberately safe so an unconfigured process can never report as production), `SENTRY_TRACES_SAMPLE_RATE` (default `0.1`).
+
+Sentry is **never initialised under pytest** (`'pytest' in sys.modules` guard in `settings.py`), so the test suite can't pollute the project with its deliberate mock exceptions even when a real `SENTRY_DSN` is present in `backend/.env`. The `entrypoint.sh` DB-wait probe also runs with `SENTRY_DSN=''` — its handled boot-time connection retries used to escape to Sentry via the excepthook. Keep `SENTRY_DSN` empty in local `backend/.env`; per-message send/delivery failures (invalid number, expired validity, opt-out) are logged at WARNING, so Sentry error events mean something actually unexpected.
 
 **Frontend:** `@sentry/react` initialised in `main.tsx` (conditional on `VITE_SENTRY_DSN`). The root error boundary in `__root.tsx` calls `Sentry.captureException()`. `VITE_SENTRY_DSN` is baked into the JS bundle at build time.
 

@@ -246,7 +246,10 @@ def _mark_permanently_failed(schedule: Schedule, result: SendResult, failure_cat
         schedule.save(update_fields=['status', 'failure_category', 'error', 'updated_at'])
         refund_usage(org, schedule)
 
-    logger.error(
+    # WARNING, not ERROR: a permanent send failure (invalid number, opt-out,
+    # ...) is a routine per-message outcome, fully handled here and visible in
+    # the UI — Sentry error events are reserved for unexpected states.
+    logger.warning(
         'Schedule %d permanently failed (%s): %s',
         schedule.pk, failure_category, result.error,
     )
@@ -1022,7 +1025,10 @@ def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
         if failure_category == FailureCategory.OPT_OUT.value:
             _propagate_opt_out(schedule)
 
-    logger.error(
+    # WARNING, not ERROR: carrier delivery failures (EXPD/BARR/INVN/...) are
+    # routine per-message outcomes, fully handled here and visible in the UI —
+    # Sentry error events are reserved for unexpected states.
+    logger.warning(
         'Schedule %d delivery failed (%s): %s',
         schedule.pk, failure_category, error_message,
     )
@@ -1202,7 +1208,12 @@ def link_billing_customer(self, org_pk: int) -> None:
     (e.g. Clerk hasn't created the Stripe customer yet). Retries with
     exponential backoff: 60s, 120s, 240s, 480s, 960s.
     """
-    org = Organisation.objects.get(pk=org_pk)
+    try:
+        org = Organisation.objects.get(pk=org_pk)
+    except Organisation.DoesNotExist:
+        # Org deleted while retries were pending — nothing left to link.
+        logger.info('link_billing_customer: org %s deleted, skipping', org_pk)
+        return
     if org.billing_customer_id:
         return  # already linked
 

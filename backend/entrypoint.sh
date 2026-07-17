@@ -2,9 +2,11 @@
 set -e
 
 # --- Wait for database ---
+# SENTRY_DSN is blanked for the probe: django.setup() would init the SDK and
+# every handled retry below would escape to Sentry via the excepthook.
 echo "Waiting for database..."
 for i in $(seq 1 30); do
-  uv run python -c "
+  SENTRY_DSN='' uv run python -c "
 import django, os
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'app.settings')
 django.setup()

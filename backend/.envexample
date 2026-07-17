@@ -27,8 +27,11 @@ AZURE_STORAGE_ACCOUNT_KEY=<account-key>
 AZURE_CONTAINER=media
 
 # Sentry (optional - disabled if not set)
+# Leave SENTRY_DSN empty for local dev — a real DSN here makes every local
+# run report to the shared Sentry project. Deploys set SENTRY_ENVIRONMENT
+# explicitly (development/production); unset defaults to 'local'.
 SENTRY_DSN=
-SENTRY_ENVIRONMENT=production
+SENTRY_ENVIRONMENT=local
 SENTRY_TRACES_SAMPLE_RATE=0.1
 
 # Logging (optional)

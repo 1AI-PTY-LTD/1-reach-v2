@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import ssl as _ssl
+import sys
 from urllib.parse import quote as _urlquote
 
 import certifi
@@ -459,11 +460,15 @@ MEDIA_URL = '/media/'
 
 
 # Sentry
+# Never report from the test suite, whatever the .env says — deliberate test
+# exceptions otherwise pollute whichever environment the DSN points at.
+# The environment default is 'local' so an unconfigured process can never
+# masquerade as production; deploys set SENTRY_ENVIRONMENT explicitly.
 SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
-if SENTRY_DSN:
+if SENTRY_DSN and 'pytest' not in sys.modules:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
-        environment=os.environ.get('SENTRY_ENVIRONMENT', 'production'),
+        environment=os.environ.get('SENTRY_ENVIRONMENT', 'local'),
         traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.1')),
         send_default_pii=False,
         integrations=[
