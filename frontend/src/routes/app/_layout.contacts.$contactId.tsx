@@ -149,7 +149,7 @@ export function ContactDetails() {
             </TableCell>
             <TableCell></TableCell>
             <TableCell>{dayjs(entry.received_at).format('hh:mmA DD/MM/YYYY')}</TableCell>
-            <TableCell className="w-16">SMS</TableCell>
+            <TableCell className="w-16">sms</TableCell>
             <TableCell>{entry.text.length > 40 ? entry.text.substring(0, 40) + '...' : entry.text}</TableCell>
           </TableRow>
         )
@@ -173,7 +173,7 @@ export function ContactDetails() {
             </TableCell>
             <TableCell>{dayjs(entry.scheduled_time).format('hh:mmA DD/MM/YYYY')}</TableCell>
             <TableCell>{entry.sent_time ? dayjs(entry.sent_time).format('hh:mmA DD/MM/YYYY') : ''}</TableCell>
-            <TableCell className="w-16">{entry.format || 'SMS'}</TableCell>
+            <TableCell className="w-16">{entry.format || 'sms'}</TableCell>
             <TableCell>{(entry.text ?? '').length > 40 ? (entry.text ?? '').substring(0, 40) + '...' : (entry.text ?? '')}</TableCell>
           </TableRow>
           {selectedRowId === rowKey && (
