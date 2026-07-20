@@ -288,3 +288,109 @@ describe('Send page — full journey (#11)', () => {
     })
   })
 })
+
+describe('Send page — Allow replies (two-way)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function getAllowRepliesCheckbox() {
+    return screen.getByRole('checkbox', { name: 'Allow replies' })
+  }
+
+  it('sends two_way: true when Allow replies is checked', async () => {
+    const user = userEvent.setup()
+    let sentBody: any = null
+    server.use(
+      http.post('http://localhost:8000/api/sms/send/', async ({ request }) => {
+        sentBody = await request.json()
+        return HttpResponse.json(
+          { success: true, message: 'queued', schedule_id: 1, total: 1, skipped_opted_out: 0 },
+          { status: 202 }
+        )
+      })
+    )
+
+    renderWithProviders(<Send />)
+    await waitFor(() => expect(getRecipientInput()).toBeInTheDocument())
+
+    await user.type(getRecipientInput(), VALID_PHONE_A)
+    await user.keyboard('{Enter}')
+    await user.type(getMessageTextarea(), 'Reply YES to confirm')
+    await user.click(getAllowRepliesCheckbox())
+    await user.click(screen.getByRole('button', { name: /Send Now/i }))
+
+    await waitFor(() => expect(sentBody).not.toBeNull())
+    expect(sentBody.two_way).toBe(true)
+  })
+
+  it('omits two_way when the checkbox is left unchecked', async () => {
+    const user = userEvent.setup()
+    let sentBody: any = null
+    server.use(
+      http.post('http://localhost:8000/api/sms/send/', async ({ request }) => {
+        sentBody = await request.json()
+        return HttpResponse.json(
+          { success: true, message: 'queued', schedule_id: 1, total: 1, skipped_opted_out: 0 },
+          { status: 202 }
+        )
+      })
+    )
+
+    renderWithProviders(<Send />)
+    await waitFor(() => expect(getRecipientInput()).toBeInTheDocument())
+
+    await user.type(getRecipientInput(), VALID_PHONE_A)
+    await user.keyboard('{Enter}')
+    await user.type(getMessageTextarea(), 'One way message')
+    await user.click(screen.getByRole('button', { name: /Send Now/i }))
+
+    await waitFor(() => expect(sentBody).not.toBeNull())
+    expect(sentBody.two_way).toBeUndefined()
+  })
+
+  it('is disabled while a Sender ID is selected, and selecting None releases it', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('http://localhost:8000/api/sms/alphanumeric-senders/', () =>
+        HttpResponse.json({ alphanumeric_senders: ['MYBRAND', 'ALERTS'] })
+      )
+    )
+
+    renderWithProviders(<Send />)
+
+    // Several <select>s exist (template picker); the sender one is identified
+    // by its "None (random number)" option.
+    const getSenderSelect = () =>
+      screen
+        .getAllByRole('combobox')
+        .find((el) =>
+          Array.from(el.querySelectorAll('option')).some(
+            (o) => o.textContent === 'None (random number)'
+          )
+        ) as HTMLSelectElement
+
+    // The form auto-selects the first sender, which hard-disables the checkbox.
+    // Headless UI renders a span[role=checkbox], so disabled state is aria-only.
+    await waitFor(() => {
+      expect(getSenderSelect()).toHaveValue('MYBRAND')
+    })
+    expect(getAllowRepliesCheckbox()).toHaveAttribute('aria-disabled', 'true')
+    expect(
+      screen.getByText(/Not available with a Sender ID/)
+    ).toBeInTheDocument()
+
+    // Releasing the sender (None) re-enables the checkbox…
+    await user.selectOptions(getSenderSelect(), '')
+    await waitFor(() =>
+      expect(getAllowRepliesCheckbox()).not.toHaveAttribute('aria-disabled', 'true')
+    )
+
+    // …and checking it disables the sender select in return.
+    await user.click(getAllowRepliesCheckbox())
+    expect(getSenderSelect()).toBeDisabled()
+    expect(
+      screen.getByText('Sender ID is unavailable while replies are allowed')
+    ).toBeInTheDocument()
+  })
+})

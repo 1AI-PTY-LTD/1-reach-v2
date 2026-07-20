@@ -15,12 +15,18 @@ Implemented:
 - Job status polling (GET /jobs/{job_id}) as reconciliation fallback
 - Welcorp SENT = carrier accepted (best available confirmation) → mapped to DELIVERED
 - Custom sender ID (manual_sender_id)
+- 2-way SMS replies. Reply callbacks arrive on the SAME callback_url as
+  delivery reports with the SAME field set, except they carry Response (the
+  reply text) instead of Status — there is no type discriminator. Replies are
+  callback-only: no Welcorp endpoint exists to list or re-fetch them, so a
+  missed webhook is a lost reply (GET /jobs/{id} never includes reply text).
 
 Future features to implement:
 - Merge fields for personalised message content per recipient
-- 2-way SMS (replies via callback)
+- 2-way MMS (inbound media payload is undocumented)
 """
 
+import hmac
 import logging
 from typing import Optional
 from pathlib import PurePosixPath
@@ -30,7 +36,7 @@ import requests
 from django.conf import settings
 
 from app.utils.failure_classifier import classify_failure
-from app.utils.sms import DeliveryEvent, SMSProvider, SendResult
+from app.utils.sms import DeliveryEvent, InboundSmsEvent, SMSProvider, SendResult
 
 logger = logging.getLogger(__name__)
 
@@ -142,17 +148,44 @@ class WelcorpSMSProvider(SMSProvider):
             failure_category=fc.value,
         )
 
-    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
+    def _apply_sms_sender_options(
+        self, payload: dict, alphanumeric_sender: str | None, two_way: bool,
+    ) -> None:
+        """Apply job_type/sender fields for an SMS job payload in place.
+
+        Two-way jobs use the pooled reply-capable sender and a reply window
+        (`expires`, hours). NEVER set Welcorp's `optout_code` here: it adds
+        repliers to the ACCOUNT-level opt-out list, and 1Reach is multi-tenant
+        on a single Welcorp account — STOP replies are handled locally per-org
+        by process_inbound_message instead.
+        """
+        if two_way and alphanumeric_sender:
+            # Serializer-gated upstream; an alphanumeric sender can't receive
+            # replies, so two-way wins and the sender id is dropped.
+            logger.warning(
+                'two_way and alphanumeric_sender are mutually exclusive — '
+                'dropping sender id %r', alphanumeric_sender,
+            )
+            alphanumeric_sender = None
+
+        if two_way:
+            payload['job_type'] = settings.WELCORP_TWO_WAY_JOB_TYPE
+            payload['expires'] = settings.TWO_WAY_REPLY_WINDOW_HOURS
+        if alphanumeric_sender:
+            payload['manual_sender_id'] = alphanumeric_sender
+
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None,
+                       two_way: bool = False) -> SendResult:
         payload = {
             'job_type': 'sms',
             'message': message,
             'recipients': [{'destination': self._to_international(to)}],
         }
-        if alphanumeric_sender:
-            payload['manual_sender_id'] = alphanumeric_sender
+        self._apply_sms_sender_options(payload, alphanumeric_sender, two_way)
         return self._post_job(payload)
 
-    def _send_bulk_sms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
+    def _send_bulk_sms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None,
+                            two_way: bool = False) -> dict:
         welcorp_recipients = [
             {
                 'destination': self._to_international(r['to']),
@@ -171,8 +204,7 @@ class WelcorpSMSProvider(SMSProvider):
             'message': message,
             'recipients': welcorp_recipients,
         }
-        if alphanumeric_sender:
-            payload['manual_sender_id'] = alphanumeric_sender
+        self._apply_sms_sender_options(payload, alphanumeric_sender, two_way)
 
         result = self._post_job(payload)
 
@@ -230,6 +262,12 @@ class WelcorpSMSProvider(SMSProvider):
     # Everything else is a carrier-reported failure:
     # FAIL, SVRE, BARR, INVN, BADS, EXPD, OPTO, RECE
 
+    @staticmethod
+    def _val(request_data: dict, key: str) -> str:
+        """Unwrap a callback form field that may be a QueryDict list or a plain string."""
+        v = request_data.get(key, '')
+        return v[0] if isinstance(v, list) else (v or '')
+
     def parse_delivery_callback(self, request_data: dict, content_type: str) -> list[DeliveryEvent]:
         """Parse a Welcorp delivery status callback.
 
@@ -238,38 +276,73 @@ class WelcorpSMSProvider(SMSProvider):
 
         Welcorp's SENT = carrier accepted (best confirmation available).
         Mapped to 'delivered' so schedules move to terminal DELIVERED status.
-        """
-        # request_data values may be lists (from Django QueryDict) or plain strings
-        def _val(key: str) -> str:
-            v = request_data.get(key, '')
-            return v[0] if isinstance(v, list) else (v or '')
 
-        raw_status = _val('Status').upper()
+        A payload with no Status is NOT a delivery report and must never be
+        parsed as one: 2-way reply callbacks share this URL and carry Response
+        instead of Status. Treating a reply as an empty-status failure would
+        flip a still-SENT schedule to FAILED and refund it (replies typically
+        arrive before the carrier DLR).
+        """
+        raw_status = self._val(request_data, 'Status').upper()
+
+        if not raw_status:
+            if not self._val(request_data, 'Response'):
+                logger.warning(
+                    'Welcorp callback with neither Status nor Response ignored: %r',
+                    request_data,
+                )
+            return []
 
         if raw_status in self._PENDING_STATUSES:
             return []
 
-        destination = _val('Destination')
+        destination = self._val(request_data, 'Destination')
         recipient_phone = self._normalise_phone(destination) if destination else None
 
         if raw_status in self._DELIVERED_STATUSES:
             return [DeliveryEvent(
-                provider_message_id=_val('BroadcastID'),
+                provider_message_id=self._val(request_data, 'BroadcastID'),
                 status='delivered',
                 recipient_phone=recipient_phone,
-                timestamp=_val('Timestamp') or None,
+                timestamp=self._val(request_data, 'Timestamp') or None,
                 raw_status=raw_status,
                 raw_data=dict(request_data),
             )]
 
         return [DeliveryEvent(
-            provider_message_id=_val('BroadcastID'),
+            provider_message_id=self._val(request_data, 'BroadcastID'),
             status='failed',
             recipient_phone=recipient_phone,
-            timestamp=_val('Timestamp') or None,
+            timestamp=self._val(request_data, 'Timestamp') or None,
             error_code=raw_status,
             error_message=f'Welcorp delivery failed: {raw_status}',
             raw_status=raw_status,
+            raw_data=dict(request_data),
+        )]
+
+    def parse_inbound_callback(self, request_data: dict, content_type: str) -> list[InboundSmsEvent]:
+        """Parse a Welcorp 2-way SMS reply callback.
+
+        Reply callbacks POST to the delivery-callback URL with fields:
+        BroadcastID, Timestamp, Reference, Recipient, Destination, Response,
+        BroadcastName. Response holds the reply text; a payload carrying a
+        Status is a delivery report and is left to parse_delivery_callback.
+        """
+        if self._val(request_data, 'Status'):
+            return []
+
+        text = self._val(request_data, 'Response')
+        if not text:
+            # Neither Status nor Response — parse_delivery_callback logs this.
+            return []
+
+        destination = self._val(request_data, 'Destination')
+        return [InboundSmsEvent(
+            provider_message_id=self._val(request_data, 'BroadcastID'),
+            sender_phone=self._normalise_phone(destination) if destination else None,
+            text=text,
+            timestamp=self._val(request_data, 'Timestamp') or None,
+            reference=self._val(request_data, 'Reference') or None,
             raw_data=dict(request_data),
         )]
 
@@ -279,7 +352,7 @@ class WelcorpSMSProvider(SMSProvider):
         if not expected:
             logger.warning('WELCORP_CALLBACK_SECRET not configured, rejecting callback')
             return False
-        return request.GET.get('token') == expected
+        return hmac.compare_digest(request.GET.get('token', ''), expected)
 
     def get_callback_url(self) -> str | None:
         """Return the delivery callback URL to include in Welcorp job payloads."""

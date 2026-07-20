@@ -304,6 +304,42 @@ export async function postDeliveryReceipt(
   if (!res.ok()) throw new Error(`delivery-receipt → ${res.status()}: ${await res.text()}`)
 }
 
+/**
+ * Simulate a Welcorp 2-way SMS reply by POSTing the exact form-encoded payload
+ * Welcorp would send (same URL and field set as a DLR, but Response instead of
+ * Status — there is no type discriminator) to the REAL webhook endpoint.
+ *
+ * The outbound two-way send is a real Welcorp job; only the reply callback is
+ * simulated, because Welcorp can't reach the non-public CI/local backend. This
+ * runs the genuine validate_callback_request → parse_inbound_callback →
+ * process_inbound_message code (dedup, contact auto-create, STOP handling).
+ * Destination defaults to the free number in Welcorp's 61XXXXXXXXX format.
+ */
+export async function postInboundReply(
+  page: Page,
+  opts: { provider_message_id: string; response: string; destination?: string; timestamp?: string },
+) {
+  const token = process.env.WELCORP_CALLBACK_SECRET || ''
+  const body = new URLSearchParams({
+    BroadcastID: opts.provider_message_id,
+    Destination: opts.destination || `61${E2E_FREE_PHONE.slice(1)}`,
+    Response: opts.response,
+    Timestamp: opts.timestamp || new Date().toISOString(),
+    Reference: '0',
+    Recipient: 'E2E Recipient',
+    BroadcastName: 'E2E Two-way',
+  }).toString()
+  const res = await page.request.fetch(
+    `${API_BASE}/api/webhooks/sms-delivery/?token=${encodeURIComponent(token)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: body,
+    },
+  )
+  if (!res.ok()) throw new Error(`inbound-reply → ${res.status()}: ${await res.text()}`)
+}
+
 /** Poll a schedule until it has a provider_message_id (i.e. the worker really sent it). */
 export async function waitForProviderMessageId(page: Page, scheduleId: number, timeoutMs = 25000): Promise<string> {
   const deadline = Date.now() + timeoutMs

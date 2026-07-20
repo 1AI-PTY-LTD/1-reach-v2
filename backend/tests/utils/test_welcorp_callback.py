@@ -129,6 +129,131 @@ class TestParseDeliveryCallback:
         events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
         assert events[0].raw_data == data
 
+    def test_reply_payload_is_not_a_delivery_event(self, provider):
+        """A 2-way reply (Response, no Status) must never parse as a DLR.
+
+        Regression guard: an empty Status used to fall through to the failed
+        branch, which would flip a still-SENT schedule to FAILED and refund it
+        (replies typically arrive before the carrier DLR).
+        """
+        data = {
+            'BroadcastID': '62131644',
+            'Timestamp': '2026-07-10T12:02:52+10:00',
+            'Reference': 'Customer 123',
+            'Recipient': 'Jane Smith',
+            'Destination': '61498765432',
+            'Response': 'This is a reply',
+            'BroadcastName': 'Quick Send',
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_reply_payload_querydict_lists(self, provider):
+        data = {
+            'BroadcastID': ['62131644'],
+            'Destination': ['61498765432'],
+            'Response': ['STOP'],
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_neither_status_nor_response_is_ignored_with_warning(
+        self, provider, caplog, propagate_app_logs,
+    ):
+        data = {'BroadcastID': '1', 'Destination': '+61412111111'}
+        with caplog.at_level('WARNING', logger='app.utils.welcorp'):
+            events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+        assert any('neither Status nor Response' in r.message for r in caplog.records)
+
+    def test_status_wins_when_both_status_and_response_present(self, provider):
+        """Undocumented both-fields payload parses as a DLR (Status wins)."""
+        data = {
+            'BroadcastID': '1',
+            'Destination': '+61412111111',
+            'Status': 'SENT',
+            'Response': 'hi',
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].status == 'delivered'
+
+
+class TestParseInboundCallback:
+    """Welcorp 2-way SMS reply callback parsing."""
+
+    def test_reply_payload_parses_to_inbound_event(self, provider):
+        """Field set per Welcorp docs: same as a DLR but Response instead of Status."""
+        data = {
+            'BroadcastID': '62131644',
+            'Timestamp': '2026-07-10T12:02:52+10:00',
+            'Reference': 'Customer 123',
+            'Recipient': 'Jane Smith',
+            'Destination': '61498765432',
+            'Response': 'This is a reply',
+            'BroadcastName': 'Quick Send',
+        }
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider_message_id == '62131644'
+        assert event.sender_phone == '0498765432'  # 61... normalised
+        assert event.text == 'This is a reply'
+        assert event.timestamp == '2026-07-10T12:02:52+10:00'
+        assert event.reference == 'Customer 123'
+        assert event.raw_data == data
+
+    def test_dlr_payload_is_not_an_inbound_event(self, provider):
+        data = {
+            'BroadcastID': '12345',
+            'Destination': '61412111111',
+            'Status': 'SENT',
+            'Timestamp': '2026-07-10T10:30:00+10:00',
+        }
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_status_wins_when_both_fields_present(self, provider):
+        """Exactly one parser claims any payload: Status present → not inbound."""
+        data = {'BroadcastID': '1', 'Status': 'SENT', 'Response': 'hi', 'Destination': '61412111111'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_neither_field_returns_empty(self, provider):
+        data = {'BroadcastID': '1', 'Destination': '61412111111'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_querydict_list_values(self, provider):
+        data = {
+            'BroadcastID': ['62131644'],
+            'Destination': ['61498765432'],
+            'Response': ['Yes please'],
+            'Timestamp': ['2026-07-10T12:02:52+10:00'],
+        }
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].sender_phone == '0498765432'
+        assert events[0].text == 'Yes please'
+
+    def test_plus_prefixed_destination_normalised(self, provider):
+        data = {'BroadcastID': '1', 'Destination': '+61412345678', 'Response': 'ok'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events[0].sender_phone == '0412345678'
+
+    def test_missing_destination_gives_none_phone(self, provider):
+        data = {'BroadcastID': '1', 'Response': 'ok'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].sender_phone is None
+
+    def test_empty_optional_fields_become_none(self, provider):
+        data = {'BroadcastID': '1', 'Destination': '61412345678', 'Response': 'ok',
+                'Timestamp': '', 'Reference': ''}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events[0].timestamp is None
+        assert events[0].reference is None
+
 
 class TestWelcorpStatusFailureCategory:
     """Each Welcorp failure code resolves to its expected FailureCategory.

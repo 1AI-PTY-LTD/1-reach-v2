@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from django.test import override_settings
 
 from app.models import FailureCategory
 from app.utils.welcorp import WelcorpSMSProvider
@@ -477,6 +478,74 @@ class TestManualSenderId:
 
         payload = provider.session.post.call_args.kwargs['json']
         assert payload['manual_sender_id'] == 'MyBrand'
+
+
+class TestTwoWaySend:
+    """two_way sends use the reply-capable job type and a reply window."""
+
+    def test_two_way_sms_payload(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi', two_way=True)
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['job_type'] == '2 Way SMS'  # settings default
+        assert payload['expires'] == 24
+        # Never set: Welcorp's optout_code adds repliers to the ACCOUNT-level
+        # opt-out list — a multi-tenant hazard. STOP is handled locally per-org.
+        assert 'optout_code' not in payload
+        assert 'manual_sender_id' not in payload
+
+    @override_settings(WELCORP_TWO_WAY_JOB_TYPE='2 way sms', TWO_WAY_REPLY_WINDOW_HOURS=48)
+    def test_two_way_settings_are_env_overridable(self, provider):
+        """The job_type literal casing is unconfirmed in Welcorp's docs —
+        it must be changeable without a deploy."""
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi', two_way=True)
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['job_type'] == '2 way sms'
+        assert payload['expires'] == 48
+
+    def test_one_way_sms_payload_unchanged(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        provider._send_sms_impl('0412345678', 'Hi', two_way=False)
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['job_type'] == 'sms'
+        assert 'expires' not in payload
+
+    def test_two_way_bulk_sms_payload(self, provider):
+        provider.session.post.return_value = _ok_response()
+
+        recipients = [
+            {'to': '0412345678', 'message': 'Hi', 'message_parts': 1},
+            {'to': '0412345679', 'message': 'Hi', 'message_parts': 1},
+        ]
+        provider._send_bulk_sms_impl(recipients, two_way=True)
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['job_type'] == '2 Way SMS'
+        assert payload['expires'] == 24
+        assert 'optout_code' not in payload
+
+    def test_two_way_drops_alphanumeric_sender_with_warning(
+        self, provider, caplog, propagate_app_logs,
+    ):
+        """Serializer-gated upstream; the provider defends anyway — an
+        alphanumeric sender cannot receive replies, so two-way wins."""
+        provider.session.post.return_value = _ok_response()
+
+        with caplog.at_level('WARNING', logger='app.utils.welcorp'):
+            provider._send_sms_impl(
+                '0412345678', 'Hi', alphanumeric_sender='MyBrand', two_way=True)
+
+        payload = provider.session.post.call_args.kwargs['json']
+        assert payload['job_type'] == '2 Way SMS'
+        assert 'manual_sender_id' not in payload
+        assert any('mutually exclusive' in r.message for r in caplog.records)
 
 
 class TestBaseClassIntegration:

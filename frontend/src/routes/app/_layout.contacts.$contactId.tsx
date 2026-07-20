@@ -10,7 +10,8 @@ import { Button } from '../../ui/button'
 import { PencilIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon as ChevronRightExpandIcon } from '@heroicons/react/16/solid'
 import { Divider } from '../../ui/divider'
 import { ContactModal } from '../../components/contacts/CustomerModal'
-import { getSchedulesByContactIdInfiniteOptions } from '../../api/schedulesApi'
+import { getThreadInfiniteOptions } from '../../api/conversationsApi'
+import { Badge } from '../../ui/badge'
 import { ContactMessageModal } from '../../components/contacts/CustomerMessageModal'
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import Logger from '../../utils/logger'
@@ -46,11 +47,14 @@ export function ContactDetails() {
 
   const contact = contactFromList || individualContactQuery.data
 
+  // The merged thread (outbound schedules + inbound replies), newest first —
+  // the same endpoint the Inbox uses, so both surfaces show one history.
   const contactMessagesQuery = useInfiniteQuery(
-    getSchedulesByContactIdInfiniteOptions(client, contactId, 50)
+    getThreadInfiniteOptions(client, contactId, 50)
   )
 
-  const [selectedRowId, setSelectedRowId] = useState<number | null>(null)
+  // Row keys combine direction + id because schedule and inbound ids collide.
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
   const [isEditContactOpen, setIsEditContactOpen] = useState<boolean>(false)
   const [isCreateMessageOpen, setIsCreateMessageOpen] = useState<boolean>(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -133,36 +137,55 @@ export function ContactDetails() {
       )
     }
 
-    const renderedMessages = messages.map((entry) => (
-      <React.Fragment key={entry.id}>
-        <TableRow
-          onClick={() => setSelectedRowId(selectedRowId === entry.id ? null : entry.id)}
-          className={`cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 ${selectedRowId === entry.id ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
-        >
-          <TableCell className="w-4">
-            {selectedRowId === entry.id ? (
-              <ChevronDownIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
-            ) : (
-              <ChevronRightExpandIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
-            )}
-          </TableCell>
-          <TableCell>
-            <StatusBadge status={entry.status}></StatusBadge>
-          </TableCell>
-          <TableCell>{dayjs(entry.scheduled_time).format('hh:mmA DD/MM/YYYY')}</TableCell>
-          <TableCell>{entry.sent_time ? dayjs(entry.sent_time).format('hh:mmA DD/MM/YYYY') : ''}</TableCell>
-          <TableCell className="w-16">{entry.format || 'SMS'}</TableCell>
-          <TableCell>{(entry.text ?? '').length > 40 ? (entry.text ?? '').substring(0, 40) + '...' : (entry.text ?? '')}</TableCell>
-        </TableRow>
-        {selectedRowId === entry.id && (
-          <TableRow className="bg-zinc-100 dark:bg-zinc-800">
-            <TableCell colSpan={6} className="p-0">
-              <MessageDetails message={entry} />
+    const renderedMessages = messages.map((entry) => {
+      const rowKey = `${entry.direction}-${entry.id}`
+
+      if (entry.direction === 'inbound') {
+        return (
+          <TableRow key={rowKey} data-testid="inbound-row">
+            <TableCell className="w-4"></TableCell>
+            <TableCell>
+              <Badge color="sky">received</Badge>
             </TableCell>
+            <TableCell></TableCell>
+            <TableCell>{dayjs(entry.received_at).format('hh:mmA DD/MM/YYYY')}</TableCell>
+            <TableCell className="w-16">sms</TableCell>
+            <TableCell>{entry.text.length > 40 ? entry.text.substring(0, 40) + '...' : entry.text}</TableCell>
           </TableRow>
-        )}
-      </React.Fragment>
-    ))
+        )
+      }
+
+      return (
+        <React.Fragment key={rowKey}>
+          <TableRow
+            onClick={() => setSelectedRowId(selectedRowId === rowKey ? null : rowKey)}
+            className={`cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 ${selectedRowId === rowKey ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+          >
+            <TableCell className="w-4">
+              {selectedRowId === rowKey ? (
+                <ChevronDownIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+              ) : (
+                <ChevronRightExpandIcon className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+              )}
+            </TableCell>
+            <TableCell>
+              <StatusBadge status={entry.status}></StatusBadge>
+            </TableCell>
+            <TableCell>{dayjs(entry.scheduled_time).format('hh:mmA DD/MM/YYYY')}</TableCell>
+            <TableCell>{entry.sent_time ? dayjs(entry.sent_time).format('hh:mmA DD/MM/YYYY') : ''}</TableCell>
+            <TableCell className="w-16">{entry.format || 'sms'}</TableCell>
+            <TableCell>{(entry.text ?? '').length > 40 ? (entry.text ?? '').substring(0, 40) + '...' : (entry.text ?? '')}</TableCell>
+          </TableRow>
+          {selectedRowId === rowKey && (
+            <TableRow className="bg-zinc-100 dark:bg-zinc-800">
+              <TableCell colSpan={6} className="p-0">
+                <MessageDetails message={entry} />
+              </TableCell>
+            </TableRow>
+          )}
+        </React.Fragment>
+      )
+    })
 
     return renderedMessages
   }
@@ -186,11 +209,11 @@ export function ContactDetails() {
             Phone: {contact.phone.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3')}
           </Heading>
         </div>
-        {contactMessagesQuery.data?.pages[0]?.pagination && (
+        {contactMessagesQuery.data?.pages[0] && (
           <div className="flex items-center justify-between px-2 py-4 border-b border-zinc-950/10 dark:border-white/10">
             <div className="text-sm text-gray-700 dark:text-gray-300">
               Showing {contactMessagesQuery.data.pages.flatMap((p) => p.results).length} of{' '}
-              {contactMessagesQuery.data.pages[0].pagination.total} messages
+              {contactMessagesQuery.data.pages[0].total} messages
             </div>
             {contactMessagesQuery.isLoading && (
               <div className="flex items-center">

@@ -50,6 +50,22 @@ class DeliveryEvent:
     raw_data: dict | None = field(default=None, repr=False)
 
 
+@dataclass
+class InboundSmsEvent:
+    """Provider-agnostic inbound SMS reply event (two-way SMS).
+
+    Returned by SMSProvider.parse_inbound_callback() and consumed by the
+    process_inbound_message Celery task to store the reply against the
+    originating org/contact/schedule.
+    """
+    provider_message_id: str             # provider job id of the outbound message replied to
+    sender_phone: str | None             # normalised 04XXXXXXXX
+    text: str                            # the reply body
+    timestamp: str | None = None
+    reference: str | None = None
+    raw_data: dict | None = field(default=None, repr=False)
+
+
 class SMSProvider(ABC):
     """Abstract base class for SMS/MMS providers.
 
@@ -102,10 +118,13 @@ class SMSProvider(ABC):
             return 1
         return math.ceil(length / 153)
 
-    def send_sms(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
+    def send_sms(self, to: str, message: str, alphanumeric_sender: str | None = None,
+                 two_way: bool = False) -> SendResult:
         """Send a single SMS message.
 
         Validates and normalises the phone number, then calls _send_sms_impl().
+        two_way requests a reply-capable send (ignored by providers without
+        two-way support); mutually exclusive with alphanumeric_sender.
         """
         if not self._validate_phone(to):
             return SendResult(
@@ -115,11 +134,13 @@ class SMSProvider(ABC):
             )
 
         normalised = self._normalise_phone(to)
-        result = self._send_sms_impl(normalised, message, alphanumeric_sender=alphanumeric_sender)
+        result = self._send_sms_impl(normalised, message, alphanumeric_sender=alphanumeric_sender,
+                                     two_way=two_way)
         result.message_parts = self._calculate_sms_parts(message)
         return result
 
-    def send_bulk_sms(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
+    def send_bulk_sms(self, recipients: list[dict], alphanumeric_sender: str | None = None,
+                      two_way: bool = False) -> dict:
         """Send SMS to multiple recipients.
 
         Validates and normalises all phone numbers, then calls _send_bulk_sms_impl().
@@ -137,7 +158,8 @@ class SMSProvider(ABC):
                 'message_parts': self._calculate_sms_parts(recipient['message']),
             })
 
-        return self._send_bulk_sms_impl(normalised_recipients, alphanumeric_sender=alphanumeric_sender)
+        return self._send_bulk_sms_impl(normalised_recipients, alphanumeric_sender=alphanumeric_sender,
+                                        two_way=two_way)
 
     def send_mms(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
                  alphanumeric_sender: str | None = None) -> SendResult:
@@ -182,14 +204,16 @@ class SMSProvider(ABC):
         return self._send_bulk_mms_impl(normalised_recipients, alphanumeric_sender=alphanumeric_sender)
 
     @abstractmethod
-    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None,
+                       two_way: bool = False) -> SendResult:
         """Implementation method for sending SMS.
 
         Phone number is already validated and normalised to 04XXXXXXXX format.
         """
         pass
 
-    def _send_bulk_sms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None) -> dict:
+    def _send_bulk_sms_impl(self, recipients: list[dict], alphanumeric_sender: str | None = None,
+                            two_way: bool = False) -> dict:
         """Implementation method for sending bulk SMS.
 
         Default: loops over _send_sms_impl() individually.
@@ -199,7 +223,8 @@ class SMSProvider(ABC):
         first_failure: SendResult | None = None
         callback_registered = False
         for r in recipients:
-            result = self._send_sms_impl(r['to'], r['message'], alphanumeric_sender=alphanumeric_sender)
+            result = self._send_sms_impl(r['to'], r['message'], alphanumeric_sender=alphanumeric_sender,
+                                         two_way=two_way)
             callback_registered = callback_registered or result.callback_registered
             results.append({
                 'to': r['to'],
@@ -279,6 +304,16 @@ class SMSProvider(ABC):
             f'{type(self).__name__} does not implement delivery callbacks'
         )
 
+    def parse_inbound_callback(self, request_data: dict, content_type: str) -> list[InboundSmsEvent]:
+        """Parse an inbound reply callback into provider-agnostic InboundSmsEvents.
+
+        Default: returns [] (provider does not support two-way replies).
+        Providers whose callback URL also receives replies must override this,
+        and must return [] for payloads that are delivery reports so exactly
+        one parser claims any given payload.
+        """
+        return []
+
     def validate_callback_request(self, request) -> bool:
         """Validate that a delivery callback request is authentic.
 
@@ -313,7 +348,8 @@ class MockSMSProvider(SMSProvider):
     Always returns success with generated message IDs.
     """
 
-    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None,
+                       two_way: bool = False) -> SendResult:
         message_id = f'mock-sms-{uuid.uuid4().hex[:12]}'
 
         logger.info(
@@ -323,6 +359,7 @@ class MockSMSProvider(SMSProvider):
                 'message_length': len(message),
                 'message_id': message_id,
                 'alphanumeric_sender': alphanumeric_sender,
+                'two_way': two_way,
             },
         )
 
@@ -377,9 +414,10 @@ class ConfigurableMockSMSProvider(MockSMSProvider):
             )
         return None
 
-    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None) -> SendResult:
+    def _send_sms_impl(self, to: str, message: str, alphanumeric_sender: str | None = None,
+                       two_way: bool = False) -> SendResult:
         return self._failure_for(to) or super()._send_sms_impl(
-            to, message, alphanumeric_sender=alphanumeric_sender)
+            to, message, alphanumeric_sender=alphanumeric_sender, two_way=two_way)
 
     def _send_mms_impl(self, to: str, message: str, media_url: str, subject: Optional[str] = None,
                        alphanumeric_sender: str | None = None) -> SendResult:

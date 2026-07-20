@@ -47,6 +47,7 @@ export type Schedule = {
   media_url?: string | null
   subject?: string | null
   alphanumeric_sender?: string | null
+  two_way?: boolean
   provider_message_id?: string | null
   retry_count?: number
   max_retries?: number
@@ -67,6 +68,7 @@ export type CreateSchedule = {
   media_url?: string
   subject?: string
   alphanumeric_sender?: string
+  two_way?: boolean
 }
 
 export type UpdateSchedule = {

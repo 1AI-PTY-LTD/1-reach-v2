@@ -24,6 +24,7 @@ from app.models import (
     Contact,
     ContactGroup,
     ContactGroupMember,
+    InboundMessage,
     MessageFormat,
     Organisation,
     OrganisationMembership,
@@ -37,6 +38,7 @@ from tests.factories import (
     ContactFactory,
     ContactGroupFactory,
     ContactGroupMemberFactory,
+    InboundMessageFactory,
     OrganisationFactory,
     OrganisationMembershipFactory,
     ScheduleFactory,
@@ -400,6 +402,55 @@ class TestScheduleModel:
         assert str_repr == f'Schedule {schedule.pk} - {schedule.status}'
         assert 'Schedule' in str_repr
         assert schedule.status in str_repr
+
+
+# ============================================================================
+# InboundMessage Model Tests
+# ============================================================================
+
+@pytest.mark.django_db
+class TestInboundMessageModel:
+    """Tests for the InboundMessage model (two-way SMS replies)."""
+
+    def test_create_inbound_message(self):
+        message = InboundMessageFactory(text='Yes please')
+        assert message.organisation is not None
+        assert message.contact is not None
+        assert message.text == 'Yes please'
+        assert message.read_at is None
+        assert message.is_opt_out is False
+
+    def test_dedup_key_unique(self):
+        from django.db import transaction
+
+        InboundMessageFactory(dedup_key='same-key')
+        with transaction.atomic():
+            with pytest.raises(IntegrityError):
+                InboundMessageFactory(dedup_key='same-key')
+
+    def test_contact_delete_sets_null(self):
+        message = InboundMessageFactory()
+        message.contact.delete()
+        message.refresh_from_db()
+        assert message.contact is None
+        assert message.text  # row itself survives
+
+    def test_schedule_delete_sets_null(self):
+        schedule = ScheduleFactory()
+        message = InboundMessageFactory(
+            organisation=schedule.organisation, schedule=schedule)
+        schedule.delete()
+        message.refresh_from_db()
+        assert message.schedule is None
+
+    def test_org_delete_cascades(self):
+        message = InboundMessageFactory()
+        message.organisation.delete()
+        assert not InboundMessage.objects.filter(pk=message.pk).exists()
+
+    def test_str(self):
+        message = InboundMessageFactory(phone='0412345678')
+        assert str(message) == f'InboundMessage {message.pk} from 0412345678'
 
 
 # ============================================================================

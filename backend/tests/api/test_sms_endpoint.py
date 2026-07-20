@@ -825,3 +825,96 @@ class TestSendWithGroupId:
         assert response.status_code == status.HTTP_202_ACCEPTED
         parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
         assert parent.group == group
+
+
+@pytest.mark.django_db
+class TestTwoWaySendEndpoint:
+    """two_way ('Allow replies') flag on the send endpoints."""
+
+    def test_single_send_persists_two_way(
+        self, authenticated_client, mock_send_message_task
+    ):
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Reply YES to confirm',
+            'recipients': [{'phone': '0412345678'}],
+            'two_way': True,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        schedule = Schedule.objects.get(pk=response.data['schedule_id'])
+        assert schedule.two_way is True
+
+    def test_two_way_defaults_false(
+        self, authenticated_client, mock_send_message_task
+    ):
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'One way',
+            'recipients': [{'phone': '0412345678'}],
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        schedule = Schedule.objects.get(pk=response.data['schedule_id'])
+        assert schedule.two_way is False
+
+    def test_batch_send_persists_two_way_on_parent_and_children(
+        self, authenticated_client, mock_send_batch_message_task
+    ):
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Reply YES to confirm',
+            'recipients': [{'phone': '0412345678'}, {'phone': '0400000000'}],
+            'two_way': True,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        parent = Schedule.objects.get(pk=response.data['parent_schedule_id'])
+        assert parent.two_way is True
+        children = Schedule.objects.filter(parent=parent)
+        assert children.count() == 2
+        assert all(c.two_way for c in children)
+
+    def test_send_to_group_persists_two_way(
+        self, authenticated_client, organisation, user, mock_send_batch_message_task
+    ):
+        group, _contacts = create_contact_group_with_members(
+            organisation, num_members=2, user=user)
+
+        response = authenticated_client.post('/api/sms/send-to-group/', {
+            'message': 'Reply YES to confirm',
+            'group_id': group.id,
+            'two_way': True,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        parent = Schedule.objects.filter(
+            organisation=organisation, parent__isnull=True).latest('pk')
+        assert parent.two_way is True
+        assert all(c.two_way for c in Schedule.objects.filter(parent=parent))
+
+    def test_two_way_with_alphanumeric_sender_rejected(
+        self, authenticated_client, mock_send_message_task
+    ):
+        response = authenticated_client.post('/api/sms/send/', {
+            'message': 'Hello',
+            'recipients': [{'phone': '0412345678'}],
+            'two_way': True,
+            'alphanumeric_sender': 'MYBRAND',
+        }, format='json')
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert Schedule.objects.count() == 0
+        mock_send_message_task.delay.assert_not_called()
+
+    def test_mms_ignores_two_way(
+        self, authenticated_client, organisation, mock_send_message_task
+    ):
+        """The MMS serializer has no two_way field — the key is dropped."""
+        response = authenticated_client.post('/api/sms/send-mms/', {
+            'message': 'Look',
+            'media_url': 'https://example.com/image.jpg',
+            'recipients': [{'phone': '0412345678'}],
+            'two_way': True,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        schedule = Schedule.objects.get(organisation=organisation, format=MessageFormat.MMS)
+        assert schedule.two_way is False

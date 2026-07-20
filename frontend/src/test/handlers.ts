@@ -11,8 +11,13 @@ import {
   createBillingSummary,
   createInvoiceListResponse,
   createInvoicePreview,
+  createConversation,
+  createInboundThreadItem,
+  createOutboundThreadItem,
+  createThreadResponse,
   paginate,
 } from './factories'
+import type { ThreadItem } from '../types/conversation.types'
 
 const BASE_URL = 'http://localhost:8000'
 
@@ -43,7 +48,63 @@ const groups = [
   createGroup({ id: 2, name: 'New Customers', member_count: 2 }),
 ]
 
+const conversations = [
+  createConversation({
+    contact_id: 1,
+    contact_detail: contacts[0],
+    last_inbound_text: 'Yes please',
+    unread_count: 2,
+  }),
+  createConversation({
+    contact_id: 2,
+    contact_detail: contacts[1],
+    last_inbound_text: 'STOP',
+    unread_count: 0,
+  }),
+]
+
+const threadItems: ThreadItem[] = [
+  createInboundThreadItem({
+    id: 902, contact: 1, text: 'Yes please',
+    thread_ts: '2026-07-10T02:10:00Z', received_at: '2026-07-10T02:10:00Z',
+  }),
+  createOutboundThreadItem({
+    id: 901, contact: 1, text: 'Reply YES to confirm', two_way: true,
+    thread_ts: '2026-07-10T02:00:00Z',
+  }),
+]
+
 export const handlers = [
+  // Conversations (two-way SMS inbox)
+  http.get(`${BASE_URL}/api/conversations/`, () => {
+    return HttpResponse.json(paginate(conversations))
+  }),
+
+  http.get(`${BASE_URL}/api/conversations/unread-count/`, () => {
+    return HttpResponse.json({
+      unread: conversations.reduce((sum, c) => sum + c.unread_count, 0),
+    })
+  }),
+
+  http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, ({ request }) => {
+    const url = new URL(request.url)
+    const before = url.searchParams.get('before')
+    const visible = before
+      ? threadItems.filter((item) => item.thread_ts < before)
+      : threadItems
+    return HttpResponse.json(
+      createThreadResponse(visible, { total: threadItems.length }),
+    )
+  }),
+
+  http.post(`${BASE_URL}/api/conversations/:contactId/mark-read/`, ({ params }) => {
+    const contactId = Number(params.contactId)
+    const conversation = conversations.find((c) => c.contact_id === contactId)
+    const marked = conversation?.unread_count ?? 0
+    if (conversation) conversation.unread_count = 0
+    return HttpResponse.json({ marked })
+  }),
+
   // Contacts
   http.get(`${BASE_URL}/api/contacts/`, ({ request }) => {
     const url = new URL(request.url)
