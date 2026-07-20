@@ -389,15 +389,16 @@ export function ContactMessageModal({
                             </Field>
                         )}
                     />
+                    {/* Grid overrides move the description from row 2 up beside the label */}
                     {!isEditMode && (
-                        <CheckboxField className="mt-4">
+                        <CheckboxField className="mt-4 !grid-cols-[1.125rem_auto_1fr] sm:!grid-cols-[1rem_auto_1fr] [&>[data-slot=description]]:!col-start-3 [&>[data-slot=description]]:!row-start-1">
                             <Checkbox
                                 checked={allowReplies}
                                 onChange={setAllowReplies}
                                 aria-label="Allow replies"
                             />
                             <Label>Allow replies</Label>
-                            <Description>
+                            <Description className="!text-xs">
                                 Recipients can reply to this message; replies appear in your Inbox.
                             </Description>
                         </CheckboxField>

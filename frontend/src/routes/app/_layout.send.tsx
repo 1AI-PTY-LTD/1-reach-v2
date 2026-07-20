@@ -575,7 +575,8 @@ export function SendContent() {
               </Field>
             )}
 
-            <CheckboxField>
+            {/* Grid overrides move the description from row 2 up beside the label */}
+            <CheckboxField className="!grid-cols-[1.125rem_auto_1fr] sm:!grid-cols-[1rem_auto_1fr] [&>[data-slot=description]]:!col-start-3 [&>[data-slot=description]]:!row-start-1">
               <Checkbox
                 checked={allowReplies}
                 onChange={setAllowReplies}
@@ -583,7 +584,7 @@ export function SendContent() {
                 aria-label="Allow replies"
               />
               <Label>Allow replies</Label>
-              <Description>
+              <Description className="!text-xs">
                 {uploadedFileUrl
                   ? 'Replies are not available for MMS messages.'
                   : selectedSender
