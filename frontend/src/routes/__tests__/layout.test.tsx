@@ -44,7 +44,7 @@ const clerkMocks = {
 }
 
 // Nav items visible to every signed-in member.
-const SHARED_NAV = ['Send', 'Schedule', 'Contacts', 'Groups', 'Templates', 'Summary']
+const SHARED_NAV = ['Send', 'Inbox', 'Schedule', 'Contacts', 'Groups', 'Templates', 'Summary']
 // Nav items gated behind adminOnly: true.
 const ADMIN_NAV = ['Users', 'Billing']
 
@@ -98,6 +98,31 @@ describe('AppLayout', () => {
       loginAs(clerkMocks, 'org:member')
       renderWithProviders(<AppLayout />)
       expect(screen.getByText('Import')).toBeInTheDocument()
+    })
+  })
+
+  describe('inbox unread badge', () => {
+    it('shows the unread count from the polled endpoint', async () => {
+      loginAs(clerkMocks, 'org:member')
+      renderWithProviders(<AppLayout />)
+
+      // Default MSW handler sums conversation unread counts to 2.
+      expect(await screen.findByTestId('inbox-unread-badge')).toHaveTextContent('2')
+    })
+
+    it('hides the badge when there are no unread replies', async () => {
+      const { http, HttpResponse } = await import('msw')
+      const { server } = await import('../../test/handlers')
+      server.use(
+        http.get('http://localhost:8000/api/conversations/unread-count/', () =>
+          HttpResponse.json({ unread: 0 })
+        )
+      )
+      loginAs(clerkMocks, 'org:member')
+      renderWithProviders(<AppLayout />)
+
+      expect(await screen.findByText('Inbox')).toBeInTheDocument()
+      expect(screen.queryByTestId('inbox-unread-badge')).not.toBeInTheDocument()
     })
   })
 

@@ -207,6 +207,45 @@ class TestGroupScheduleCreate:
             assert child.status == ScheduleStatus.PENDING
             assert child.contact in contacts
 
+    def test_create_persists_two_way_on_parent_and_children(
+        self, authenticated_client, organisation, user
+    ):
+        group, _contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+        future = timezone.now() + timedelta(hours=1)
+
+        response = authenticated_client.post('/api/group-schedules/', {
+            'name': 'Two-way Campaign',
+            'group_id': group.id,
+            'text': 'Reply YES to confirm',
+            'scheduled_time': future.isoformat(),
+            'two_way': True,
+        }, format='json')
+
+        assert response.status_code == status.HTTP_201_CREATED
+        parent = Schedule.objects.get(id=response.data['id'])
+        assert parent.two_way is True
+        children = Schedule.objects.filter(parent=parent)
+        assert children.count() == 2
+        assert all(c.two_way for c in children)
+
+    def test_create_two_way_with_alphanumeric_sender_rejected(
+        self, authenticated_client, organisation, user
+    ):
+        group, _contacts = create_contact_group_with_members(organisation, num_members=2, user=user)
+        future = timezone.now() + timedelta(hours=1)
+
+        response = authenticated_client.post('/api/group-schedules/', {
+            'name': 'Bad combo',
+            'group_id': group.id,
+            'text': 'Hello',
+            'scheduled_time': future.isoformat(),
+            'two_way': True,
+            'alphanumeric_sender': 'MYBRAND',
+        }, format='json')
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert Schedule.objects.count() == 0
+
     def test_create_validates_group_exists(self, authenticated_client):
         """Non-existent group ID rejected."""
         future = timezone.now() + timedelta(hours=1)

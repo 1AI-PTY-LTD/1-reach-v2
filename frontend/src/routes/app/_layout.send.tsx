@@ -1,11 +1,13 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import {
+  Description,
   Field,
   FieldGroup,
   Fieldset,
   Label,
   Legend,
 } from '../../ui/fieldset'
+import { Checkbox, CheckboxField } from '../../ui/checkbox'
 import { Textarea } from '../../ui/textarea'
 import { Select } from '../../ui/select'
 import { useState, useEffect, Suspense, useRef } from 'react'
@@ -58,12 +60,22 @@ export function SendContent() {
   const { data: sendersData } = useQuery(alphanumericSendersQueryOptions(client))
   const alphanumericSenders = sendersData?.alphanumeric_senders ?? []
   const [selectedSender, setSelectedSender] = useState('')
+  // "Allow replies" (two-way SMS). Hard-mutually-exclusive with a Sender ID:
+  // an alphanumeric sender cannot receive replies, so while it's checked the
+  // sender Select is disabled and vice versa. SMS only — MMS forces it off.
+  const [allowReplies, setAllowReplies] = useState(false)
   const senderDefaultApplied = useRef(false)
   useEffect(() => {
     if (!senderDefaultApplied.current && alphanumericSenders.length > 0) {
-      setSelectedSender(alphanumericSenders[0])
       senderDefaultApplied.current = true
+      // If the user checked "Allow replies" before the senders query landed,
+      // applying the default sender would deadlock both controls (each
+      // disables the other) and guarantee a 400 — replies win.
+      if (!allowReplies) {
+        setSelectedSender(alphanumericSenders[0])
+      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alphanumericSenders])
   const [query, setQuery] = useState('')
   const [groupQuery, setGroupQuery] = useState('')
@@ -88,6 +100,10 @@ export function SendContent() {
 
   const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null)
   const [uploadingFile, setUploadingFile] = useState(false)
+  // Switching to MMS (file uploaded) forces "Allow replies" off — two-way is SMS only.
+  useEffect(() => {
+    if (uploadedFileUrl) setAllowReplies(false)
+  }, [uploadedFileUrl])
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [, setSelectedFile] = useState<File | null>(null)
   const [fileUploadKey, setFileUploadKey] = useState<number>(0)
@@ -243,6 +259,7 @@ export function SendContent() {
     setInputValue('')
     setSelectedRecipients([])
     setSelectedSender(alphanumericSenders[0] ?? '')
+    setAllowReplies(false)
     form.reset()
     setUploadedFileUrl(null)
     setSelectedFile(null)
@@ -276,6 +293,7 @@ export function SendContent() {
             format: uploadedFileUrl ? 'mms' : 'sms',
             media_url: uploadedFileUrl ?? undefined,
             ...(selectedSender && { alphanumeric_sender: selectedSender }),
+            ...(!uploadedFileUrl && allowReplies && { two_way: true }),
           })
           successCount += 1
         } catch (e) {
@@ -344,6 +362,7 @@ export function SendContent() {
             recipients: mappedRecipients,
             ...(selectedGroupId && { group_id: selectedGroupId }),
             ...(selectedSender && { alphanumeric_sender: selectedSender }),
+            ...(allowReplies && { two_way: true }),
           })
         }
         // Multi-recipient sends report how many were actually queued and how
@@ -536,6 +555,7 @@ export function SendContent() {
                 <Select
                   value={selectedSender}
                   onChange={(e) => setSelectedSender(e.target.value)}
+                  disabled={allowReplies}
                 >
                   <option value="">None (random number)</option>
                   {alphanumericSenders.map((sender) => (
@@ -547,8 +567,30 @@ export function SendContent() {
                     Recipients cannot reply to messages sent with an alphanumeric sender ID
                   </p>
                 )}
+                {allowReplies && (
+                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                    Sender ID is unavailable while replies are allowed
+                  </p>
+                )}
               </Field>
             )}
+
+            <CheckboxField>
+              <Checkbox
+                checked={allowReplies}
+                onChange={setAllowReplies}
+                disabled={!!selectedSender || !!uploadedFileUrl}
+                aria-label="Allow replies"
+              />
+              <Label>Allow replies</Label>
+              <Description>
+                {uploadedFileUrl
+                  ? 'Replies are not available for MMS messages.'
+                  : selectedSender
+                    ? 'Not available with a Sender ID — select None to allow replies.'
+                    : 'Recipients can reply to this message; replies appear in your Inbox.'}
+              </Description>
+            </CheckboxField>
 
             <form.Field
               name="templateId"

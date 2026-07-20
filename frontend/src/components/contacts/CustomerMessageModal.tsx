@@ -1,7 +1,8 @@
 import { useForm } from "@tanstack/react-form";
 import type { Contact } from "../../types/contact.types";
 import { Dialog, DialogActions, DialogBody, DialogTitle } from "../../ui/dialog";
-import { Field, Label } from "../../ui/fieldset";
+import { Description, Field, Label } from "../../ui/fieldset";
+import { Checkbox, CheckboxField } from "../../ui/checkbox";
 import { Button } from "../../ui/button";
 import {
     useCreateScheduleMutation,
@@ -55,6 +56,8 @@ export function ContactMessageModal({
     const templates = queryTemplates || [];
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string>("");
+    // "Allow replies" (two-way SMS). Not editable after creation, so hidden in edit mode.
+    const [allowReplies, setAllowReplies] = useState(false);
 
 
     // Helper function to extract error message from API response
@@ -137,13 +140,17 @@ export function ContactMessageModal({
                     const smsProps: SendSmsRequest = {
                         message: messageText,
                         recipients: [{ phone: contact.phone, contact_id: contact.id }],
+                        ...(allowReplies && { two_way: true }),
                     };
 
                     await sendSms(client, smsProps);
 
-                    // Invalidate schedules cache to refresh the table
+                    // Invalidate schedules + thread caches to refresh the tables
                     queryClient.invalidateQueries({
                         queryKey: ['schedules', 'contact', contact.id]
+                    });
+                    queryClient.invalidateQueries({
+                        queryKey: ['thread', contact.id]
                     });
 
                     Logger.info("Immediate message sent successfully", {
@@ -163,13 +170,17 @@ export function ContactMessageModal({
                         scheduled_time: new Date(value.scheduled_time).toISOString(),
                         template_id: value.template_id ? parseInt(value.template_id) : undefined,
                         text: messageText,
+                        ...(allowReplies && { two_way: true }),
                     };
 
                     await createSchedule.mutateAsync(newScheduleProps);
 
-                    // Invalidate schedules cache to refresh the table
+                    // Invalidate schedules + thread caches to refresh the tables
                     queryClient.invalidateQueries({
                         queryKey: ['schedules', 'contact', contact.id]
+                    });
+                    queryClient.invalidateQueries({
+                        queryKey: ['thread', contact.id]
                     });
 
                     Logger.info("Scheduled message created successfully", {
@@ -182,6 +193,7 @@ export function ContactMessageModal({
                 setErrorMessage(""); // Clear any error state
                 setIsOpen(false);
                 form.reset();
+                setAllowReplies(false);
             } catch (error) {
                 const errorMsg = extractErrorMessage(error);
                 setErrorMessage(errorMsg);
@@ -377,6 +389,19 @@ export function ContactMessageModal({
                             </Field>
                         )}
                     />
+                    {!isEditMode && (
+                        <CheckboxField className="mt-4">
+                            <Checkbox
+                                checked={allowReplies}
+                                onChange={setAllowReplies}
+                                aria-label="Allow replies"
+                            />
+                            <Label>Allow replies</Label>
+                            <Description>
+                                Recipients can reply to this message; replies appear in your Inbox.
+                            </Description>
+                        </CheckboxField>
+                    )}
                     <DialogActions>
                         <Button
                             outline

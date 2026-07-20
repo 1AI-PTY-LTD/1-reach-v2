@@ -129,6 +129,62 @@ Azure Cache for Redis is provisioned outside this repo; two settings matter:
 | Stripe | `https://<api-host>/api/webhooks/stripe/` | `STRIPE_WEBHOOK_SECRET` |
 | Welcorp delivery callbacks | sent per-job automatically (requires `BASE_URL` + `WELCORP_CALLBACK_SECRET`) | `WELCORP_CALLBACK_SECRET` |
 
+The Welcorp callback URL now also receives **two-way SMS reply callbacks** on
+the same endpoint (nothing new to register) — replies carry `Response` instead
+of `Status`; the webhook fans them out to `process_inbound_message`.
+
+## Two-way SMS
+
+**Design constraints (do not relitigate without new information):**
+
+- Welcorp delivers replies **only** via the per-job `callback_url` — there is
+  no pull API, so a missed webhook is a lost reply and no reconcile task can
+  exist for inbound. A prod incident that 5xxes the webhook during a reply
+  loses that reply permanently (Welcorp retry behaviour undocumented — see
+  probe list). Watch for `inbound_unmatched` (WARNING — a reply whose job id
+  matched no schedule, alert-worthy) and `neither Status nor Response`
+  (WARNING — unrecognised callback shape) log lines.
+- **Never set Welcorp's job-level `optout_code`.** It adds repliers to the
+  ACCOUNT-level opt-out list and 1Reach is multi-tenant on a single Welcorp
+  account — one org's STOP would silently block every org's sends to that
+  number (OPTO failures). STOP is handled locally per-org by
+  `process_inbound_message` via `INBOUND_OPT_OUT_KEYWORDS`, one-way only.
+- `WELCORP_TWO_WAY_JOB_TYPE` (default `2 Way SMS`) is env-overridable because
+  Welcorp's docs are inconsistent about the literal's casing. If two-way sends
+  start failing with a validation error naming `job_type`, override the env
+  var (e.g. `2 way sms`) without a deploy and record the confirmed literal here.
+
+**Probe checklist (run against the real dev account + free number
+`+61447119283` + one real handset; record findings below):**
+
+1. `job_type` literal casing — send with `"2 Way SMS"` and `"2 way sms"`,
+   record which returns `status: 200`. *(Finding, 18 Jul 2026: BOTH accepted —
+   jobs 94155112 / 94155114, both echoed back as `job_type: "2 Way SMS"`.
+   Casing-insensitive; the default `WELCORP_TWO_WAY_JOB_TYPE="2 Way SMS"` is
+   confirmed safe.)*
+2. Two-way vs one-way job cost — compare account usage lines. *(Partial
+   finding, 18 Jul 2026: probe job 94155112 reported `message_cost: 0.021`
+   per part — same as the standard SMS rate observed on one-way jobs, so no
+   obvious two-way premium. Confirm on the next Welcorp invoice.)*
+3. Capture one real reply callback POST verbatim; verify field names/casing
+   match the unit-test fixtures. *(pending)*
+4. Confirm replies never carry `Status` / DLRs never carry `Response`. *(pending)*
+5. Callback retry behaviour — point a job's callback at an endpoint returning
+   500; does Welcorp retry, with what backoff? *(pending)*
+6. Reply "STOP" with no `optout_code` set — check whether Welcorp still adds
+   the number to the account-level opt-out list on its own. *(pending)*
+7. `expires=1`, reply after >1h — dropped or still forwarded? *(pending)*
+8. Confirm `batch_replies` / `response_email_address` /
+   `use_two_way_custom_sender_id` are safely omitted. *(pending)*
+9. Reply to a multi-recipient job — confirm `BroadcastID` = shared job id and
+   `Destination` = the replier. *(pending)*
+10. `manual_sender_id` on a 2-way job — rejected or silently ignored?
+    *(Finding, 18 Jul 2026: silently IGNORED — probe job 94155116 was created
+    with `manual_sender_id: "PROBE10X"` but its report shows
+    `SenderID: 61447119283` (pool number). Welcorp drops the alphanumeric
+    sender on two-way jobs, so our serializer-level 400 is what protects users
+    from a send that silently ignores their chosen Sender ID.)*
+
 ## Testing — CI gates & non-gating pilots
 
 The gating suites (backend pytest, frontend vitest+coverage, Playwright E2E) and

@@ -18,6 +18,7 @@ import { Route as AppLayoutTemplatesRouteImport } from './routes/app/_layout.tem
 import { Route as AppLayoutSummaryRouteImport } from './routes/app/_layout.summary'
 import { Route as AppLayoutSendRouteImport } from './routes/app/_layout.send'
 import { Route as AppLayoutScheduleRouteImport } from './routes/app/_layout.schedule'
+import { Route as AppLayoutInboxRouteImport } from './routes/app/_layout.inbox'
 import { Route as AppLayoutImportRouteImport } from './routes/app/_layout.import'
 import { Route as AppLayoutGroupsRouteImport } from './routes/app/_layout.groups'
 import { Route as AppLayoutContactsRouteImport } from './routes/app/_layout.contacts'
@@ -25,10 +26,12 @@ import { Route as AppLayoutBillingRouteImport } from './routes/app/_layout.billi
 import { Route as AppLayoutTemplatesIndexRouteImport } from './routes/app/_layout.templates.index'
 import { Route as AppLayoutSendIndexRouteImport } from './routes/app/_layout.send.index'
 import { Route as AppLayoutScheduleIndexRouteImport } from './routes/app/_layout.schedule.index'
+import { Route as AppLayoutInboxIndexRouteImport } from './routes/app/_layout.inbox.index'
 import { Route as AppLayoutImportIndexRouteImport } from './routes/app/_layout.import.index'
 import { Route as AppLayoutContactsIndexRouteImport } from './routes/app/_layout.contacts.index'
 import { Route as AppLayoutTemplatesTemplateIdRouteImport } from './routes/app/_layout.templates.$templateId'
 import { Route as AppLayoutScheduleMsgIdRouteImport } from './routes/app/_layout.schedule.$msgId'
+import { Route as AppLayoutInboxContactIdRouteImport } from './routes/app/_layout.inbox.$contactId'
 import { Route as AppLayoutGroupsGroupIdRouteImport } from './routes/app/_layout.groups.$groupId'
 import { Route as AppLayoutContactsContactIdRouteImport } from './routes/app/_layout.contacts.$contactId'
 
@@ -77,6 +80,11 @@ const AppLayoutScheduleRoute = AppLayoutScheduleRouteImport.update({
   path: '/schedule',
   getParentRoute: () => AppLayoutRoute,
 } as any)
+const AppLayoutInboxRoute = AppLayoutInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => AppLayoutRoute,
+} as any)
 const AppLayoutImportRoute = AppLayoutImportRouteImport.update({
   id: '/import',
   path: '/import',
@@ -112,6 +120,11 @@ const AppLayoutScheduleIndexRoute = AppLayoutScheduleIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppLayoutScheduleRoute,
 } as any)
+const AppLayoutInboxIndexRoute = AppLayoutInboxIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppLayoutInboxRoute,
+} as any)
 const AppLayoutImportIndexRoute = AppLayoutImportIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -132,6 +145,11 @@ const AppLayoutScheduleMsgIdRoute = AppLayoutScheduleMsgIdRouteImport.update({
   id: '/$msgId',
   path: '/$msgId',
   getParentRoute: () => AppLayoutScheduleRoute,
+} as any)
+const AppLayoutInboxContactIdRoute = AppLayoutInboxContactIdRouteImport.update({
+  id: '/$contactId',
+  path: '/$contactId',
+  getParentRoute: () => AppLayoutInboxRoute,
 } as any)
 const AppLayoutGroupsGroupIdRoute = AppLayoutGroupsGroupIdRouteImport.update({
   id: '/$groupId',
@@ -154,6 +172,7 @@ export interface FileRoutesByFullPath {
   '/app/contacts': typeof AppLayoutContactsRouteWithChildren
   '/app/groups': typeof AppLayoutGroupsRouteWithChildren
   '/app/import': typeof AppLayoutImportRouteWithChildren
+  '/app/inbox': typeof AppLayoutInboxRouteWithChildren
   '/app/schedule': typeof AppLayoutScheduleRouteWithChildren
   '/app/send': typeof AppLayoutSendRouteWithChildren
   '/app/summary': typeof AppLayoutSummaryRoute
@@ -161,10 +180,12 @@ export interface FileRoutesByFullPath {
   '/app/users': typeof AppLayoutUsersRoute
   '/app/contacts/$contactId': typeof AppLayoutContactsContactIdRoute
   '/app/groups/$groupId': typeof AppLayoutGroupsGroupIdRoute
+  '/app/inbox/$contactId': typeof AppLayoutInboxContactIdRoute
   '/app/schedule/$msgId': typeof AppLayoutScheduleMsgIdRoute
   '/app/templates/$templateId': typeof AppLayoutTemplatesTemplateIdRoute
   '/app/contacts/': typeof AppLayoutContactsIndexRoute
   '/app/import/': typeof AppLayoutImportIndexRoute
+  '/app/inbox/': typeof AppLayoutInboxIndexRoute
   '/app/schedule/': typeof AppLayoutScheduleIndexRoute
   '/app/send/': typeof AppLayoutSendIndexRoute
   '/app/templates/': typeof AppLayoutTemplatesIndexRoute
@@ -180,10 +201,12 @@ export interface FileRoutesByTo {
   '/app/users': typeof AppLayoutUsersRoute
   '/app/contacts/$contactId': typeof AppLayoutContactsContactIdRoute
   '/app/groups/$groupId': typeof AppLayoutGroupsGroupIdRoute
+  '/app/inbox/$contactId': typeof AppLayoutInboxContactIdRoute
   '/app/schedule/$msgId': typeof AppLayoutScheduleMsgIdRoute
   '/app/templates/$templateId': typeof AppLayoutTemplatesTemplateIdRoute
   '/app/contacts': typeof AppLayoutContactsIndexRoute
   '/app/import': typeof AppLayoutImportIndexRoute
+  '/app/inbox': typeof AppLayoutInboxIndexRoute
   '/app/schedule': typeof AppLayoutScheduleIndexRoute
   '/app/send': typeof AppLayoutSendIndexRoute
   '/app/templates': typeof AppLayoutTemplatesIndexRoute
@@ -198,6 +221,7 @@ export interface FileRoutesById {
   '/app/_layout/contacts': typeof AppLayoutContactsRouteWithChildren
   '/app/_layout/groups': typeof AppLayoutGroupsRouteWithChildren
   '/app/_layout/import': typeof AppLayoutImportRouteWithChildren
+  '/app/_layout/inbox': typeof AppLayoutInboxRouteWithChildren
   '/app/_layout/schedule': typeof AppLayoutScheduleRouteWithChildren
   '/app/_layout/send': typeof AppLayoutSendRouteWithChildren
   '/app/_layout/summary': typeof AppLayoutSummaryRoute
@@ -205,10 +229,12 @@ export interface FileRoutesById {
   '/app/_layout/users': typeof AppLayoutUsersRoute
   '/app/_layout/contacts/$contactId': typeof AppLayoutContactsContactIdRoute
   '/app/_layout/groups/$groupId': typeof AppLayoutGroupsGroupIdRoute
+  '/app/_layout/inbox/$contactId': typeof AppLayoutInboxContactIdRoute
   '/app/_layout/schedule/$msgId': typeof AppLayoutScheduleMsgIdRoute
   '/app/_layout/templates/$templateId': typeof AppLayoutTemplatesTemplateIdRoute
   '/app/_layout/contacts/': typeof AppLayoutContactsIndexRoute
   '/app/_layout/import/': typeof AppLayoutImportIndexRoute
+  '/app/_layout/inbox/': typeof AppLayoutInboxIndexRoute
   '/app/_layout/schedule/': typeof AppLayoutScheduleIndexRoute
   '/app/_layout/send/': typeof AppLayoutSendIndexRoute
   '/app/_layout/templates/': typeof AppLayoutTemplatesIndexRoute
@@ -224,6 +250,7 @@ export interface FileRouteTypes {
     | '/app/contacts'
     | '/app/groups'
     | '/app/import'
+    | '/app/inbox'
     | '/app/schedule'
     | '/app/send'
     | '/app/summary'
@@ -231,10 +258,12 @@ export interface FileRouteTypes {
     | '/app/users'
     | '/app/contacts/$contactId'
     | '/app/groups/$groupId'
+    | '/app/inbox/$contactId'
     | '/app/schedule/$msgId'
     | '/app/templates/$templateId'
     | '/app/contacts/'
     | '/app/import/'
+    | '/app/inbox/'
     | '/app/schedule/'
     | '/app/send/'
     | '/app/templates/'
@@ -250,10 +279,12 @@ export interface FileRouteTypes {
     | '/app/users'
     | '/app/contacts/$contactId'
     | '/app/groups/$groupId'
+    | '/app/inbox/$contactId'
     | '/app/schedule/$msgId'
     | '/app/templates/$templateId'
     | '/app/contacts'
     | '/app/import'
+    | '/app/inbox'
     | '/app/schedule'
     | '/app/send'
     | '/app/templates'
@@ -267,6 +298,7 @@ export interface FileRouteTypes {
     | '/app/_layout/contacts'
     | '/app/_layout/groups'
     | '/app/_layout/import'
+    | '/app/_layout/inbox'
     | '/app/_layout/schedule'
     | '/app/_layout/send'
     | '/app/_layout/summary'
@@ -274,10 +306,12 @@ export interface FileRouteTypes {
     | '/app/_layout/users'
     | '/app/_layout/contacts/$contactId'
     | '/app/_layout/groups/$groupId'
+    | '/app/_layout/inbox/$contactId'
     | '/app/_layout/schedule/$msgId'
     | '/app/_layout/templates/$templateId'
     | '/app/_layout/contacts/'
     | '/app/_layout/import/'
+    | '/app/_layout/inbox/'
     | '/app/_layout/schedule/'
     | '/app/_layout/send/'
     | '/app/_layout/templates/'
@@ -355,6 +389,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLayoutScheduleRouteImport
       parentRoute: typeof AppLayoutRoute
     }
+    '/app/_layout/inbox': {
+      id: '/app/_layout/inbox'
+      path: '/inbox'
+      fullPath: '/app/inbox'
+      preLoaderRoute: typeof AppLayoutInboxRouteImport
+      parentRoute: typeof AppLayoutRoute
+    }
     '/app/_layout/import': {
       id: '/app/_layout/import'
       path: '/import'
@@ -404,6 +445,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLayoutScheduleIndexRouteImport
       parentRoute: typeof AppLayoutScheduleRoute
     }
+    '/app/_layout/inbox/': {
+      id: '/app/_layout/inbox/'
+      path: '/'
+      fullPath: '/app/inbox/'
+      preLoaderRoute: typeof AppLayoutInboxIndexRouteImport
+      parentRoute: typeof AppLayoutInboxRoute
+    }
     '/app/_layout/import/': {
       id: '/app/_layout/import/'
       path: '/'
@@ -431,6 +479,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/app/schedule/$msgId'
       preLoaderRoute: typeof AppLayoutScheduleMsgIdRouteImport
       parentRoute: typeof AppLayoutScheduleRoute
+    }
+    '/app/_layout/inbox/$contactId': {
+      id: '/app/_layout/inbox/$contactId'
+      path: '/$contactId'
+      fullPath: '/app/inbox/$contactId'
+      preLoaderRoute: typeof AppLayoutInboxContactIdRouteImport
+      parentRoute: typeof AppLayoutInboxRoute
     }
     '/app/_layout/groups/$groupId': {
       id: '/app/_layout/groups/$groupId'
@@ -486,6 +541,20 @@ const AppLayoutImportRouteWithChildren = AppLayoutImportRoute._addFileChildren(
   AppLayoutImportRouteChildren,
 )
 
+interface AppLayoutInboxRouteChildren {
+  AppLayoutInboxContactIdRoute: typeof AppLayoutInboxContactIdRoute
+  AppLayoutInboxIndexRoute: typeof AppLayoutInboxIndexRoute
+}
+
+const AppLayoutInboxRouteChildren: AppLayoutInboxRouteChildren = {
+  AppLayoutInboxContactIdRoute: AppLayoutInboxContactIdRoute,
+  AppLayoutInboxIndexRoute: AppLayoutInboxIndexRoute,
+}
+
+const AppLayoutInboxRouteWithChildren = AppLayoutInboxRoute._addFileChildren(
+  AppLayoutInboxRouteChildren,
+)
+
 interface AppLayoutScheduleRouteChildren {
   AppLayoutScheduleMsgIdRoute: typeof AppLayoutScheduleMsgIdRoute
   AppLayoutScheduleIndexRoute: typeof AppLayoutScheduleIndexRoute
@@ -529,6 +598,7 @@ interface AppLayoutRouteChildren {
   AppLayoutContactsRoute: typeof AppLayoutContactsRouteWithChildren
   AppLayoutGroupsRoute: typeof AppLayoutGroupsRouteWithChildren
   AppLayoutImportRoute: typeof AppLayoutImportRouteWithChildren
+  AppLayoutInboxRoute: typeof AppLayoutInboxRouteWithChildren
   AppLayoutScheduleRoute: typeof AppLayoutScheduleRouteWithChildren
   AppLayoutSendRoute: typeof AppLayoutSendRouteWithChildren
   AppLayoutSummaryRoute: typeof AppLayoutSummaryRoute
@@ -541,6 +611,7 @@ const AppLayoutRouteChildren: AppLayoutRouteChildren = {
   AppLayoutContactsRoute: AppLayoutContactsRouteWithChildren,
   AppLayoutGroupsRoute: AppLayoutGroupsRouteWithChildren,
   AppLayoutImportRoute: AppLayoutImportRouteWithChildren,
+  AppLayoutInboxRoute: AppLayoutInboxRouteWithChildren,
   AppLayoutScheduleRoute: AppLayoutScheduleRouteWithChildren,
   AppLayoutSendRoute: AppLayoutSendRouteWithChildren,
   AppLayoutSummaryRoute: AppLayoutSummaryRoute,

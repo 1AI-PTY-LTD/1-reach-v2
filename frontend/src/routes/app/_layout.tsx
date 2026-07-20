@@ -13,6 +13,10 @@ import {
 } from '../../ui/navbar'
 import { UserButton, useOrganization } from '@clerk/clerk-react'
 import { QuestionMarkCircleIcon } from '@heroicons/react/16/solid'
+import { useQuery } from '@tanstack/react-query'
+import { Badge } from '../../ui/badge'
+import { getUnreadCountQueryOptions } from '../../api/conversationsApi'
+import { useApiClient } from '../../lib/ApiClientProvider'
 
 export const Route = createFileRoute('/app/_layout')({
   component: AppLayout,
@@ -20,6 +24,7 @@ export const Route = createFileRoute('/app/_layout')({
 
 const allNavItems = [
   { label: 'Send', to: '/app/send', match: '/app/_layout/send/', adminOnly: false },
+  { label: 'Inbox', to: '/app/inbox', match: '/app/_layout/inbox/', adminOnly: false },
   {
     label: 'Schedule',
     to: '/app/schedule',
@@ -59,6 +64,9 @@ export function AppLayout() {
   const matches = useMatches()
   const { membership } = useOrganization()
   const isAdmin = membership?.role === 'org:admin'
+  const client = useApiClient()
+  const unreadQuery = useQuery(getUnreadCountQueryOptions(client))
+  const unread = unreadQuery.data?.unread ?? 0
 
   const navItems = allNavItems.filter((item) => {
     if (item.label === 'Import') {
@@ -90,6 +98,11 @@ export function AppLayout() {
                 )}
               >
                 {label}
+                {label === 'Inbox' && unread > 0 && (
+                  <Badge color="purple" data-testid="inbox-unread-badge">
+                    {unread > 99 ? '99+' : unread}
+                  </Badge>
+                )}
               </NavbarItem>
             ))}
           </NavbarSection>

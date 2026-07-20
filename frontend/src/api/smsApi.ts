@@ -35,6 +35,7 @@ export async function sendSms(client: ApiClient, props: SendSmsRequest): Promise
     recipients: props.recipients,
     ...(props.group_id && { group_id: props.group_id }),
     ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
+    ...(props.two_way && { two_way: true }),
   })
 
   Logger.info('SMS sent successfully', {
@@ -55,6 +56,7 @@ export async function sendSmsToGroup(client: ApiClient, props: SendGroupSmsReque
     message: props.message,
     group_id: props.group_id,
     ...(props.alphanumeric_sender && { alphanumeric_sender: props.alphanumeric_sender }),
+    ...(props.two_way && { two_way: true }),
   })
 
   Logger.info('SMS sent to group successfully', {

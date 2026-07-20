@@ -11,6 +11,7 @@ from app.views import *
 
 router = DefaultRouter()
 router.register(r'contacts', ContactViewSet)
+router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'groups', ContactGroupViewSet)
 router.register(r'templates', TemplateViewSet)
 router.register(r'schedules', ScheduleViewSet)

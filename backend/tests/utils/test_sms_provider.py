@@ -8,6 +8,7 @@ Tests:
 """
 
 import pytest
+from unittest.mock import patch
 from rest_framework.exceptions import ValidationError
 
 from app.utils.sms import (
@@ -212,6 +213,59 @@ class TestSMSPartsCalculation:
         provider = MockSMSProvider()
         message = 'A' * length
         assert provider._calculate_sms_parts(message) == expected_parts
+
+
+class TestParseInboundCallbackDefault:
+    """Base-class default: providers without two-way support return no inbound events."""
+
+    def test_default_returns_empty_list(self):
+        provider = MockSMSProvider()
+        events = provider.parse_inbound_callback(
+            {'BroadcastID': '1', 'Response': 'hi'}, 'application/x-www-form-urlencoded')
+        assert events == []
+
+
+class TestTwoWayForwarding:
+    """The base-class send wrappers forward two_way to the provider impls."""
+
+    def test_send_sms_forwards_two_way(self):
+        provider = MockSMSProvider()
+        with patch.object(
+            provider, '_send_sms_impl',
+            return_value=SendResult(success=True, message_id='m1'),
+        ) as impl:
+            provider.send_sms('0412345678', 'Hi', two_way=True)
+
+        assert impl.call_args.kwargs['two_way'] is True
+
+    def test_send_sms_two_way_defaults_false(self):
+        provider = MockSMSProvider()
+        with patch.object(
+            provider, '_send_sms_impl',
+            return_value=SendResult(success=True, message_id='m1'),
+        ) as impl:
+            provider.send_sms('0412345678', 'Hi')
+
+        assert impl.call_args.kwargs['two_way'] is False
+
+    def test_bulk_default_impl_forwards_two_way_per_recipient(self):
+        provider = MockSMSProvider()
+        with patch.object(
+            provider, '_send_sms_impl',
+            return_value=SendResult(success=True, message_id='m1'),
+        ) as impl:
+            provider.send_bulk_sms(
+                [{'to': '0412345678', 'message': 'Hi'},
+                 {'to': '0412345679', 'message': 'Hi'}],
+                two_way=True,
+            )
+
+        assert all(c.kwargs['two_way'] is True for c in impl.call_args_list)
+
+    def test_mock_provider_accepts_two_way(self):
+        """The mock providers tolerate the kwarg end-to-end (no TypeError)."""
+        result = MockSMSProvider().send_sms('0412345678', 'Hi', two_way=True)
+        assert result.success is True
 
 
 class TestMockSMSProvider:
@@ -421,8 +475,9 @@ class TestBulkCallbackRegistered:
     from the per-send SendResults (all sends share one provider config)."""
 
     class _CallbackProvider(MockSMSProvider):
-        def _send_sms_impl(self, to, message, alphanumeric_sender=None):
-            result = super()._send_sms_impl(to, message, alphanumeric_sender=alphanumeric_sender)
+        def _send_sms_impl(self, to, message, alphanumeric_sender=None, two_way=False):
+            result = super()._send_sms_impl(to, message, alphanumeric_sender=alphanumeric_sender,
+                                            two_way=two_way)
             result.callback_registered = True
             return result
 

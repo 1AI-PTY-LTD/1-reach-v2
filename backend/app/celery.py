@@ -16,6 +16,11 @@ process_delivery_event(event_data)
     Processes a delivery status callback from the SMS provider. Updates schedule
     status to DELIVERED or FAILED based on provider-reported delivery outcome.
 
+process_inbound_message(event_data)
+    Stores an inbound SMS reply (two-way SMS) against its org/contact/schedule,
+    auto-creating the contact when the replier isn't one yet. Handles STOP
+    keyword opt-outs. Never touches schedule status or billing.
+
 reconcile_stale_sent()
     Beat task (every 15m). Polls the provider for schedules stuck in SENT past
     their stale window (RECONCILE_NO_CALLBACK_AFTER_MINUTES for sends with no
@@ -27,6 +32,7 @@ cleanup_stale_media_blobs()
     7 days, allowing manual retries within that window.
 """
 
+import hashlib
 import logging
 import math
 import os
@@ -42,7 +48,7 @@ import redis
 from celery import Celery, shared_task
 from celery.signals import beat_init, task_failure, worker_process_init, worker_ready, worker_shutting_down
 from django.conf import settings
-from django.db import OperationalError, transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Exists, Min, OuterRef, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -56,6 +62,7 @@ from app.utils.storage import StorageProvider, get_storage_provider
 from app.models import (
     Contact,
     FailureCategory,
+    InboundMessage,
     Invoice,
     MessageFormat,
     Organisation,
@@ -169,7 +176,8 @@ def _dispatch_to_provider(provider, schedule: Schedule) -> SendResult:
         )
     # SMS (and any future formats that share the (to, message) signature)
     return provider.send_sms(to=schedule.phone, message=schedule.text or '',
-                             alphanumeric_sender=schedule.alphanumeric_sender)
+                             alphanumeric_sender=schedule.alphanumeric_sender,
+                             two_way=schedule.two_way)
 
 
 def _handle_success(schedule: Schedule, result: SendResult) -> None:
@@ -547,7 +555,8 @@ def send_batch_message(self, parent_schedule_id: int) -> dict:
             recipients[i]['message_parts'] = 1
         result = provider.send_bulk_mms(recipients, alphanumeric_sender=parent.alphanumeric_sender)
     else:
-        result = provider.send_bulk_sms(recipients, alphanumeric_sender=parent.alphanumeric_sender)
+        result = provider.send_bulk_sms(recipients, alphanumeric_sender=parent.alphanumeric_sender,
+                                        two_way=parent.two_way)
 
     if result['success']:
         _handle_batch_success(parent, children, result)
@@ -988,23 +997,30 @@ def _handle_delivery_success(schedule: Schedule, event_data: dict) -> None:
     _sync_parent_status(schedule)
 
 
-def _propagate_opt_out(schedule: Schedule) -> None:
-    """Mark matching contacts opted out when the carrier reports an opt-out.
+def _propagate_opt_out_phone(organisation: Organisation, phone: str) -> int:
+    """Mark every contact in the org with this phone as opted out.
 
-    Spam Act compliance: once a recipient has opted out at the carrier level
-    (Welcorp OPTO), every contact record with that number in the org must stop
-    receiving sends — the send paths filter on Contact.opt_out.
+    Spam Act compliance: used for carrier-level opt-outs (Welcorp OPTO) and
+    STOP-keyword replies — the send paths filter on Contact.opt_out. Strictly
+    one-way: nothing in the messaging pipeline ever sets opt_out back to False,
+    because a recipient cannot opt back in by SMS.
     """
-    if not schedule.phone:
-        return
     updated = Contact.objects.filter(
-        organisation=schedule.organisation, phone=schedule.phone, opt_out=False,
+        organisation=organisation, phone=phone, opt_out=False,
     ).update(opt_out=True)
     if updated:
         logger.warning(
-            'Carrier opt-out: marked %d contact(s) with phone %s as opted out (org %s)',
-            updated, schedule.phone, schedule.organisation.clerk_org_id,
+            'Opt-out: marked %d contact(s) with phone %s as opted out (org %s)',
+            updated, phone, organisation.clerk_org_id,
         )
+    return updated
+
+
+def _propagate_opt_out(schedule: Schedule) -> None:
+    """Mark matching contacts opted out when the carrier reports an opt-out."""
+    if not schedule.phone:
+        return
+    _propagate_opt_out_phone(schedule.organisation, schedule.phone)
 
 
 def _handle_delivery_failure(schedule: Schedule, event_data: dict) -> None:
@@ -1099,6 +1115,160 @@ def process_delivery_event(event_data: dict) -> dict:
         _cleanup_media_blob(schedule)
 
     return {'schedule_id': schedule.pk, 'status': delivery_status}
+
+
+# ---------------------------------------------------------------------------
+# Inbound reply processing (two-way SMS)
+# ---------------------------------------------------------------------------
+
+def _find_schedule_for_inbound(
+    provider_message_id: str, sender_phone: str | None,
+) -> tuple[Schedule | None, Organisation | None]:
+    """Match an inbound reply to its outbound schedule and organisation.
+
+    Unlike _find_schedule this matches at ANY status (replies usually arrive
+    after the schedule is already DELIVERED) and takes no lock (the inbound
+    pipeline never mutates schedules). Batch children share the job id, so the
+    replier's phone selects the child; if no row matches the phone, the org is
+    still safe to attribute (every row of a job belongs to one org) but the
+    schedule link is not.
+    """
+    qs = Schedule.objects.filter(provider_message_id=provider_message_id)
+
+    if sender_phone:
+        match = qs.filter(phone=sender_phone).select_related('organisation').first()
+        if match:
+            return match, match.organisation
+
+    any_row = qs.select_related('organisation').first()
+    if any_row is None:
+        return None, None
+    return None, any_row.organisation
+
+
+@shared_task(
+    name='app.celery.process_inbound_message',
+    queue='messages',
+    acks_late=True,
+    reject_on_worker_lost=True,
+    # Unlike delivery events (reconcile_stale_sent backstop) and sends
+    # (dispatch recovery), a lost reply is unrecoverable — Welcorp has no pull
+    # API for replies. acks_late only covers worker loss, not raised
+    # exceptions, so transient errors (DB failover, deadlock) MUST retry.
+    # Safe: the task is idempotent via the dedup_key unique constraint.
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    retry_kwargs={'max_retries': 5},
+)
+def process_inbound_message(event_data: dict) -> dict:
+    """Store an inbound SMS reply (two-way SMS) against its org/contact/schedule.
+
+    Never touches Schedule.status and never refunds — a reply is not a
+    delivery outcome. Idempotent across provider callback redeliveries via the
+    InboundMessage.dedup_key unique constraint. Repliers without a contact
+    record get one auto-created (sending to a raw number is a valid flow, and
+    the Inbox is keyed by contact).
+    """
+    provider_message_id = event_data.get('provider_message_id')
+    sender_phone = event_data.get('sender_phone')
+    text = event_data.get('text')
+    timestamp = event_data.get('timestamp')
+
+    if not provider_message_id or not sender_phone or not text:
+        logger.warning('process_inbound_message: missing fields in event %r', event_data)
+        return {'skipped': True, 'reason': 'missing_fields'}
+
+    # A junk Destination longer than any real phone would DataError on the
+    # Contact/InboundMessage phone columns — skip it instead of crash-looping.
+    if len(sender_phone) > 20:
+        logger.warning('process_inbound_message: implausible sender phone %r — skipping', sender_phone)
+        return {'skipped': True, 'reason': 'invalid_phone'}
+
+    schedule, organisation = _find_schedule_for_inbound(provider_message_id, sender_phone)
+    if organisation is None:
+        # An org can never be attributed from the phone alone (the same number
+        # may be a contact of several orgs), so an unmatched job id is a drop.
+        logger.warning(
+            'process_inbound_message: inbound_unmatched job=%s phone=%s payload=%r',
+            provider_message_id, sender_phone, event_data.get('raw_data'),
+        )
+        return {'skipped': True, 'reason': 'inbound_unmatched'}
+    if schedule is None:
+        logger.warning(
+            'process_inbound_message: job %s belongs to org %s but no row matches '
+            'phone %s — storing reply without schedule link',
+            provider_message_id, organisation.clerk_org_id, sender_phone,
+        )
+
+    received_at = None
+    if timestamp:
+        try:
+            received_at = parse_datetime(timestamp)
+        except (ValueError, TypeError):
+            received_at = None
+    if received_at is None:
+        received_at = timezone.now()
+    elif timezone.is_naive(received_at):
+        received_at = timezone.make_aware(received_at)
+
+    # Welcorp sends no event id, so redeliveries are deduplicated on content.
+    dedup_key = hashlib.sha256(
+        f'{provider_message_id}|{sender_phone}|{timestamp or ""}|{text}'.encode()
+    ).hexdigest()
+
+    is_opt_out = text.strip().upper() in settings.INBOUND_OPT_OUT_KEYWORDS
+
+    try:
+        contact, contact_created = Contact.objects.get_or_create(
+            organisation=organisation,
+            phone=sender_phone,
+            defaults={'first_name': '', 'last_name': ''},
+        )
+    except IntegrityError:
+        # Concurrent auto-create for the same replier lost the race.
+        contact = Contact.objects.get(organisation=organisation, phone=sender_phone)
+        contact_created = False
+    if contact_created:
+        logger.info(
+            'process_inbound_message: auto-created contact %d for %s (org %s)',
+            contact.pk, sender_phone, organisation.clerk_org_id,
+        )
+
+    try:
+        with transaction.atomic():
+            message = InboundMessage.objects.create(
+                organisation=organisation,
+                contact=contact,
+                schedule=schedule,
+                phone=sender_phone,
+                text=text,
+                broadcast_id=provider_message_id,
+                reference=event_data.get('reference'),
+                received_at=received_at,
+                is_opt_out=is_opt_out,
+                dedup_key=dedup_key,
+                raw_data=event_data.get('raw_data'),
+            )
+            # Inside the same transaction as the insert: a duplicate delivery
+            # aborts on the dedup_key constraint before reaching this, and
+            # setting opt_out=True is idempotent anyway (strictly one-way).
+            if is_opt_out:
+                _propagate_opt_out_phone(organisation, sender_phone)
+    except IntegrityError:
+        logger.info(
+            'process_inbound_message: duplicate inbound event for job %s phone %s — skipping',
+            provider_message_id, sender_phone,
+        )
+        return {'skipped': True, 'reason': 'duplicate'}
+
+    logger.info(
+        'Inbound reply stored: id=%d org=%s contact=%d schedule=%s opt_out=%s',
+        message.pk, organisation.clerk_org_id, contact.pk,
+        schedule.pk if schedule else None, is_opt_out,
+    )
+    return {'inbound_message_id': message.pk, 'is_opt_out': is_opt_out}
 
 
 # ---------------------------------------------------------------------------

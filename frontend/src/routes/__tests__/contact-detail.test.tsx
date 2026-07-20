@@ -2,7 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderWithProviders, screen, waitFor, userEvent } from '../../test/test-utils'
 import { http, HttpResponse } from 'msw'
 import { server } from '../../test/handlers'
-import { paginate, createContact, createSchedule } from '../../test/factories'
+import {
+  paginate,
+  createContact,
+  createSchedule,
+  createInboundThreadItem,
+  createOutboundThreadItem,
+  createThreadResponse,
+} from '../../test/factories'
 import dayjs from 'dayjs'
 
 // Mock TanStack Router. The real ContactDetails reads its route param via
@@ -89,13 +96,13 @@ describe('ContactDetails', () => {
     expect(screen.getByText('Message')).toBeInTheDocument()
   })
 
-  it('renders message rows from the schedules-by-contact endpoint', async () => {
+  it('renders message rows from the conversation thread endpoint', async () => {
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
         return HttpResponse.json(
-          paginate([
-            createSchedule({ id: 41, text: 'First message to Alice', status: 'sent', format: 'SMS' }),
-            createSchedule({ id: 42, text: 'Second message to Alice', status: 'pending', format: 'MMS' }),
+          createThreadResponse([
+            createOutboundThreadItem({ id: 41, text: 'First message to Alice', status: 'sent', format: 'SMS' }),
+            createOutboundThreadItem({ id: 42, text: 'Second message to Alice', status: 'pending', format: 'MMS' }),
           ])
         )
       })
@@ -111,12 +118,37 @@ describe('ContactDetails', () => {
     expect(screen.getByText('MMS')).toBeInTheDocument()
   })
 
+  it('interleaves inbound replies into the message history', async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
+        return HttpResponse.json(
+          createThreadResponse([
+            createInboundThreadItem({ id: 43, text: 'A reply from Alice' }),
+            createOutboundThreadItem({ id: 44, text: 'Outbound to Alice', status: 'delivered' }),
+          ])
+        )
+      })
+    )
+
+    renderWithProviders(<ContactDetails />)
+
+    await waitFor(() => {
+      expect(screen.getByText('A reply from Alice')).toBeInTheDocument()
+    })
+    expect(screen.getByText('Outbound to Alice')).toBeInTheDocument()
+    // Inbound rows are flagged as received and are not expandable.
+    expect(screen.getByTestId('inbound-row')).toBeInTheDocument()
+    expect(screen.getByText('received')).toBeInTheDocument()
+  })
+
   it('truncates long message text to 40 characters with an ellipsis', async () => {
     const longText = 'A'.repeat(60)
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
         return HttpResponse.json(
-          paginate([createSchedule({ id: 50, text: longText, status: 'sent' })])
+          createThreadResponse([
+            createOutboundThreadItem({ id: 50, text: longText, status: 'sent' }),
+          ])
         )
       })
     )
@@ -130,13 +162,13 @@ describe('ContactDetails', () => {
     expect(screen.queryByText(longText)).not.toBeInTheDocument()
   })
 
-  it('expands a row to show the MessageDetails panel on click', async () => {
+  it('expands an outbound row to show the MessageDetails panel on click', async () => {
     const user = userEvent.setup()
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
         return HttpResponse.json(
-          paginate([
-            createSchedule({
+          createThreadResponse([
+            createOutboundThreadItem({
               id: 61,
               text: 'Click to expand me',
               status: 'sent',
@@ -161,15 +193,12 @@ describe('ContactDetails', () => {
 
   it('shows the pagination summary line with total messages', async () => {
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
         return HttpResponse.json(
-          paginate(
-            [
-              createSchedule({ id: 71, text: 'msg one', status: 'sent' }),
-              createSchedule({ id: 72, text: 'msg two', status: 'sent' }),
-            ],
-            { total: 2 }
-          )
+          createThreadResponse([
+            createOutboundThreadItem({ id: 71, text: 'msg one', status: 'sent' }),
+            createOutboundThreadItem({ id: 72, text: 'msg two', status: 'sent' }),
+          ])
         )
       })
     )
@@ -183,8 +212,8 @@ describe('ContactDetails', () => {
 
   it('renders the empty state when the contact has no messages', async () => {
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
-        return HttpResponse.json(paginate([], { total: 0 }))
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
+        return HttpResponse.json(createThreadResponse([]))
       })
     )
 
@@ -195,9 +224,9 @@ describe('ContactDetails', () => {
     })
   })
 
-  it('shows the messages-error state when the schedules endpoint fails', async () => {
+  it('shows the messages-error state when the thread endpoint fails', async () => {
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
         return HttpResponse.json({ error: 'Server error' }, { status: 500 })
       })
     )
@@ -251,10 +280,10 @@ describe('ContactDetails', () => {
   it('formats the scheduled time using the dayjs display format', async () => {
     const scheduled = '2026-03-10T09:30:00Z'
     server.use(
-      http.get(`${BASE_URL}/api/contacts/:id/schedules/`, () => {
+      http.get(`${BASE_URL}/api/conversations/:contactId/thread/`, () => {
         return HttpResponse.json(
-          paginate([
-            createSchedule({ id: 81, text: 'timed message', status: 'sent', scheduled_time: scheduled }),
+          createThreadResponse([
+            createOutboundThreadItem({ id: 81, text: 'timed message', status: 'sent', scheduled_time: scheduled }),
           ])
         )
       })

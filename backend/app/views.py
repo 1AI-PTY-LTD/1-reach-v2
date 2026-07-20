@@ -4,7 +4,7 @@ import logging
 import re
 import zoneinfo
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 import json
 
@@ -12,9 +12,10 @@ from clerk_backend_api import Clerk
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.http import HttpResponse
-from django.db.models import Count, OuterRef, Subquery, Sum
-from django.db.models.functions import TruncMonth
+from django.db.models import Count, Max, OuterRef, Q, Subquery, Sum
+from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -34,7 +35,7 @@ from app.utils import clerk
 from app.utils.billing import check_can_send, record_usage, refund_usage, get_monthly_limit_info, get_monthly_usage, get_rate, get_current_month_preview
 from app.utils.metered_billing import get_billing_provider
 from app.utils.storage import get_storage_provider
-from app.celery import _estimate_parts, generate_monthly_invoices, process_delivery_event, send_batch_message as send_batch_message_task, send_message as send_message_task
+from app.celery import _estimate_parts, generate_monthly_invoices, process_delivery_event, process_inbound_message, send_batch_message as send_batch_message_task, send_message as send_message_task
 from app.utils.sms import get_sms_provider
 
 logger = logging.getLogger(__name__)
@@ -247,7 +248,11 @@ class ClerkWebhookView(APIView):
 
 
 class SMSDeliveryWebhookView(APIView):
-    """Receive delivery status callbacks from the SMS/MMS provider.
+    """Receive delivery status AND inbound reply callbacks from the SMS/MMS provider.
+
+    Welcorp posts both callback types to the same registered callback_url, so
+    both parsers run against every payload; each returns [] for payloads that
+    belong to the other (discriminated by Status vs Response field presence).
 
     Unauthenticated endpoint — validation is delegated to the provider's
     validate_callback_request() method (e.g. shared-secret token for Welcorp).
@@ -270,14 +275,172 @@ class SMSDeliveryWebhookView(APIView):
 
         try:
             events = provider.parse_delivery_callback(data, content_type)
+            inbound_events = provider.parse_inbound_callback(data, content_type)
         except Exception:
             logger.exception('Failed to parse delivery callback')
             return Response({'error': 'Bad request'}, status=400)
 
         for event in events:
             process_delivery_event.delay(event.__dict__)
+        for event in inbound_events:
+            process_inbound_message.delay(event.__dict__)
 
         return Response({'status': 'ok'})
+
+
+class ConversationViewSet(TenantScopedMixin, viewsets.GenericViewSet):
+    """Two-way SMS conversations — contacts who have replied at least once.
+
+    The thread endpoint merges outbound Schedules (matched by phone, so raw-
+    number sends with no contact FK are included) with InboundMessages using
+    a timestamp cursor (`before`) instead of page numbers: new arrivals shift
+    page boundaries, so offset pagination over the merged stream would repeat
+    or skip rows in an open infinite-scroll session.
+
+    Deliberately no filterset: ScheduleFilter's implicit "today" default must
+    not leak into conversation queries.
+    """
+    queryset = Contact.objects.all()
+    serializer_class = ConversationSerializer
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    THREAD_MAX_LIMIT = 100
+
+    def list(self, request):
+        qs = (
+            self.get_queryset()
+            .annotate(
+                last_inbound_at=Max('inboundmessage__received_at'),
+                unread_count=Count(
+                    'inboundmessage',
+                    filter=Q(inboundmessage__read_at__isnull=True),
+                ),
+                last_inbound_text=Subquery(
+                    InboundMessage.objects.filter(contact=OuterRef('pk'))
+                    .order_by('-received_at').values('text')[:1]
+                ),
+            )
+            .filter(last_inbound_at__isnull=False)
+            .order_by('-last_inbound_at')
+        )
+        page = self.paginate_queryset(qs)
+        serializer = ConversationSerializer(page, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='unread-count')
+    def unread_count(self, request):
+        """Lightweight badge poll — must stay index-only cheap (partial index)."""
+        count = InboundMessage.objects.filter(
+            organisation=request.org, read_at__isnull=True,
+        ).count()
+        return Response({'unread': count})
+
+    @action(detail=True, methods=['get'])
+    def thread(self, request, pk=None):
+        """Interleaved outbound + inbound messages for one contact, newest first.
+
+        Cursor pagination: pass `before` (ISO datetime from next_before) to
+        fetch older messages. Envelope: {results, total, has_more, next_before}.
+        """
+        contact = self.get_object()
+        org = contact.organisation
+
+        try:
+            limit = int(request.query_params.get('limit', 50))
+        except ValueError:
+            raise ValidationError('limit must be an integer.')
+        limit = max(1, min(limit, self.THREAD_MAX_LIMIT))
+
+        before = None
+        before_raw = request.query_params.get('before')
+        if before_raw:
+            before = parse_datetime(before_raw)
+            if before is None:
+                raise ValidationError('before must be an ISO 8601 datetime.')
+
+        # Outbound matched by phone, not contact FK: sends to a raw number
+        # (contact=None on the Schedule) belong to this thread too. Batch
+        # parents carry no phone and are excluded naturally.
+        outbound = (
+            Schedule.objects
+            .filter(organisation=org, phone=contact.phone)
+            .annotate(thread_ts=Coalesce('sent_time', 'scheduled_time'))
+            .select_related('contact', 'group')
+        )
+        inbound = InboundMessage.objects.filter(organisation=org, contact=contact)
+
+        total = outbound.count() + inbound.count()
+
+        if before:
+            outbound = outbound.filter(thread_ts__lt=before)
+            inbound = inbound.filter(received_at__lt=before)
+
+        # limit+1 from each side, merge-sort desc, keep limit: cheap and
+        # correct regardless of how the two streams interleave.
+        outbound_page = list(outbound.order_by('-thread_ts')[:limit + 1])
+        inbound_page = list(inbound.order_by('-received_at')[:limit + 1])
+
+        merged = (
+            [('outbound', s.thread_ts, s) for s in outbound_page]
+            + [('inbound', m.received_at, m) for m in inbound_page]
+        )
+        merged.sort(key=lambda item: item[1], reverse=True)
+        page = merged[:limit]
+        # Extend the page through items tying with the boundary timestamp:
+        # the next page filters strictly < next_before, so a tied row left off
+        # this page would be skipped forever. Ties are realistic — Welcorp
+        # timestamps are second-granularity and batch children share one
+        # sent_time.
+        while page and len(page) < len(merged) and merged[len(page)][1] == page[-1][1]:
+            page.append(merged[len(page)])
+        # More rows may exist beyond a fully-consumed page: either merged still
+        # holds unreturned items, or a side's fetch window came back full (the
+        # tie extension can swallow the whole window). A spurious True only
+        # costs one empty follow-up fetch.
+        has_more = (
+            len(merged) > len(page)
+            or len(outbound_page) > limit
+            or len(inbound_page) > limit
+        )
+
+        results = []
+        for direction, ts, obj in page:
+            if direction == 'outbound':
+                data = ScheduleSerializer(obj).data
+            else:
+                data = InboundMessageSerializer(obj).data
+            data['direction'] = direction
+            data['thread_ts'] = ts.isoformat()
+            results.append(data)
+
+        # next_before is round-tripped through a query string; the Z suffix
+        # keeps it URL-safe (a raw +00:00 offset would decode as a space).
+        next_before = None
+        if page and has_more:
+            next_before = (
+                page[-1][1].astimezone(dt_timezone.utc)
+                .isoformat().replace('+00:00', 'Z')
+            )
+
+        return Response({
+            'results': results,
+            'total': total,
+            'has_more': has_more,
+            'next_before': next_before,
+        })
+
+    @action(detail=True, methods=['post'], url_path='mark-read')
+    def mark_read(self, request, pk=None):
+        """Mark every unread reply in this conversation read (org-wide).
+
+        Single UPDATE, race-safe and idempotent. Rows already read are never
+        re-touched, so read_by records the first reader.
+        """
+        contact = self.get_object()
+        marked = InboundMessage.objects.filter(
+            organisation=contact.organisation, contact=contact, read_at__isnull=True,
+        ).update(read_at=timezone.now(), read_by=request.user)
+        return Response({'marked': marked})
 
 
 class ContactViewSet(SoftDeleteMixin, TenantScopedMixin, viewsets.ModelViewSet):
@@ -767,6 +930,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                 format=MessageFormat.SMS,
                 message_parts=message_parts,
                 alphanumeric_sender=alphanumeric_sender,
+                two_way=data['two_way'],
                 created_by=request.user,
                 updated_by=request.user,
             )
@@ -783,6 +947,7 @@ class GroupScheduleViewSet(TenantScopedMixin, viewsets.GenericViewSet):
                     format=MessageFormat.SMS,
                     message_parts=message_parts,
                     alphanumeric_sender=alphanumeric_sender,
+                    two_way=data['two_way'],
                     max_retries=getattr(settings, 'MESSAGE_MAX_RETRIES', 3),
                     created_by=request.user,
                     updated_by=request.user,
@@ -1068,7 +1233,7 @@ class SMSViewSet(viewsets.ViewSet):
 
     def _dispatch_single(self, org, recipient, message, request, *,
                          format_type, message_parts, media_url=None, subject=None,
-                         alphanumeric_sender=None):
+                         alphanumeric_sender=None, two_way=False):
         """Create one Schedule, record trial billing, dispatch task, return 202."""
         contact = self._resolve_contact(recipient.get('contact_id'), org)
         max_retries = getattr(settings, 'MESSAGE_MAX_RETRIES', 3)
@@ -1080,7 +1245,7 @@ class SMSViewSet(viewsets.ViewSet):
                 status=ScheduleStatus.QUEUED, message_parts=message_parts,
                 max_retries=max_retries, format=format_type,
                 media_url=media_url, subject=subject,
-                alphanumeric_sender=alphanumeric_sender,
+                alphanumeric_sender=alphanumeric_sender, two_way=two_way,
                 created_by=request.user, updated_by=request.user,
             )
             if org.billing_mode == org.BILLING_PREPAID:
@@ -1098,7 +1263,8 @@ class SMSViewSet(viewsets.ViewSet):
 
     def _dispatch_batch(self, org, members, message, request, *,
                         format_type, message_parts, media_url=None, subject=None,
-                        group=None, description_prefix=None, alphanumeric_sender=None):
+                        group=None, description_prefix=None, alphanumeric_sender=None,
+                        two_way=False):
         """Create parent + children, record trial billing, dispatch batch task.
 
         members: list of {'phone': str, 'contact': Contact | None}
@@ -1114,7 +1280,7 @@ class SMSViewSet(viewsets.ViewSet):
                 scheduled_time=timezone.now(), status=ScheduleStatus.QUEUED,
                 max_retries=max_retries, format=format_type,
                 media_url=media_url, subject=subject,
-                alphanumeric_sender=alphanumeric_sender,
+                alphanumeric_sender=alphanumeric_sender, two_way=two_way,
                 created_by=request.user, updated_by=request.user,
             )
 
@@ -1125,7 +1291,7 @@ class SMSViewSet(viewsets.ViewSet):
                     scheduled_time=timezone.now(), status=ScheduleStatus.QUEUED,
                     message_parts=message_parts, max_retries=max_retries,
                     format=format_type, media_url=media_url, subject=subject,
-                    alphanumeric_sender=alphanumeric_sender,
+                    alphanumeric_sender=alphanumeric_sender, two_way=two_way,
                     created_by=request.user, updated_by=request.user,
                 )
                 if org.billing_mode == org.BILLING_PREPAID:
@@ -1166,6 +1332,7 @@ class SMSViewSet(viewsets.ViewSet):
                 org, recipients[0], data['message'], request,
                 format_type=MessageFormat.SMS, message_parts=message_parts,
                 alphanumeric_sender=alphanumeric_sender,
+                two_way=data['two_way'],
             )
 
         members = [
@@ -1177,6 +1344,7 @@ class SMSViewSet(viewsets.ViewSet):
             format_type=MessageFormat.SMS, message_parts=message_parts,
             alphanumeric_sender=alphanumeric_sender,
             group=group,
+            two_way=data['two_way'],
         )
         return Response({
             'success': True,
@@ -1222,6 +1390,7 @@ class SMSViewSet(viewsets.ViewSet):
             format_type=MessageFormat.SMS, message_parts=message_parts,
             group=group, description_prefix=f"SMS to group '{group.name}'",
             alphanumeric_sender=alphanumeric_sender,
+            two_way=data['two_way'],
         )
 
         logger.info('Queued batch SMS for %d group members (group %s)', member_count, group.name)
