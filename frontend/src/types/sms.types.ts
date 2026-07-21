@@ -8,12 +8,16 @@ export type SendSmsRequest = {
   recipients: SendSmsRecipient[]
   group_id?: number
   alphanumeric_sender?: string
+  /** Reply-capable send. Mutually exclusive with alphanumeric_sender. */
+  two_way?: boolean
 }
 
 export type SendGroupSmsRequest = {
   message: string
   group_id: number
   alphanumeric_sender?: string
+  /** Reply-capable send. Mutually exclusive with alphanumeric_sender. */
+  two_way?: boolean
 }
 
 export type SendMmsRequest = {

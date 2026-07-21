@@ -26,6 +26,7 @@ from app.models import (
     ContactGroup,
     ContactGroupMember,
     FailureCategory,
+    InboundMessage,
     MessageFormat,
     Organisation,
     OrganisationMembership,
@@ -304,6 +305,21 @@ def batch_sent_schedules(db, organisation, contacts, user):
         )
         children.append(child)
     return parent, children
+
+
+@pytest.fixture
+def inbound_message(db, organisation, contact, schedule_sent):
+    """An inbound reply linked to the standard contact and sent schedule."""
+    return InboundMessage.objects.create(
+        organisation=organisation,
+        contact=contact,
+        schedule=schedule_sent,
+        phone=contact.phone,
+        text='Yes please',
+        broadcast_id=schedule_sent.provider_message_id,
+        received_at=timezone.now(),
+        dedup_key='fixture-dedup-key-0001',
+    )
 
 
 @pytest.fixture

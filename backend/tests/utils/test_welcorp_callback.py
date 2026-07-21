@@ -129,6 +129,131 @@ class TestParseDeliveryCallback:
         events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
         assert events[0].raw_data == data
 
+    def test_reply_payload_is_not_a_delivery_event(self, provider):
+        """A 2-way reply (Response, no Status) must never parse as a DLR.
+
+        Regression guard: an empty Status used to fall through to the failed
+        branch, which would flip a still-SENT schedule to FAILED and refund it
+        (replies typically arrive before the carrier DLR).
+        """
+        data = {
+            'BroadcastID': '62131644',
+            'Timestamp': '2026-07-10T12:02:52+10:00',
+            'Reference': 'Customer 123',
+            'Recipient': 'Jane Smith',
+            'Destination': '61498765432',
+            'Response': 'This is a reply',
+            'BroadcastName': 'Quick Send',
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_reply_payload_querydict_lists(self, provider):
+        data = {
+            'BroadcastID': ['62131644'],
+            'Destination': ['61498765432'],
+            'Response': ['STOP'],
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_neither_status_nor_response_is_ignored_with_warning(
+        self, provider, caplog, propagate_app_logs,
+    ):
+        data = {'BroadcastID': '1', 'Destination': '+61412111111'}
+        with caplog.at_level('WARNING', logger='app.utils.welcorp'):
+            events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+        assert any('neither Status nor Response' in r.message for r in caplog.records)
+
+    def test_status_wins_when_both_status_and_response_present(self, provider):
+        """Undocumented both-fields payload parses as a DLR (Status wins)."""
+        data = {
+            'BroadcastID': '1',
+            'Destination': '+61412111111',
+            'Status': 'SENT',
+            'Response': 'hi',
+        }
+        events = provider.parse_delivery_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].status == 'delivered'
+
+
+class TestParseInboundCallback:
+    """Welcorp 2-way SMS reply callback parsing."""
+
+    def test_reply_payload_parses_to_inbound_event(self, provider):
+        """Field set per Welcorp docs: same as a DLR but Response instead of Status."""
+        data = {
+            'BroadcastID': '62131644',
+            'Timestamp': '2026-07-10T12:02:52+10:00',
+            'Reference': 'Customer 123',
+            'Recipient': 'Jane Smith',
+            'Destination': '61498765432',
+            'Response': 'This is a reply',
+            'BroadcastName': 'Quick Send',
+        }
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        event = events[0]
+        assert event.provider_message_id == '62131644'
+        assert event.sender_phone == '0498765432'  # 61... normalised
+        assert event.text == 'This is a reply'
+        assert event.timestamp == '2026-07-10T12:02:52+10:00'
+        assert event.reference == 'Customer 123'
+        assert event.raw_data == data
+
+    def test_dlr_payload_is_not_an_inbound_event(self, provider):
+        data = {
+            'BroadcastID': '12345',
+            'Destination': '61412111111',
+            'Status': 'SENT',
+            'Timestamp': '2026-07-10T10:30:00+10:00',
+        }
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_status_wins_when_both_fields_present(self, provider):
+        """Exactly one parser claims any payload: Status present → not inbound."""
+        data = {'BroadcastID': '1', 'Status': 'SENT', 'Response': 'hi', 'Destination': '61412111111'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_neither_field_returns_empty(self, provider):
+        data = {'BroadcastID': '1', 'Destination': '61412111111'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events == []
+
+    def test_querydict_list_values(self, provider):
+        data = {
+            'BroadcastID': ['62131644'],
+            'Destination': ['61498765432'],
+            'Response': ['Yes please'],
+            'Timestamp': ['2026-07-10T12:02:52+10:00'],
+        }
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].sender_phone == '0498765432'
+        assert events[0].text == 'Yes please'
+
+    def test_plus_prefixed_destination_normalised(self, provider):
+        data = {'BroadcastID': '1', 'Destination': '+61412345678', 'Response': 'ok'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events[0].sender_phone == '0412345678'
+
+    def test_missing_destination_gives_none_phone(self, provider):
+        data = {'BroadcastID': '1', 'Response': 'ok'}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert len(events) == 1
+        assert events[0].sender_phone is None
+
+    def test_empty_optional_fields_become_none(self, provider):
+        data = {'BroadcastID': '1', 'Destination': '61412345678', 'Response': 'ok',
+                'Timestamp': '', 'Reference': ''}
+        events = provider.parse_inbound_callback(data, 'application/x-www-form-urlencoded')
+        assert events[0].timestamp is None
+        assert events[0].reference is None
+
 
 class TestWelcorpStatusFailureCategory:
     """Each Welcorp failure code resolves to its expected FailureCategory.
@@ -239,14 +364,14 @@ class TestGetCallbackUrl:
 
     def test_secret_with_percent_is_url_encoded(self):
         """Secrets containing % must be URL-encoded so Django QueryDict decodes them back correctly."""
-        with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': 'WWRL%164gRfs'}):
+        with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': 'FAKE%abc123XY'}):
             p = WelcorpSMSProvider()
             url = p.get_callback_url()
-            assert url == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=WWRL%25164gRfs'
+            assert url == 'https://myapp.example.com/api/webhooks/sms-delivery/?token=FAKE%25abc123XY'
 
     def test_secret_with_percent_roundtrips_through_querydict(self):
         """Token survives: get_callback_url → URL decode (Django QueryDict) → validate_callback_request."""
-        secret = 'WWRL%164gRfs'
+        secret = 'FAKE%abc123XY'
         with override_settings(**{**WELCORP_SETTINGS, 'WELCORP_CALLBACK_SECRET': secret}):
             p = WelcorpSMSProvider()
             url = p.get_callback_url()
@@ -299,83 +424,46 @@ class TestPostJobCallbackInjection:
             assert 'callback_on_sms_status_update' not in payload
 
     @staticmethod
-    def _session_with_job(job_id, stored_callback=True):
-        """Mock session: POST creates the job, GET returns its stored detail.
+    def _session_with_job(job_id):
+        """Mock session whose POST creates the given job successfully.
 
-        stored_callback controls what Welcorp claims to have kept — the
-        provider must report the STORED state, not what it sent (Welcorp has
-        been observed silently discarding per-job callbacks).
+        No GET is configured on purpose: Welcorp's GET /jobs/{id} does not
+        echo the stored callback fields (always null — confirmed with Welcorp
+        support on a job whose callback demonstrably fired), so the provider
+        must not try to verify registration via the API.
         """
         session = Mock()
         create_response = Mock()
         create_response.json.return_value = {'status': 200, 'data': job_id}
         create_response.status_code = 200
         session.post.return_value = create_response
-
-        detail_response = Mock()
-        detail_response.json.return_value = {
-            'status': 200,
-            'data': {
-                'job_id': job_id,
-                'callback_url': 'https://myapp.example.com/api/webhooks/sms-delivery/?token=x' if stored_callback else '',
-                'callback_on_sms_status_update': stored_callback,
-            },
-        }
-        session.get.return_value = detail_response
         return session
 
-    def test_callback_registered_true_when_stored_by_welcorp(self, provider):
+    def test_callback_registered_true_when_configured(self, provider):
+        session = self._session_with_job('99999')
         with override_settings(**WELCORP_SETTINGS):
-            provider.session = self._session_with_job('99999', stored_callback=True)
-
-            result = provider._send_sms_impl('0412111111', 'Hello')
-
-        assert result.success is True
-        assert result.callback_registered is True
-
-    def test_callback_registered_false_when_welcorp_discards(
-        self, provider, caplog, propagate_app_logs,
-    ):
-        """Job accepted but stored callback empty (observed Welcorp behaviour,
-        July 2026) → flag False so reconcile polls on the short window."""
-        with override_settings(**WELCORP_SETTINGS):
-            provider.session = self._session_with_job('99999', stored_callback=False)
-
-            with caplog.at_level('WARNING', logger='app.utils.welcorp'):
-                result = provider._send_sms_impl('0412111111', 'Hello')
-
-        assert result.success is True
-        assert result.callback_registered is False
-        assert any('discarded the delivery callback' in r.message for r in caplog.records)
-
-    def test_callback_verification_failure_defaults_false(self, provider):
-        """A failed verification GET must not fail the send — just poll sooner."""
-        with override_settings(**WELCORP_SETTINGS):
-            session = self._session_with_job('99999')
-            session.get.side_effect = requests.ConnectionError('refused')
             provider.session = session
 
             result = provider._send_sms_impl('0412111111', 'Hello')
 
         assert result.success is True
-        assert result.callback_registered is False
+        assert result.callback_registered is True
+        # Registration is not verifiable via GET /jobs — no lookup should happen.
+        session.get.assert_not_called()
 
     def test_callback_registered_false_without_config(self):
-        """No callback attached → no verification GET at all."""
         with override_settings(**{**WELCORP_SETTINGS, 'BASE_URL': ''}):
             p = WelcorpSMSProvider()
-            session = self._session_with_job('99999')
-            p.session = session
+            p.session = self._session_with_job('99999')
 
             result = p._send_sms_impl('0412111111', 'Hello')
 
         assert result.success is True
         assert result.callback_registered is False
-        session.get.assert_not_called()
 
     def test_bulk_sms_dict_carries_callback_registered_true(self, provider):
         with override_settings(**WELCORP_SETTINGS):
-            provider.session = self._session_with_job('88888', stored_callback=True)
+            provider.session = self._session_with_job('88888')
 
             result = provider._send_bulk_sms_impl(
                 [{'to': '0412111111', 'message': 'Hi'}],
@@ -398,7 +486,7 @@ class TestPostJobCallbackInjection:
 
     def test_bulk_mms_dict_carries_callback_registered_true(self, provider):
         with override_settings(**WELCORP_SETTINGS):
-            provider.session = self._session_with_job('77777', stored_callback=True)
+            provider.session = self._session_with_job('77777')
 
             result = provider._send_bulk_mms_impl(
                 [{'to': '0412111111', 'message': 'Hi', 'media_url': 'https://x.example/pic.png'}],

@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import ssl as _ssl
+import sys
 from urllib.parse import quote as _urlquote
 
 import certifi
@@ -438,6 +439,24 @@ WELCORP_USERNAME = os.environ.get('WELCORP_USERNAME', '')
 WELCORP_PASSWORD = os.environ.get('WELCORP_PASSWORD', '')
 WELCORP_CALLBACK_SECRET = os.environ.get('WELCORP_CALLBACK_SECRET', '')
 
+# Two-way SMS. The job_type literal is env-overridable because Welcorp's docs
+# are inconsistent about its casing ('2 Way SMS' vs '2 way sms') — see the
+# RUNBOOK "Two-way SMS" probe notes before changing the default.
+WELCORP_TWO_WAY_JOB_TYPE = os.environ.get('WELCORP_TWO_WAY_JOB_TYPE', '2 Way SMS')
+# Hours the provider keeps the pooled reply number routing back to us
+# (Welcorp job field `expires`; their default is 24).
+TWO_WAY_REPLY_WINDOW_HOURS = int(os.environ.get('TWO_WAY_REPLY_WINDOW_HOURS', '24'))
+# Reply keywords that opt the sender out, matched exact after strip/upper.
+# Handled locally per-org. NEVER pass Welcorp's job-level `optout_code`
+# instead: it adds repliers to the ACCOUNT-level opt-out list, and 1Reach is
+# multi-tenant on a single Welcorp account — one org's STOP would block every
+# org's sends to that number.
+INBOUND_OPT_OUT_KEYWORDS = [
+    k.strip().upper()
+    for k in os.environ.get('INBOUND_OPT_OUT_KEYWORDS', 'STOP').split(',')
+    if k.strip()
+]
+
 
 
 # Storage Provider Configuration
@@ -459,11 +478,15 @@ MEDIA_URL = '/media/'
 
 
 # Sentry
+# Never report from the test suite, whatever the .env says — deliberate test
+# exceptions otherwise pollute whichever environment the DSN points at.
+# The environment default is 'local' so an unconfigured process can never
+# masquerade as production; deploys set SENTRY_ENVIRONMENT explicitly.
 SENTRY_DSN = os.environ.get('SENTRY_DSN', '')
-if SENTRY_DSN:
+if SENTRY_DSN and 'pytest' not in sys.modules:
     sentry_sdk.init(
         dsn=SENTRY_DSN,
-        environment=os.environ.get('SENTRY_ENVIRONMENT', 'production'),
+        environment=os.environ.get('SENTRY_ENVIRONMENT', 'local'),
         traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.1')),
         send_default_pii=False,
         integrations=[

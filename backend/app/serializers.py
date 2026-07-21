@@ -44,6 +44,20 @@ def validate_sms_message(value, allow_empty=False):
     return cleaned
 
 
+def validate_two_way_combination(attrs):
+    """Reject two_way together with an alphanumeric sender.
+
+    An alphanumeric sender ID replaces the reply-capable pool number on the
+    recipient's handset, so replies are physically impossible — the provider
+    layer would have to drop one of the two. Reject loudly instead.
+    """
+    if attrs.get('two_way') and attrs.get('alphanumeric_sender'):
+        raise serializers.ValidationError(
+            'Two-way messages cannot use an alphanumeric sender ID — '
+            'recipients would be unable to reply.'
+        )
+
+
 class OrganisationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organisation
@@ -217,7 +231,7 @@ class ScheduleSerializer(serializers.ModelSerializer):
             'group', 'group_detail', 'parent', 'recipient_count',
             'scheduled_time', 'sent_time',
             'status', 'error',
-            'format', 'media_url', 'subject', 'alphanumeric_sender',
+            'format', 'media_url', 'subject', 'alphanumeric_sender', 'two_way',
             'provider_message_id', 'retry_count', 'max_retries',
             'next_retry_at', 'failure_category', 'delivered_time',
             'created_at', 'updated_at',
@@ -251,6 +265,21 @@ class ScheduleSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if self.instance and self.instance.status != ScheduleStatus.PENDING:
             raise serializers.ValidationError('Only pending schedules can be updated.')
+        # For partial updates fall back to the instance so an existing
+        # combination can't be made invalid by changing one side only.
+        merged = {
+            'two_way': attrs.get('two_way',
+                                 self.instance.two_way if self.instance else False),
+            'alphanumeric_sender': attrs.get(
+                'alphanumeric_sender',
+                self.instance.alphanumeric_sender if self.instance else None),
+        }
+        validate_two_way_combination(merged)
+        format_value = attrs.get('format',
+                                 self.instance.format if self.instance else None)
+        if merged['two_way'] and format_value == MessageFormat.MMS:
+            raise serializers.ValidationError(
+                'Two-way replies are only supported for SMS.')
         return attrs
 
 
@@ -261,6 +290,7 @@ class GroupScheduleCreateSerializer(serializers.Serializer):
     group_id = serializers.IntegerField(min_value=1)
     scheduled_time = serializers.DateTimeField()
     alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
+    two_way = serializers.BooleanField(required=False, default=False)
 
     def validate_scheduled_time(self, value):
         if value <= timezone.now():
@@ -277,6 +307,7 @@ class GroupScheduleCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 'Either template_id or text must be provided.'
             )
+        validate_two_way_combination(attrs)
         return attrs
 
 
@@ -291,6 +322,31 @@ class GroupScheduleUpdateSerializer(serializers.Serializer):
         if value and value <= timezone.now():
             raise serializers.ValidationError('Scheduled time must be in the future.')
         return value
+
+
+class InboundMessageSerializer(serializers.ModelSerializer):
+    """Read-only: inbound rows are created exclusively by the webhook pipeline."""
+
+    class Meta:
+        model = InboundMessage
+        fields = [
+            'id', 'contact', 'schedule', 'phone', 'text',
+            'received_at', 'read_at', 'read_by', 'is_opt_out', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class ConversationSerializer(serializers.Serializer):
+    """One conversation-list row: a contact annotated with inbound-reply stats.
+
+    Consumed from the ConversationViewSet.list queryset — last_inbound_* and
+    unread_count are queryset annotations, not model fields.
+    """
+    contact_id = serializers.IntegerField(source='id', read_only=True)
+    contact_detail = ContactSerializer(source='*', read_only=True)
+    last_inbound_text = serializers.CharField(read_only=True)
+    last_inbound_at = serializers.DateTimeField(read_only=True)
+    unread_count = serializers.IntegerField(read_only=True)
 
 
 class ConfigSerializer(serializers.ModelSerializer):
@@ -314,24 +370,34 @@ class SendSMSSerializer(serializers.Serializer):
     )
     group_id = serializers.IntegerField(min_value=1, required=False, default=None)
     alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
+    two_way = serializers.BooleanField(required=False, default=False)
 
     def validate_message(self, value):
         return validate_sms_message(value)
 
     def validate_alphanumeric_sender(self, value):
         return validate_alphanumeric_sender(value) if value else value
+
+    def validate(self, attrs):
+        validate_two_way_combination(attrs)
+        return attrs
 
 
 class SendGroupSMSSerializer(serializers.Serializer):
     message = serializers.CharField(min_length=1, max_length=306)
     group_id = serializers.IntegerField(min_value=1)
     alphanumeric_sender = serializers.CharField(max_length=11, required=False, allow_blank=True, allow_null=True, default=None)
+    two_way = serializers.BooleanField(required=False, default=False)
 
     def validate_message(self, value):
         return validate_sms_message(value)
 
     def validate_alphanumeric_sender(self, value):
         return validate_alphanumeric_sender(value) if value else value
+
+    def validate(self, attrs):
+        validate_two_way_combination(attrs)
+        return attrs
 
 
 class SendMMSSerializer(serializers.Serializer):

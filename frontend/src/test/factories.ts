@@ -7,6 +7,14 @@ import type { GroupSchedule } from '../types/groupSchedule.types'
 import type { MonthlyStats, SummaryData } from '../types/stats.types'
 import type { BillingSummaryResponse, CreditTransaction, Invoice, InvoiceListResponse, InvoicePreviewResponse } from '../types/billing.types'
 import type { Pagination } from '../types/pagination.types'
+import type {
+  Conversation,
+  InboundMessage,
+  InboundThreadItem,
+  OutboundThreadItem,
+  ThreadItem,
+  ThreadResponse,
+} from '../types/conversation.types'
 
 let _id = 1
 function nextId() {
@@ -79,6 +87,70 @@ export function createSchedule(overrides: Partial<Schedule> = {}): Schedule {
     format: 'SMS',
     created_at: now,
     updated_at: now,
+    ...overrides,
+  }
+}
+
+export function createInboundMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
+  const id = overrides.id ?? nextId()
+  return {
+    id,
+    contact: 1,
+    schedule: null,
+    phone: '0412345678',
+    text: 'This is a reply',
+    received_at: now,
+    read_at: null,
+    read_by: null,
+    is_opt_out: false,
+    created_at: now,
+    ...overrides,
+  }
+}
+
+export function createConversation(overrides: Partial<Conversation> = {}): Conversation {
+  const contactId = overrides.contact_id ?? nextId()
+  return {
+    contact_id: contactId,
+    contact_detail: createContact({ id: contactId }),
+    last_inbound_text: 'This is a reply',
+    last_inbound_at: now,
+    unread_count: 0,
+    ...overrides,
+  }
+}
+
+export function createOutboundThreadItem(
+  overrides: Partial<OutboundThreadItem> = {},
+): OutboundThreadItem {
+  return {
+    ...createSchedule({ status: 'delivered' }),
+    direction: 'outbound',
+    thread_ts: now,
+    ...overrides,
+  }
+}
+
+export function createInboundThreadItem(
+  overrides: Partial<InboundThreadItem> = {},
+): InboundThreadItem {
+  return {
+    ...createInboundMessage(),
+    direction: 'inbound',
+    thread_ts: now,
+    ...overrides,
+  }
+}
+
+export function createThreadResponse(
+  results: ThreadItem[] = [],
+  overrides: Partial<Omit<ThreadResponse, 'results'>> = {},
+): ThreadResponse {
+  return {
+    results,
+    total: results.length,
+    has_more: false,
+    next_before: null,
     ...overrides,
   }
 }

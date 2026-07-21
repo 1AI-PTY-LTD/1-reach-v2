@@ -88,6 +88,55 @@ class TestSendMessageSuccess:
         schedule_queued.refresh_from_db()
         assert schedule_queued.callback_registered is False
 
+    def test_two_way_flag_forwarded_to_provider(self, schedule_queued):
+        schedule_queued.two_way = True
+        schedule_queued.save(update_fields=['two_way'])
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = mock_get.return_value
+            provider.send_sms.return_value = SendResult(
+                success=True, message_id='job-2w-1', message_parts=1)
+            send_message(schedule_queued.pk)
+
+        assert provider.send_sms.call_args.kwargs['two_way'] is True
+
+    def test_two_way_false_by_default(self, schedule_queued):
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = mock_get.return_value
+            provider.send_sms.return_value = SendResult(
+                success=True, message_id='job-1w-1', message_parts=1)
+            send_message(schedule_queued.pk)
+
+        assert provider.send_sms.call_args.kwargs['two_way'] is False
+
+    def test_batch_two_way_forwarded_to_bulk_send(
+        self, db, organisation, user, contact
+    ):
+        from app.celery import send_batch_message
+
+        parent = _make_queued(
+            db, organisation, user, None,
+            phone=None, name='2-way batch', two_way=True)
+        for phone in ('0412111111', '0412222222'):
+            _make_queued(db, organisation, user, None, phone=phone, parent=parent)
+
+        with patch('app.celery.get_sms_provider') as mock_get:
+            provider = mock_get.return_value
+            provider.send_bulk_sms.return_value = {
+                'success': True,
+                'results': [
+                    {'to': '0412111111', 'message_parts': 1, 'success': True,
+                     'message_id': 'job-b1', 'error': None},
+                    {'to': '0412222222', 'message_parts': 1, 'success': True,
+                     'message_id': 'job-b1', 'error': None},
+                ],
+                'error': None,
+                'callback_registered': True,
+            }
+            send_batch_message(parent.pk)
+
+        assert provider.send_bulk_sms.call_args.kwargs['two_way'] is True
+
     def test_opted_out_recipient_fails_with_refund_at_send_time(
         self, schedule_queued, organisation, contact, user
     ):

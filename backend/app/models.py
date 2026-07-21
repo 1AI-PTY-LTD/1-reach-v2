@@ -209,6 +209,10 @@ class Schedule(TenantModel, AuditMixin):
     media_url = models.URLField(blank=True, null=True)
     subject = models.CharField(max_length=64, blank=True, null=True)
     alphanumeric_sender = models.CharField(max_length=11, blank=True, null=True)
+    # Submitted to the provider as a two-way job: recipients can reply within
+    # the provider's reply window. Mutually exclusive with alphanumeric_sender
+    # (alphanumeric senders cannot receive replies). SMS only.
+    two_way = models.BooleanField(default=False)
     # Retry / delivery tracking fields
     provider_message_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     # True if the provider send registered a delivery-callback URL. False means
@@ -243,6 +247,56 @@ class Schedule(TenantModel, AuditMixin):
 
     def __str__(self):
         return f'Schedule {self.pk} - {self.status}'
+
+
+class InboundMessage(TenantModel):
+    """An SMS reply received via the provider's inbound callback (two-way SMS).
+
+    Machine-created (no AuditMixin). The provider has no endpoint to list or
+    re-fetch replies, so the webhook payload preserved in raw_data is the only
+    record of the message.
+    """
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True)
+    # The outbound message this replies to (matched via broadcast_id). Null when
+    # the job id matched but the replier's phone matched no batch child.
+    schedule = models.ForeignKey(
+        Schedule, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='inbound_messages',
+    )
+    phone = models.CharField(max_length=50)  # normalised 04XXXXXXXX
+    text = models.TextField()
+    # Provider job id of the outbound message (Welcorp BroadcastID).
+    broadcast_id = models.CharField(max_length=255, db_index=True)
+    reference = models.CharField(max_length=255, blank=True, null=True)
+    received_at = models.DateTimeField()
+    # Unread tracking is org-wide; read_by records who first marked it read
+    # (mark-read never re-touches rows that already have read_at set).
+    read_at = models.DateTimeField(null=True, blank=True)
+    read_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='inbound_messages_read',
+    )
+    is_opt_out = models.BooleanField(default=False)
+    # sha256 over broadcast_id|phone|timestamp|text — the provider sends no
+    # event id, so this is the idempotency key across callback redeliveries.
+    dedup_key = models.CharField(max_length=64, unique=True)
+    raw_data = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'inbound_messages'
+        indexes = [
+            # Thread queries and the conversation list's per-contact annotations.
+            models.Index(fields=['organisation', 'contact', '-received_at'],
+                         name='inbound_org_contact_desc'),
+            # The unread-count badge is polled every ~20s per active org.
+            models.Index(fields=['organisation'],
+                         condition=models.Q(read_at__isnull=True),
+                         name='inbound_unread_partial'),
+        ]
+
+    def __str__(self):
+        return f'InboundMessage {self.pk} from {self.phone}'
 
 
 class Config(TenantModel):

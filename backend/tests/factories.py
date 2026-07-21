@@ -30,6 +30,7 @@ from app.models import (
     Contact,
     ContactGroup,
     ContactGroupMember,
+    InboundMessage,
     MessageFormat,
     Organisation,
     OrganisationMembership,
@@ -192,6 +193,28 @@ class ScheduleFactory(DjangoModelFactory):
             status=ScheduleStatus.FAILED,
             error='Mock error message'
         )
+
+
+class InboundMessageFactory(DjangoModelFactory):
+    """Factory for InboundMessage model (two-way SMS replies)."""
+
+    class Meta:
+        model = InboundMessage
+
+    organisation = factory.SubFactory(OrganisationFactory)
+    contact = factory.SubFactory(
+        ContactFactory, organisation=factory.SelfAttribute('..organisation'))
+    phone = factory.LazyAttribute(lambda o: o.contact.phone if o.contact else '0412000000')
+    text = factory.Faker('sentence', nb_words=8)
+    broadcast_id = factory.Sequence(lambda n: f'welcorp-job-{n:05d}')
+    received_at = factory.LazyFunction(timezone.now)
+    dedup_key = factory.Sequence(lambda n: f'dedup-{n:056d}')
+    schedule = None
+    reference = None
+    read_at = None
+    read_by = None
+    is_opt_out = False
+    raw_data = None
 
 
 class ConfigFactory(DjangoModelFactory):

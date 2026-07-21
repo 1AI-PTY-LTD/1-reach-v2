@@ -202,6 +202,46 @@ class TestScheduleSerializer:
         assert not serializer.is_valid()
         assert 'scheduled_time' in serializer.errors
 
+    def test_two_way_accepted_for_sms(self):
+        future = timezone.now() + timedelta(hours=1)
+        data = {
+            'text': 'Reply YES',
+            'scheduled_time': future.isoformat(),
+            'phone': '0412345678',
+            'format': 'sms',
+            'two_way': True,
+        }
+        serializer = ScheduleSerializer(data=data)
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data['two_way'] is True
+
+    def test_two_way_with_alphanumeric_sender_rejected(self):
+        future = timezone.now() + timedelta(hours=1)
+        data = {
+            'text': 'Reply YES',
+            'scheduled_time': future.isoformat(),
+            'phone': '0412345678',
+            'two_way': True,
+            'alphanumeric_sender': 'MYBRAND',
+        }
+        serializer = ScheduleSerializer(data=data)
+        assert not serializer.is_valid()
+        assert 'alphanumeric sender' in str(serializer.errors).lower()
+
+    def test_two_way_with_mms_rejected(self):
+        future = timezone.now() + timedelta(hours=1)
+        data = {
+            'text': 'Look',
+            'scheduled_time': future.isoformat(),
+            'phone': '0412345678',
+            'format': 'mms',
+            'media_url': 'https://example.com/pic.jpg',
+            'two_way': True,
+        }
+        serializer = ScheduleSerializer(data=data)
+        assert not serializer.is_valid()
+        assert 'only supported for sms' in str(serializer.errors).lower()
+
 
 # ============================================================================
 # SendSMS Serializer Tests
@@ -252,6 +292,26 @@ class TestSendSMSSerializer:
         serializer = SendSMSSerializer(data=data)
         assert serializer.is_valid()
         assert serializer.validated_data['message'] == 'Hello World'
+
+    def test_two_way_defaults_false(self):
+        data = {
+            'message': 'Hello',
+            'recipients': [{'phone': '0412345678'}],
+        }
+        serializer = SendSMSSerializer(data=data)
+        assert serializer.is_valid()
+        assert serializer.validated_data['two_way'] is False
+
+    def test_two_way_with_alphanumeric_sender_rejected(self):
+        data = {
+            'message': 'Hello',
+            'recipients': [{'phone': '0412345678'}],
+            'two_way': True,
+            'alphanumeric_sender': 'MYBRAND',
+        }
+        serializer = SendSMSSerializer(data=data)
+        assert not serializer.is_valid()
+        assert 'alphanumeric sender' in str(serializer.errors).lower()
 
     def test_contact_id_optional(self):
         """contact_id is optional per recipient."""
