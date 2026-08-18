@@ -1,6 +1,6 @@
 import { SignUpButton } from "@clerk/clerk-react"
 import { Button } from "./Button"
-import { Check, Clock, MessageSquare, Users, Building2 } from "lucide-react"
+import { Check, MessageSquare, Users, Building2 } from "lucide-react"
 
 const plans = [
   {
@@ -39,13 +39,14 @@ const plans = [
       { label: "10c per SMS part" },
       { label: "50c per MMS part" },
       { label: "SMS & MMS" },
-      { label: "Email to SMS", comingSoon: true },
+      { label: "Alphanumeric sender IDs" },
+      { label: "SMS replies*" },
       { label: "Campaigns" },
       { label: "Templates" },
       { label: "Multiple roles & users" },
-      { label: "Advanced analytics", comingSoon: true },
       { label: "Priority support" },
     ],
+    footnote: "* Non-alphanumeric senders only",
     cta: "Get Started",
     ctaHref: "/sign-up",
     featured: true,
@@ -66,7 +67,6 @@ const plans = [
       { label: "Dedicated account manager" },
       { label: "SLA guarantee" },
       { label: "Multiple roles & users" },
-      { label: "Advanced analytics", comingSoon: true },
       { label: "24/7 phone support" },
     ],
     cta: "Get Started",
@@ -126,17 +126,17 @@ export function PricingSection() {
                 {plan.features.map((feature) => (
                   <li
                     key={feature.label}
-                    className={`flex items-start gap-3 text-sm ${feature.comingSoon ? "text-zinc-400 dark:text-[#7a6a94]" : "text-zinc-500 dark:text-[#a99cc4]"}`}
+                    className="flex items-start gap-3 text-sm text-zinc-500 dark:text-[#a99cc4]"
                   >
-                    {feature.comingSoon ? (
-                      <Clock className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400 dark:text-[#7a6a94]" />
-                    ) : (
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-purple" />
-                    )}
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand-purple" />
                     {feature.label}
                   </li>
                 ))}
               </ul>
+
+              {plan.footnote && (
+                <p className="mt-3 text-xs text-zinc-400 dark:text-[#7a6a94]">{plan.footnote}</p>
+              )}
 
               {plan.ctaHref.startsWith('#') ? (
                 <Button
