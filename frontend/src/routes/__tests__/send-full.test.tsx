@@ -376,9 +376,10 @@ describe('Send page — Allow replies (two-way)', () => {
       expect(getSenderSelect()).toHaveValue('MYBRAND')
     })
     expect(getAllowRepliesCheckbox()).toHaveAttribute('aria-disabled', 'true')
+    // Copy appears in both the helper text and the hover tooltip
     expect(
-      screen.getByText(/Not available with a Sender ID/)
-    ).toBeInTheDocument()
+      screen.getAllByText(/Not available with a Sender ID/).length
+    ).toBeGreaterThan(0)
 
     // Releasing the sender (None) re-enables the checkbox…
     await user.selectOptions(getSenderSelect(), '')
@@ -392,5 +393,42 @@ describe('Send page — Allow replies (two-way)', () => {
     expect(
       screen.getByText('Sender ID is unavailable while replies are allowed')
     ).toBeInTheDocument()
+  })
+
+  it('renders the red hover tooltip only while a Sender ID is selected', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.get('http://localhost:8000/api/sms/alphanumeric-senders/', () =>
+        HttpResponse.json({ alphanumeric_senders: ['MYBRAND'] })
+      )
+    )
+
+    renderWithProviders(<Send />)
+
+    const getSenderSelect = () =>
+      screen
+        .getAllByRole('combobox')
+        .find((el) =>
+          Array.from(el.querySelectorAll('option')).some(
+            (o) => o.textContent === 'None (random number)'
+          )
+        ) as HTMLSelectElement
+
+    // The auto-selected sender disables the checkbox and attaches the tooltip.
+    // Visibility is CSS hover-driven (group-hover), so assert DOM presence.
+    await waitFor(() =>
+      expect(screen.getByTestId('allow-replies-tooltip')).toBeInTheDocument()
+    )
+    expect(screen.getByTestId('allow-replies-tooltip')).toHaveTextContent(
+      /Not available with a Sender ID/
+    )
+
+    // Releasing the sender removes the tooltip along with the disable
+    await user.selectOptions(getSenderSelect(), '')
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('allow-replies-tooltip')
+      ).not.toBeInTheDocument()
+    )
   })
 })
