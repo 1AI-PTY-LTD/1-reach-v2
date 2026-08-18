@@ -126,11 +126,10 @@ describe('HeroSection', () => {
 })
 
 describe('FeaturesSection', () => {
-  it('renders all six feature cards', () => {
+  it('renders all five feature cards', () => {
     render(<FeaturesSection />)
     expect(screen.getByText('SMS Messaging')).toBeInTheDocument()
     expect(screen.getByText('MMS Messaging')).toBeInTheDocument()
-    expect(screen.getByText('Email to SMS')).toBeInTheDocument()
     expect(screen.getByText('Campaigns')).toBeInTheDocument()
     expect(screen.getByText('Templates')).toBeInTheDocument()
     expect(screen.getByText('Analytics & Reporting')).toBeInTheDocument()

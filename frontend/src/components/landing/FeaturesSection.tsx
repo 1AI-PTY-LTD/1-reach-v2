@@ -1,4 +1,4 @@
-import { MessageSquare, Image, Mail, Megaphone, FileText, BarChart3 } from "lucide-react"
+import { MessageSquare, Image, Megaphone, FileText, BarChart3 } from "lucide-react"
 
 const features = [
   {
@@ -16,15 +16,6 @@ const features = [
       "Send rich media messages with images, videos, and attachments. Engage your audience with visual content that stands out.",
     color: "text-brand-light-purple",
     bgColor: "bg-brand-light-purple/10",
-  },
-  {
-    icon: Mail,
-    title: "Email to SMS",
-    description:
-      "Convert your emails directly to SMS messages. Perfect for teams already using email workflows who need SMS reach.",
-    color: "text-brand-teal",
-    bgColor: "bg-brand-teal/10",
-    comingSoon: true,
   },
   {
     icon: Megaphone,

@@ -106,6 +106,8 @@ test.describe('Schedule Page', () => {
   })
 
   test('shows message status badges', async ({ page }) => {
+    // Re-force to pending immediately before the test in case beat dispatched it
+    await forceStatus(page, scheduleIds[0], 'pending')
     await page.goto('/app/schedule')
     await expect(page.getByText(`${TOKEN} Hello Alice`).first()).toBeVisible({ timeout: 10000 })
     await expect(page.getByText(/pending/i).first()).toBeVisible({ timeout: 10000 })

@@ -90,8 +90,10 @@ test('reply to a real two-way send appears in the Inbox and can be answered', as
   await postInboundReply(page, { provider_message_id: jobId, response: replyText })
   await waitForInboundReply(page, replyText)
 
-  // Nav badge shows unread replies (count is org-global, so assert presence only).
-  await page.goto('/app/inbox')
+  // Nav badge shows unread replies (count is org-global, so assert presence
+  // only). Checked from a non-inbox page: /app/inbox auto-opens the first
+  // conversation, which marks it read and races the badge away.
+  await page.goto('/app/schedule')
   await expect(page.getByTestId('inbox-unread-badge')).toBeVisible()
 
   // The conversation thread shows the inbound bubble.

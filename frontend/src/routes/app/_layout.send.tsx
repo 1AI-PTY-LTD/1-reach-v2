@@ -577,12 +577,25 @@ export function SendContent() {
 
             {/* Grid overrides move the description from row 2 up beside the label */}
             <CheckboxField className="!grid-cols-[1.125rem_auto_1fr] sm:!grid-cols-[1rem_auto_1fr] [&>[data-slot=description]]:!col-start-3 [&>[data-slot=description]]:!row-start-1">
-              <Checkbox
-                checked={allowReplies}
-                onChange={setAllowReplies}
-                disabled={!!selectedSender || !!uploadedFileUrl}
-                aria-label="Allow replies"
-              />
+              {/* Wrapper takes over the control slot so the checkbox can carry a hover tooltip */}
+              <span data-slot="control" className="group/replies relative">
+                <Checkbox
+                  checked={allowReplies}
+                  onChange={setAllowReplies}
+                  disabled={!!selectedSender || !!uploadedFileUrl}
+                  aria-label="Allow replies"
+                />
+                {!!selectedSender && (
+                  <span
+                    data-testid="allow-replies-tooltip"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden w-max max-w-64 -translate-x-1/2 rounded-md bg-red-600 px-2.5 py-1.5 text-xs text-white shadow-md group-hover/replies:block"
+                  >
+                    Not available with a Sender ID — select None to allow replies.
+                    <span className="absolute left-1/2 top-full -translate-x-1/2 border-4 border-transparent border-t-red-600" />
+                  </span>
+                )}
+              </span>
               <Label>Allow replies</Label>
               <Description className="!text-xs">
                 {uploadedFileUrl
